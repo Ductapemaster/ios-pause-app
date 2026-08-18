@@ -19,8 +19,7 @@ public protocol FailedGrantBlockStoring {
     func contains(ruleID: UUID) throws -> Bool
 }
 
-@MainActor
-public final class FailedGrantBlockStore: FailedGrantBlockStoring {
+public final class FailedGrantBlockFileStore: @unchecked Sendable {
     private struct Document: Codable {
         static let currentVersion = 1
 
@@ -29,31 +28,39 @@ public final class FailedGrantBlockStore: FailedGrantBlockStoring {
     }
 
     private let file: AtomicJSONFile<Document>
+    private let stateLock: AppGroupFileLock
 
     public init(directoryURL: URL) {
         file = AtomicJSONFile(
             url: directoryURL.appendingPathComponent(SharedIdentifiers.failedGrantBlocksFilename)
         )
+        stateLock = AppGroupFileLock(directoryURL: directoryURL)
     }
 
     public func load() throws -> Set<UUID> {
-        guard let document = try file.load() else { return [] }
-        guard document.version == Document.currentVersion else {
-            throw FailedGrantBlockStoreError.unsupportedVersion(document.version)
+        try stateLock.withLock {
+            guard let document = try file.load() else { return [] }
+            guard document.version == Document.currentVersion else {
+                throw FailedGrantBlockStoreError.unsupportedVersion(document.version)
+            }
+            return document.ruleIDs
         }
-        return document.ruleIDs
     }
 
     public func add(ruleID: UUID) throws {
-        var ruleIDs = try load()
-        ruleIDs.insert(ruleID)
-        try save(ruleIDs)
+        try stateLock.withLock {
+            var ruleIDs = try load()
+            ruleIDs.insert(ruleID)
+            try save(ruleIDs)
+        }
     }
 
     public func clear(ruleID: UUID) throws {
-        var ruleIDs = try load()
-        ruleIDs.remove(ruleID)
-        try save(ruleIDs)
+        try stateLock.withLock {
+            var ruleIDs = try load()
+            ruleIDs.remove(ruleID)
+            try save(ruleIDs)
+        }
     }
 
     public func contains(ruleID: UUID) throws -> Bool {
@@ -63,4 +70,18 @@ public final class FailedGrantBlockStore: FailedGrantBlockStoring {
     private func save(_ ruleIDs: Set<UUID>) throws {
         try file.save(Document(version: Document.currentVersion, ruleIDs: ruleIDs))
     }
+}
+
+@MainActor
+public final class FailedGrantBlockStore: FailedGrantBlockStoring {
+    private let fileStore: FailedGrantBlockFileStore
+
+    public init(directoryURL: URL) {
+        fileStore = FailedGrantBlockFileStore(directoryURL: directoryURL)
+    }
+
+    public func load() throws -> Set<UUID> { try fileStore.load() }
+    public func add(ruleID: UUID) throws { try fileStore.add(ruleID: ruleID) }
+    public func clear(ruleID: UUID) throws { try fileStore.clear(ruleID: ruleID) }
+    public func contains(ruleID: UUID) throws -> Bool { try fileStore.contains(ruleID: ruleID) }
 }

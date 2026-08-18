@@ -2,13 +2,13 @@ import DeviceActivity
 import Foundation
 import PauseCore
 
-@MainActor
 public final class SessionReconciliationService {
     private let configurationStore: ConfigurationStore
     private let runtimeRepository: RuntimeRepository
-    private let failedGrantBlockStore: FailedGrantBlockStore
+    private let failedGrantBlockStore: FailedGrantBlockFileStore
     private let shieldReconciler: ShieldReconciler
     private let stopMonitoring: (String) throws -> Void
+    private let stateLock: AppGroupFileLock
 
     public convenience init(
         appGroupContainer: AppGroupContainer = AppGroupContainer(),
@@ -32,12 +32,26 @@ public final class SessionReconciliationService {
     ) {
         configurationStore = ConfigurationStore(directoryURL: directoryURL)
         runtimeRepository = RuntimeRepository(directoryURL: directoryURL)
-        failedGrantBlockStore = FailedGrantBlockStore(directoryURL: directoryURL)
+        failedGrantBlockStore = FailedGrantBlockFileStore(directoryURL: directoryURL)
+        stateLock = AppGroupFileLock(directoryURL: directoryURL)
         self.shieldReconciler = shieldReconciler
         self.stopMonitoring = stopMonitoring
     }
 
     public func reconcile(
+        now: Date,
+        trigger: SessionReconciliationTrigger
+    ) -> SessionReconciliationResult {
+        do {
+            return try stateLock.withLock {
+                reconcileUnlocked(now: now, trigger: trigger)
+            }
+        } catch {
+            return lockFailure(error, ruleID: trigger.selectedRuleID)
+        }
+    }
+
+    private func reconcileUnlocked(
         now: Date,
         trigger: SessionReconciliationTrigger
     ) -> SessionReconciliationResult {
@@ -86,6 +100,20 @@ public final class SessionReconciliationService {
         now: Date,
         calendar: Calendar = .current
     ) -> SessionReconciliationResult {
+        do {
+            return try stateLock.withLock {
+                resetRuntimeUnlocked(ruleID: ruleID, now: now, calendar: calendar)
+            }
+        } catch {
+            return lockFailure(error, ruleID: ruleID)
+        }
+    }
+
+    private func resetRuntimeUnlocked(
+        ruleID: UUID,
+        now: Date,
+        calendar: Calendar
+    ) -> SessionReconciliationResult {
         let configuration: ConfigurationDocument
         do {
             guard let loaded = try configurationStore.load() else {
@@ -124,6 +152,19 @@ public final class SessionReconciliationService {
                     persistExpiredSessions: false
                 )
             }
+        )
+    }
+
+    private func lockFailure(_ error: Error, ruleID: UUID?) -> SessionReconciliationResult {
+        SessionReconciliationResult(
+            repairRuleIDs: ruleID.map { [$0] } ?? [],
+            issues: [
+                SessionReconciliationIssue(
+                    ruleID: ruleID,
+                    operation: .acquireStateLock,
+                    underlyingError: error
+                )
+            ]
         )
     }
 }

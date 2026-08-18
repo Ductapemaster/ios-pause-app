@@ -17,11 +17,11 @@ public enum ShieldReconciliationError: LocalizedError, Equatable {
     }
 }
 
-@MainActor
 public struct ShieldReconciler {
     private let currentApplications: () -> Set<ApplicationToken>?
     private let applyApplications: (Set<ApplicationToken>) -> Void
     private let failedGrantBlockIDs: () throws -> Set<UUID>
+    private let stateLockProvider: () throws -> AppGroupFileLock?
 
     public init(
         store: ManagedSettingsStore = ManagedSettingsStore(),
@@ -31,18 +31,23 @@ public struct ShieldReconciler {
         applyApplications = { store.shield.applications = $0 }
         failedGrantBlockIDs = {
             let directoryURL = try appGroupContainer.directoryURL()
-            return try FailedGrantBlockStore(directoryURL: directoryURL).load()
+            return try FailedGrantBlockFileStore(directoryURL: directoryURL).load()
+        }
+        stateLockProvider = {
+            AppGroupFileLock(directoryURL: try appGroupContainer.directoryURL())
         }
     }
 
     init(
         currentApplications: @escaping () -> Set<ApplicationToken>?,
         applyApplications: @escaping (Set<ApplicationToken>) -> Void,
-        failedGrantBlockIDs: @escaping () throws -> Set<UUID>
+        failedGrantBlockIDs: @escaping () throws -> Set<UUID>,
+        stateLock: AppGroupFileLock? = nil
     ) {
         self.currentApplications = currentApplications
         self.applyApplications = applyApplications
         self.failedGrantBlockIDs = failedGrantBlockIDs
+        stateLockProvider = { stateLock }
     }
 
     public func reconcile(
@@ -51,6 +56,24 @@ public struct ShieldReconciler {
         now: Date,
         forceShieldedRuleIDs: Set<UUID> = [],
         persistExpiredSessions: Bool = true
+    ) throws {
+        try withStateLock {
+            try reconcileUnlocked(
+                configuration: configuration,
+                runtimeRepository: runtimeRepository,
+                now: now,
+                forceShieldedRuleIDs: forceShieldedRuleIDs,
+                persistExpiredSessions: persistExpiredSessions
+            )
+        }
+    }
+
+    private func reconcileUnlocked(
+        configuration: ConfigurationDocument,
+        runtimeRepository: RuntimeRepository,
+        now: Date,
+        forceShieldedRuleIDs: Set<UUID>,
+        persistExpiredSessions: Bool
     ) throws {
         var shieldedApplications = Set(configuration.targets.map(\.applicationToken))
         var unreadableRuleIDs: [UUID] = []
@@ -96,6 +119,12 @@ public struct ShieldReconciler {
     }
 
     public func unshield(ruleID: UUID, configuration: ConfigurationDocument) throws {
+        try withStateLock {
+            try unshieldUnlocked(ruleID: ruleID, configuration: configuration)
+        }
+    }
+
+    private func unshieldUnlocked(ruleID: UUID, configuration: ConfigurationDocument) throws {
         let matchingTargets = configuration.targets.filter { $0.ruleID == ruleID }
         guard matchingTargets.count == 1, let target = matchingTargets.first else {
             throw RuleLookupError.ruleNotFound(ruleID)
@@ -107,8 +136,10 @@ public struct ShieldReconciler {
     }
 
     public func forceShield(ruleID: UUID, configuration: ConfigurationDocument) throws {
-        let token = try applicationToken(ruleID: ruleID, configuration: configuration)
-        forceShield(applicationToken: token)
+        try withStateLock {
+            let token = try applicationToken(ruleID: ruleID, configuration: configuration)
+            forceShieldUnlocked(applicationToken: token)
+        }
     }
 
     func applicationToken(
@@ -122,9 +153,22 @@ public struct ShieldReconciler {
         return target.applicationToken
     }
 
-    func forceShield(applicationToken: ApplicationToken) {
+    func forceShield(applicationToken: ApplicationToken) throws {
+        try withStateLock {
+            forceShieldUnlocked(applicationToken: applicationToken)
+        }
+    }
+
+    private func forceShieldUnlocked(applicationToken: ApplicationToken) {
         var shieldedApplications = currentApplications() ?? []
         shieldedApplications.insert(applicationToken)
         applyApplications(shieldedApplications)
+    }
+
+    func withStateLock<T>(_ body: () throws -> T) throws -> T {
+        if let stateLock = try stateLockProvider() {
+            return try stateLock.withLock(body)
+        }
+        return try body()
     }
 }

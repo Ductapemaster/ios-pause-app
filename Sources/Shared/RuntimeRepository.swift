@@ -3,109 +3,102 @@ import PauseCore
 
 public final class RuntimeRepository: @unchecked Sendable {
     private let directoryURL: URL
-    private let lock = NSLock()
+    private let stateLock: AppGroupFileLock
 
     public init(directoryURL: URL) {
         self.directoryURL = directoryURL
+        stateLock = AppGroupFileLock(directoryURL: directoryURL)
     }
 
     public func load(ruleID: UUID) throws -> RuleRuntime? {
-        lock.lock()
-        defer { lock.unlock() }
-        return try loadUnlocked(ruleID: ruleID)
+        try stateLock.withLock { try loadUnlocked(ruleID: ruleID) }
     }
 
     public func save(_ runtime: RuleRuntime, ruleID: UUID) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        try saveUnlocked(runtime, ruleID: ruleID)
+        try stateLock.withLock { try saveUnlocked(runtime, ruleID: ruleID) }
     }
 
     public func delete(ruleID: UUID) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        try file(for: ruleID).delete()
+        try stateLock.withLock { try file(for: ruleID).delete() }
     }
 
     public func stageRemoval(ruleID: UUID) throws -> StagedRuntimeRemoval {
-        lock.lock()
-        defer { lock.unlock() }
+        try stateLock.withLock {
+            let originalURL = fileURL(for: ruleID)
+            let stagedURL = stagedFileURL(for: ruleID)
+            let fileManager = FileManager.default
+            let originalExists = fileManager.fileExists(atPath: originalURL.path)
+            let stagedExists = fileManager.fileExists(atPath: stagedURL.path)
 
-        let originalURL = fileURL(for: ruleID)
-        let stagedURL = stagedFileURL(for: ruleID)
-        let fileManager = FileManager.default
-        let originalExists = fileManager.fileExists(atPath: originalURL.path)
-        let stagedExists = fileManager.fileExists(atPath: stagedURL.path)
-
-        if stagedExists {
-            guard try isRegularFile(at: stagedURL) else {
-                throw PersistenceError.invalidStagedRuntimeFile(ruleID)
+            if stagedExists {
+                guard try isRegularFile(at: stagedURL) else {
+                    throw PersistenceError.invalidStagedRuntimeFile(ruleID)
+                }
+                if !originalExists {
+                    return StagedRuntimeRemoval(ruleID: ruleID, wasPresent: true)
+                }
             }
-            if !originalExists {
-                return StagedRuntimeRemoval(ruleID: ruleID, wasPresent: true)
+            guard originalExists else {
+                return StagedRuntimeRemoval(ruleID: ruleID, wasPresent: false)
             }
-        }
-        guard originalExists else {
-            return StagedRuntimeRemoval(ruleID: ruleID, wasPresent: false)
-        }
-        guard try isRegularFile(at: originalURL) else {
-            throw PersistenceError.invalidRuntimeFile(ruleID)
-        }
+            guard try isRegularFile(at: originalURL) else {
+                throw PersistenceError.invalidRuntimeFile(ruleID)
+            }
 
-        if stagedExists {
-            try fileManager.removeItem(at: stagedURL)
+            if stagedExists {
+                try fileManager.removeItem(at: stagedURL)
+            }
+            try fileManager.moveItem(at: originalURL, to: stagedURL)
+            return StagedRuntimeRemoval(ruleID: ruleID, wasPresent: true)
         }
-        try fileManager.moveItem(at: originalURL, to: stagedURL)
-        return StagedRuntimeRemoval(ruleID: ruleID, wasPresent: true)
     }
 
     public func restoreRemoval(_ stage: StagedRuntimeRemoval) throws {
         guard stage.wasPresent else { return }
-        lock.lock()
-        defer { lock.unlock() }
-
-        let originalURL = fileURL(for: stage.ruleID)
-        let stagedURL = stagedFileURL(for: stage.ruleID)
-        guard FileManager.default.fileExists(atPath: stagedURL.path) else {
-            throw PersistenceError.missingStagedRuntime(stage.ruleID)
+        try stateLock.withLock {
+            let originalURL = fileURL(for: stage.ruleID)
+            let stagedURL = stagedFileURL(for: stage.ruleID)
+            guard FileManager.default.fileExists(atPath: stagedURL.path) else {
+                throw PersistenceError.missingStagedRuntime(stage.ruleID)
+            }
+            guard try isRegularFile(at: stagedURL) else {
+                throw PersistenceError.invalidStagedRuntimeFile(stage.ruleID)
+            }
+            guard !FileManager.default.fileExists(atPath: originalURL.path) else {
+                throw PersistenceError.runtimeRestoreDestinationExists(stage.ruleID)
+            }
+            try FileManager.default.moveItem(at: stagedURL, to: originalURL)
         }
-        guard try isRegularFile(at: stagedURL) else {
-            throw PersistenceError.invalidStagedRuntimeFile(stage.ruleID)
-        }
-        guard !FileManager.default.fileExists(atPath: originalURL.path) else {
-            throw PersistenceError.runtimeRestoreDestinationExists(stage.ruleID)
-        }
-        try FileManager.default.moveItem(at: stagedURL, to: originalURL)
     }
 
     public func finalizeRemoval(_ stage: StagedRuntimeRemoval) throws {
         guard stage.wasPresent else { return }
-        lock.lock()
-        defer { lock.unlock() }
-
-        let stagedURL = stagedFileURL(for: stage.ruleID)
-        guard FileManager.default.fileExists(atPath: stagedURL.path) else {
-            throw PersistenceError.missingStagedRuntime(stage.ruleID)
+        try stateLock.withLock {
+            let stagedURL = stagedFileURL(for: stage.ruleID)
+            guard FileManager.default.fileExists(atPath: stagedURL.path) else {
+                throw PersistenceError.missingStagedRuntime(stage.ruleID)
+            }
+            guard try isRegularFile(at: stagedURL) else {
+                throw PersistenceError.invalidStagedRuntimeFile(stage.ruleID)
+            }
+            try FileManager.default.removeItem(at: stagedURL)
         }
-        guard try isRegularFile(at: stagedURL) else {
-            throw PersistenceError.invalidStagedRuntimeFile(stage.ruleID)
-        }
-        try FileManager.default.removeItem(at: stagedURL)
     }
 
     public func deleteOrphanedRuntimes(keeping ruleIDs: Set<UUID>) throws {
-        lock.lock()
-        defer { lock.unlock() }
-
-        let fileURLs = try FileManager.default.contentsOfDirectory(
-            at: directoryURL,
-            includingPropertiesForKeys: [.isRegularFileKey]
-        )
-        for fileURL in fileURLs {
-            let resourceValues = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
-            guard resourceValues.isRegularFile == true else { continue }
-            guard let ruleID = ruleID(for: fileURL), !ruleIDs.contains(ruleID) else { continue }
-            try FileManager.default.removeItem(at: fileURL)
+        try stateLock.withLock {
+            let fileURLs = try FileManager.default.contentsOfDirectory(
+                at: directoryURL,
+                includingPropertiesForKeys: [.isRegularFileKey]
+            )
+            for fileURL in fileURLs {
+                let resourceValues = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
+                guard resourceValues.isRegularFile == true else { continue }
+                guard let ruleID = ruleID(for: fileURL), !ruleIDs.contains(ruleID) else {
+                    continue
+                }
+                try FileManager.default.removeItem(at: fileURL)
+            }
         }
     }
 
@@ -113,15 +106,14 @@ public final class RuntimeRepository: @unchecked Sendable {
         ruleID: UUID,
         _ mutation: (inout RuleRuntime) throws -> Void
     ) throws -> RuleRuntime {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard var runtime = try loadUnlocked(ruleID: ruleID) else {
-            throw PersistenceError.missingRuntime(ruleID)
+        try stateLock.withLock {
+            guard var runtime = try loadUnlocked(ruleID: ruleID) else {
+                throw PersistenceError.missingRuntime(ruleID)
+            }
+            try mutation(&runtime)
+            try saveUnlocked(runtime, ruleID: ruleID)
+            return runtime
         }
-        try mutation(&runtime)
-        try saveUnlocked(runtime, ruleID: ruleID)
-        return runtime
     }
 
     private func loadUnlocked(ruleID: UUID) throws -> RuleRuntime? {

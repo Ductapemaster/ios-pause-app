@@ -11,19 +11,22 @@ final class ShieldConfigExtension: ShieldConfigurationDataSource {
                 throw RuleLookupError.targetNotFound
             }
             let directoryURL = try AppGroupContainer().directoryURL()
-            guard let configuration = try ConfigurationStore(directoryURL: directoryURL).load() else {
-                throw RuleLookupError.targetNotFound
+            let stateLock = AppGroupFileLock(directoryURL: directoryURL)
+            presentation = try stateLock.withLock {
+                guard let configuration = try ConfigurationStore(directoryURL: directoryURL).load() else {
+                    throw RuleLookupError.targetNotFound
+                }
+                let resolvedRule = try RuleLookup.resolve(
+                    applicationToken: applicationToken,
+                    configuration: configuration,
+                    runtimeRepository: RuntimeRepository(directoryURL: directoryURL),
+                    now: Date()
+                )
+                return ShieldPresentation(
+                    rule: resolvedRule.rule,
+                    decision: resolvedRule.evaluation.decision
+                )
             }
-            let resolvedRule = try RuleLookup.resolve(
-                applicationToken: applicationToken,
-                configuration: configuration,
-                runtimeRepository: RuntimeRepository(directoryURL: directoryURL),
-                now: Date()
-            )
-            presentation = ShieldPresentation(
-                rule: resolvedRule.rule,
-                decision: resolvedRule.evaluation.decision
-            )
         } catch {
             presentation = .repair
         }

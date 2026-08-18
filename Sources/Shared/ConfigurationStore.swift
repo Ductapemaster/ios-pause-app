@@ -2,9 +2,11 @@ import Foundation
 
 public struct ConfigurationStore {
     private let file: AtomicJSONFile<ConfigurationDocument>
+    private let stateLock: AppGroupFileLock
 
     public init(directoryURL: URL) {
         file = AtomicJSONFile(url: directoryURL.appendingPathComponent("configuration.json"))
+        stateLock = AppGroupFileLock(directoryURL: directoryURL)
     }
 
     public init(appGroupContainer: AppGroupContainer = AppGroupContainer()) throws {
@@ -12,15 +14,19 @@ public struct ConfigurationStore {
     }
 
     public func load() throws -> ConfigurationDocument? {
-        guard let document = try file.load() else {
-            return nil
+        try stateLock.withLock {
+            guard let document = try file.load() else {
+                return nil
+            }
+            try document.validate()
+            return document
         }
-        try document.validate()
-        return document
     }
 
     public func save(_ document: ConfigurationDocument) throws {
-        try document.validate()
-        try file.save(document)
+        try stateLock.withLock {
+            try document.validate()
+            try file.save(document)
+        }
     }
 }

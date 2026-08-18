@@ -273,7 +273,7 @@ final class PauseActivationCoordinatorTests: XCTestCase {
         XCTAssertEqual(activate(), .configuration)
     }
 
-    func testUnreadableRuntimeRepairsWithoutRuntimeOrShieldMutation() {
+    func testUnreadableSelectedRuntimeRepairsAfterSafeGlobalMaintenance() {
         for error in [TestError.missingRuntime, TestError.unreadableRuntime] {
             var coordinator = PauseActivationCoordinator(configurationState: .knownGood)
             var cleanupCount = 0
@@ -290,8 +290,8 @@ final class PauseActivationCoordinatorTests: XCTestCase {
             )
 
             XCTAssertEqual(outcome, .repair)
-            XCTAssertEqual(cleanupCount, 0)
-            XCTAssertEqual(reconciliationCount, 0)
+            XCTAssertEqual(cleanupCount, 1)
+            XCTAssertEqual(reconciliationCount, 1)
         }
     }
 
@@ -331,7 +331,7 @@ final class PauseActivationCoordinatorTests: XCTestCase {
         }
     }
 
-    func testIntentResolutionPrecedesDestructiveMaintenance() {
+    func testSafeMaintenancePrecedesIntentResolution() {
         var coordinator = PauseActivationCoordinator(configurationState: .knownGood)
         var events: [String] = []
 
@@ -350,7 +350,7 @@ final class PauseActivationCoordinatorTests: XCTestCase {
         )
 
         XCTAssertEqual(outcome, .resolved("pause"))
-        XCTAssertEqual(events, ["consume", "resolve", "cleanup", "reconcile"])
+        XCTAssertEqual(events, ["cleanup", "reconcile", "consume", "resolve"])
     }
 
     func testGrantStartedSurvivesInactivityWithoutReconsumingIntent() {

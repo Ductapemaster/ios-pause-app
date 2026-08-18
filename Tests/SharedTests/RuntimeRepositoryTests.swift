@@ -56,12 +56,12 @@ final class RuntimeRepositoryTests: XCTestCase {
 
         XCTAssertTrue(stage.wasPresent)
         XCTAssertNil(try repository.load(ruleID: ruleID))
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directoryURL.path).count, 1)
+        XCTAssertEqual(try runtimeStateFilenames().count, 1)
 
         try repository.restoreRemoval(stage)
 
         XCTAssertEqual(try repository.load(ruleID: ruleID), original)
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directoryURL.path).count, 1)
+        XCTAssertEqual(try runtimeStateFilenames().count, 1)
     }
 
     func testFinalizingStagedRemovalDeletesTheStagedRuntime() throws {
@@ -72,7 +72,7 @@ final class RuntimeRepositoryTests: XCTestCase {
         try repository.finalizeRemoval(stage)
 
         XCTAssertNil(try repository.load(ruleID: ruleID))
-        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directoryURL.path).isEmpty)
+        XCTAssertTrue(try runtimeStateFilenames().isEmpty)
     }
 
     func testSecondStagingAttemptReusesStageWhenCanonicalRuntimeIsAbsent() throws {
@@ -85,7 +85,7 @@ final class RuntimeRepositoryTests: XCTestCase {
         XCTAssertEqual(retryStage, firstStage)
         XCTAssertNil(try repository.load(ruleID: ruleID))
         try repository.finalizeRemoval(retryStage)
-        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directoryURL.path).isEmpty)
+        XCTAssertTrue(try runtimeStateFilenames().isEmpty)
     }
 
     func testStagingWithStaleStageAndCanonicalRuntimeUsesCurrentCanonicalBytes() throws {
@@ -102,7 +102,7 @@ final class RuntimeRepositoryTests: XCTestCase {
         try repository.restoreRemoval(retryStage)
 
         XCTAssertEqual(try repository.load(ruleID: ruleID), current)
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directoryURL.path).count, 1)
+        XCTAssertEqual(try runtimeStateFilenames().count, 1)
     }
 
     func testFailedRestoreLeavesTheStagedRuntimeAvailableForRetry() throws {
@@ -306,5 +306,11 @@ final class RuntimeRepositoryTests: XCTestCase {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         return calendar
+    }
+
+    private func runtimeStateFilenames() throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: directoryURL.path).filter {
+            $0 != SharedIdentifiers.stateLockFilename
+        }
     }
 }

@@ -43,15 +43,18 @@ public final class ConfigurationShieldController: ShieldControlling {
     private let configuration: ConfigurationDocument
     private let reconciler: ShieldReconciler
     private let failedGrantBlockStore: any FailedGrantBlockStoring
+    private let stateLock: AppGroupFileLock?
 
     public init(
         configuration: ConfigurationDocument,
         reconciler: ShieldReconciler,
-        failedGrantBlockStore: any FailedGrantBlockStoring
+        failedGrantBlockStore: any FailedGrantBlockStoring,
+        stateLock: AppGroupFileLock? = nil
     ) {
         self.configuration = configuration
         self.reconciler = reconciler
         self.failedGrantBlockStore = failedGrantBlockStore
+        self.stateLock = stateLock
     }
 
     public func unshield(ruleID: UUID) throws {
@@ -63,6 +66,13 @@ public final class ConfigurationShieldController: ShieldControlling {
     }
 
     public func forceShieldForFailedGrant(ruleID: UUID) throws -> ForceShieldOutcome {
+        if let stateLock {
+            return try stateLock.withLock { try forceShieldForFailedGrantUnlocked(ruleID: ruleID) }
+        }
+        return try forceShieldForFailedGrantUnlocked(ruleID: ruleID)
+    }
+
+    private func forceShieldForFailedGrantUnlocked(ruleID: UUID) throws -> ForceShieldOutcome {
         let applicationToken = try reconciler.applicationToken(
             ruleID: ruleID,
             configuration: configuration
@@ -73,7 +83,7 @@ public final class ConfigurationShieldController: ShieldControlling {
         } catch {
             persistenceError = error
         }
-        reconciler.forceShield(applicationToken: applicationToken)
+        try reconciler.forceShield(applicationToken: applicationToken)
         if let persistenceError {
             return .immediateOnly(persistenceError)
         }

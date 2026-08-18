@@ -272,11 +272,12 @@ public struct PauseActivationCoordinator: Sendable {
             break
         }
 
+        cleanup()
+        reconcile()
+
         let intent: Intent
         do {
             guard let consumedIntent = try consumeIntent() else {
-                cleanup()
-                reconcile()
                 return .configuration
             }
             intent = consumedIntent
@@ -291,10 +292,6 @@ public struct PauseActivationCoordinator: Sendable {
             return .repair
         }
 
-        if resolution.performMaintenance {
-            cleanup()
-            reconcile()
-        }
         return .resolved(resolution.payload)
     }
 }

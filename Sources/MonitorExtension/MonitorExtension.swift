@@ -1,5 +1,6 @@
 import DeviceActivity
 import Foundation
+import OSLog
 
 final class MonitorExtension: DeviceActivityMonitor {
     override func intervalDidStart(for activity: DeviceActivityName) {}
@@ -15,24 +16,22 @@ final class MonitorExtension: DeviceActivityMonitor {
     }
 
     private func handle(activityName: String, warning: Bool) {
-        let work = {
-            MainActor.assumeIsolated {
-                guard let service = try? SessionReconciliationService() else { return }
-                let handler = SessionMonitorCallbackHandler { trigger, now in
-                    _ = service.reconcile(now: now, trigger: trigger)
+        let logger = Logger(subsystem: "com.koubalabs.pause.monitor", category: "reconciliation")
+        let runner = SessionMonitorReconciliationRunner(
+            makeReconcile: {
+                let service = try SessionReconciliationService()
+                return { trigger, now in
+                    service.reconcile(now: now, trigger: trigger)
                 }
-                if warning {
-                    handler.intervalWillEndWarning(activityName: activityName, now: Date())
-                } else {
-                    handler.intervalDidEnd(activityName: activityName, now: Date())
-                }
+            },
+            errorSink: { message in
+                logger.error("\(message, privacy: .public)")
             }
-        }
-
-        if Thread.isMainThread {
-            work()
+        )
+        if warning {
+            runner.intervalWillEndWarning(activityName: activityName, now: Date())
         } else {
-            DispatchQueue.main.sync(execute: work)
+            runner.intervalDidEnd(activityName: activityName, now: Date())
         }
     }
 }

@@ -112,6 +112,7 @@ final class AppModel: ObservableObject {
     private var configurationStore: ConfigurationStore?
     private var runtimeRepository: RuntimeRepository?
     private var failedGrantBlockStore: FailedGrantBlockStore?
+    private var stateLock: AppGroupFileLock?
     private var activationCoordinator = PauseActivationCoordinator(configurationState: .failed)
     private var isSceneActive = false
     private var authorizationStatusAtLastActivation: AuthorizationStatus?
@@ -168,6 +169,7 @@ final class AppModel: ObservableObject {
             self.configurationStore = configurationStore
             self.runtimeRepository = runtimeRepository
             failedGrantBlockStore = FailedGrantBlockStore(directoryURL: directoryURL)
+            stateLock = AppGroupFileLock(directoryURL: directoryURL)
 
             if let savedConfiguration = try configurationStore.load() {
                 configuration = savedConfiguration
@@ -267,7 +269,8 @@ final class AppModel: ObservableObject {
             shield = ConfigurationShieldController(
                 configuration: configuration,
                 reconciler: shieldReconciler,
-                failedGrantBlockStore: failedGrantBlockStore
+                failedGrantBlockStore: failedGrantBlockStore,
+                stateLock: stateLock
             )
         }
         let launcher = targetLauncher ?? AppLaunchRouter(configuration: configuration)
@@ -320,21 +323,38 @@ final class AppModel: ObservableObject {
         let coordinator = SessionReconciliationCoordinator(
             loadFailedGrantBlocks: failedGrantBlockStore.load
         )
-        let result = coordinator.resetRuntime(
-            ruleID: ruleID,
-            logicalDay: CalendarDay(date: now, calendar: .current),
-            saveRuntime: runtimeRepository.save,
-            clearFailedGrantBlock: failedGrantBlockStore.clear,
-            applyShields: { [self] in
-                guard canApplyManagedSettings else { return }
-                try shieldReconciler.reconcile(
-                    configuration: configuration,
-                    runtimeRepository: runtimeRepository,
-                    now: now,
-                    persistExpiredSessions: false
-                )
-            }
-        )
+        let reset = { [self] in
+            coordinator.resetRuntime(
+                ruleID: ruleID,
+                logicalDay: CalendarDay(date: now, calendar: .current),
+                saveRuntime: runtimeRepository.save,
+                clearFailedGrantBlock: failedGrantBlockStore.clear,
+                applyShields: {
+                    guard canApplyManagedSettings else { return }
+                    try shieldReconciler.reconcile(
+                        configuration: configuration,
+                        runtimeRepository: runtimeRepository,
+                        now: now,
+                        persistExpiredSessions: false
+                    )
+                }
+            )
+        }
+        let result: SessionReconciliationResult
+        do {
+            result = try stateLock?.withLock(reset) ?? reset()
+        } catch {
+            result = SessionReconciliationResult(
+                repairRuleIDs: [ruleID],
+                issues: [
+                    SessionReconciliationIssue(
+                        ruleID: ruleID,
+                        operation: .acquireStateLock,
+                        underlyingError: error
+                    )
+                ]
+            )
+        }
         guard result.issues.isEmpty else {
             presentedError = AppError(title: "Couldn't reset this app", error: result)
             if let content = runtimeRepairContent(for: ruleID) {
@@ -776,47 +796,57 @@ final class AppModel: ObservableObject {
         configurationStore: ConfigurationStore,
         runtimeRepository: RuntimeRepository
     ) throws -> RuleRemovalOutcome {
+        guard let failedGrantBlockStore else {
+            throw AppModelError.storageUnavailable
+        }
         let previousConfiguration = configuration
-        return try ruleRemovalCoordinator.remove(
-            ruleIDs: ruleIDs,
-            stageRuntime: { ruleID in
-                try runtimeRepository.stageRemoval(ruleID: ruleID)
-            },
-            restoreRuntime: { stage in
-                try runtimeRepository.restoreRemoval(stage)
-            },
-            finalizeRuntime: { stage in
-                try runtimeRepository.finalizeRemoval(stage)
-            },
-            unshield: { ruleID in
-                guard canApplyManagedSettings else { return }
-                try shieldReconciler.unshield(
-                    ruleID: ruleID,
-                    configuration: previousConfiguration
-                )
-            },
-            restoreShields: { failedRuntimeRestores in
-                guard canApplyManagedSettings else { return }
-                try shieldReconciler.reconcile(
-                    configuration: previousConfiguration,
-                    runtimeRepository: runtimeRepository,
-                    now: Date(),
-                    forceShieldedRuleIDs: failedRuntimeRestores
-                )
-            },
-            commitConfiguration: {
-                try configurationStore.save(nextConfiguration)
-            },
-            stopMonitoring: { ruleIDs in
-                activityCenter.stopMonitoring(
-                    ruleIDs.map { ruleID in
-                        DeviceActivityName(
-                            SessionActivityName.sessionActivityName(for: ruleID)
-                        )
-                    }
-                )
-            }
-        )
+        let removal = { [self] in
+            try ruleRemovalCoordinator.remove(
+                ruleIDs: ruleIDs,
+                stageRuntime: { ruleID in
+                    try runtimeRepository.stageRemoval(ruleID: ruleID)
+                },
+                restoreRuntime: { stage in
+                    try runtimeRepository.restoreRemoval(stage)
+                },
+                finalizeRuntime: { stage in
+                    try runtimeRepository.finalizeRemoval(stage)
+                },
+                unshield: { ruleID in
+                    guard canApplyManagedSettings else { return }
+                    try shieldReconciler.unshield(
+                        ruleID: ruleID,
+                        configuration: previousConfiguration
+                    )
+                },
+                restoreShields: { failedRuntimeRestores in
+                    guard canApplyManagedSettings else { return }
+                    try shieldReconciler.reconcile(
+                        configuration: previousConfiguration,
+                        runtimeRepository: runtimeRepository,
+                        now: Date(),
+                        forceShieldedRuleIDs: failedRuntimeRestores
+                    )
+                },
+                commitConfiguration: {
+                    try configurationStore.save(nextConfiguration)
+                },
+                clearFailedGrantBlock: failedGrantBlockStore.clear,
+                stopMonitoring: { ruleIDs in
+                    activityCenter.stopMonitoring(
+                        ruleIDs.map { ruleID in
+                            DeviceActivityName(
+                                SessionActivityName.sessionActivityName(for: ruleID)
+                            )
+                        }
+                    )
+                }
+            )
+        }
+        if let stateLock {
+            return try stateLock.withLock(removal)
+        }
+        return try removal()
     }
 
     private func presentRemovalCleanupErrors(_ errors: [Error]) {
@@ -861,22 +891,39 @@ final class AppModel: ObservableObject {
         let coordinator = SessionReconciliationCoordinator(
             loadFailedGrantBlocks: failedGrantBlockStore.load
         )
-        let result = coordinator.reconcile(
-            ruleIDs: configuration.rules.map(\.id),
-            now: now,
-            trigger: .appActivation,
-            loadRuntime: runtimeRepository.load,
-            saveRuntime: runtimeRepository.save,
-            clearFailedGrantBlock: failedGrantBlockStore.clear,
-            applyShields: { [self] in
-                try shieldReconciler.reconcile(
-                    configuration: configuration,
-                    runtimeRepository: runtimeRepository,
-                    now: now
-                )
-            },
-            stopMonitoring: { _ in }
-        )
+        let reconcile = { [self] in
+            coordinator.reconcile(
+                ruleIDs: configuration.rules.map(\.id),
+                now: now,
+                trigger: .appActivation,
+                loadRuntime: runtimeRepository.load,
+                saveRuntime: runtimeRepository.save,
+                clearFailedGrantBlock: failedGrantBlockStore.clear,
+                applyShields: {
+                    try shieldReconciler.reconcile(
+                        configuration: configuration,
+                        runtimeRepository: runtimeRepository,
+                        now: now
+                    )
+                },
+                stopMonitoring: { _ in }
+            )
+        }
+        let result: SessionReconciliationResult
+        do {
+            result = try stateLock?.withLock(reconcile) ?? reconcile()
+        } catch {
+            result = SessionReconciliationResult(
+                repairRuleIDs: Set(configuration.rules.map(\.id)),
+                issues: [
+                    SessionReconciliationIssue(
+                        ruleID: nil,
+                        operation: .acquireStateLock,
+                        underlyingError: error
+                    )
+                ]
+            )
+        }
         if let ruleID = result.repairRuleIDs.sorted(by: {
             $0.uuidString < $1.uuidString
         }).first {

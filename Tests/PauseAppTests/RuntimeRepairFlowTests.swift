@@ -28,6 +28,11 @@ final class RuntimeRepairFlowTests: XCTestCase {
 
     func testShieldIntentWithCorruptRuntimeShowsTheAffectedAppleToken() throws {
         let harness = try makeHarness(corruptSelectedRuntime: true)
+        let repository = RuntimeRepository(directoryURL: harness.directory)
+        try repository.save(
+            runtime(ruleID: untouchedRuleID, state: .active, expiresIn: -60),
+            ruleID: untouchedRuleID
+        )
         try ShieldIntentStore(defaults: harness.defaults).write(
             ShieldIntent(applicationToken: harness.selectedToken, createdAt: now)
         )
@@ -39,6 +44,29 @@ final class RuntimeRepairFlowTests: XCTestCase {
         }
         XCTAssertEqual(content.applicationToken, harness.selectedToken)
         XCTAssertEqual(content.runtimeResetRuleID, selectedRuleID)
+        XCTAssertNil(try repository.load(ruleID: untouchedRuleID)?.openSession)
+    }
+
+    func testMismatchedIntentKeepsRepairRouteAndRecoversUnrelatedProvisionalSession() throws {
+        let harness = try makeHarness(corruptSelectedRuntime: false)
+        let repository = RuntimeRepository(directoryURL: harness.directory)
+        try repository.save(
+            runtime(ruleID: otherRuleID, state: .provisional, expiresIn: 60),
+            ruleID: otherRuleID
+        )
+        let unknownToken = try token(
+            for: UUID(uuidString: "79138656-b105-4c14-996f-909251fa1c90")!
+        )
+        try ShieldIntentStore(defaults: harness.defaults).write(
+            ShieldIntent(applicationToken: unknownToken, createdAt: now)
+        )
+
+        harness.model.sceneDidBecomeActive(now: now)
+
+        guard case .repair = harness.model.entryRoute else {
+            return XCTFail("The mismatched intent repair route must be preserved")
+        }
+        XCTAssertEqual(try repository.load(ruleID: otherRuleID)?.openSession?.state, .active)
     }
 
     func testActivationPromotesOrdinaryProvisionalButNotMarkedProvisional() throws {
@@ -88,6 +116,21 @@ final class RuntimeRepairFlowTests: XCTestCase {
         guard case .configuration = harness.model.entryRoute else {
             return XCTFail("Successful confirmed reset should return to the app list")
         }
+    }
+
+    func testSuccessfulRuleRemovalClearsOnlyRemovedMarkerAfterConfigurationCommit() throws {
+        let harness = try makeHarness(corruptSelectedRuntime: false)
+        let markers = FailedGrantBlockStore(directoryURL: harness.directory)
+        try markers.add(ruleID: selectedRuleID)
+        try markers.add(ruleID: otherRuleID)
+
+        try harness.model.removeRule(id: selectedRuleID)
+
+        XCTAssertFalse(try markers.contains(ruleID: selectedRuleID))
+        XCTAssertTrue(try markers.contains(ruleID: otherRuleID))
+        let saved = try XCTUnwrap(ConfigurationStore(directoryURL: harness.directory).load())
+        XCTAssertFalse(saved.rules.contains(where: { $0.id == selectedRuleID }))
+        XCTAssertTrue(saved.rules.contains(where: { $0.id == otherRuleID }))
     }
 
     private func makeHarness(corruptSelectedRuntime: Bool) throws -> RuntimeRepairHarness {

@@ -99,14 +99,46 @@ final class RuleRemovalCoordinatorTests: XCTestCase {
             unshield: { _ in events.append("unshield") },
             restoreShields: { _ in events.append("restore-shields") },
             commitConfiguration: { events.append("commit") },
+            clearFailedGrantBlock: { _ in events.append("clear-marker") },
             stopMonitoring: { _ in events.append("stop-monitoring") }
         )
 
         XCTAssertTrue(outcome.cleanupErrors.isEmpty)
         XCTAssertEqual(
             events,
-            ["stage", "unshield", "commit", "stop-monitoring", "finalize-runtime"]
+            ["stage", "unshield", "commit", "clear-marker", "stop-monitoring", "finalize-runtime"]
         )
+    }
+
+    func testMarkerClearFailureIsPostcommitCleanupAndDoesNotRestoreRemovedState() throws {
+        var events: [String] = []
+
+        let outcome = try RuleRemovalCoordinator().remove(
+            ruleIDs: [ruleID],
+            stageRuntime: { id in
+                events.append("stage")
+                return StagedRuntimeRemoval(ruleID: id, wasPresent: true)
+            },
+            restoreRuntime: { _ in events.append("restore-runtime") },
+            finalizeRuntime: { _ in events.append("finalize-runtime") },
+            unshield: { _ in events.append("unshield") },
+            restoreShields: { _ in events.append("restore-shields") },
+            commitConfiguration: { events.append("commit") },
+            clearFailedGrantBlock: { id in
+                XCTAssertEqual(id, self.ruleID)
+                events.append("clear-marker")
+                throw TestError.markerClear
+            },
+            stopMonitoring: { _ in events.append("stop-monitoring") }
+        )
+
+        XCTAssertEqual(
+            events,
+            ["stage", "unshield", "commit", "clear-marker", "stop-monitoring", "finalize-runtime"]
+        )
+        XCTAssertEqual(outcome.cleanupErrors.compactMap { $0 as? TestError }, [.markerClear])
+        XCTAssertFalse(events.contains("restore-runtime"))
+        XCTAssertFalse(events.contains("restore-shields"))
     }
 
     func testFailurePreservesPrimaryAndEveryRepairFailure() {
@@ -180,6 +212,7 @@ final class RuleRemovalCoordinatorTests: XCTestCase {
         case configuration
         case runtimeRestore
         case shieldRestore
+        case markerClear
 
         var errorDescription: String? {
             switch self {
@@ -187,6 +220,7 @@ final class RuleRemovalCoordinatorTests: XCTestCase {
             case .configuration: "configuration failed"
             case .runtimeRestore: "runtime restore failed"
             case .shieldRestore: "shield restore failed"
+            case .markerClear: "marker clear failed"
             }
         }
     }

@@ -3,6 +3,7 @@ import PauseCore
 
 public enum SessionReconciliationOperation: Equatable, Sendable {
     case loadConfiguration
+    case acquireStateLock
     case findRule
     case loadRuntime
     case saveRuntime
@@ -21,6 +22,7 @@ public struct SessionReconciliationIssue: LocalizedError {
         let action: String
         switch operation {
         case .loadConfiguration: action = "read saved app rules"
+        case .acquireStateLock: action = "lock shared app state"
         case .findRule: action = "match the expiry activity to a rule"
         case .loadRuntime: action = "read session data"
         case .saveRuntime: action = "save repaired session data"

@@ -66,6 +66,7 @@ public struct RuleRemovalCoordinator {
         unshield: (UUID) throws -> Void,
         restoreShields: (Set<UUID>) throws -> Void,
         commitConfiguration: () throws -> Void,
+        clearFailedGrantBlock: (UUID) throws -> Void = { _ in },
         stopMonitoring: ([UUID]) -> Void
     ) throws -> RuleRemovalOutcome {
         var stages: [StagedRuntimeRemoval] = []
@@ -102,9 +103,17 @@ public struct RuleRemovalCoordinator {
             )
         }
 
+        var cleanupErrors: [Error] = []
+        for ruleID in ruleIDs {
+            do {
+                try clearFailedGrantBlock(ruleID)
+            } catch {
+                cleanupErrors.append(error)
+            }
+        }
+
         stopMonitoring(ruleIDs)
 
-        var cleanupErrors: [Error] = []
         for stage in stages {
             do {
                 try finalizeRuntime(stage)
