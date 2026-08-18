@@ -1,0 +1,83 @@
+import Foundation
+import XCTest
+@testable import PauseCore
+
+final class RuleRuntimeTests: XCTestCase {
+    private let day = CalendarDay(
+        date: Date(timeIntervalSince1970: 1_768_464_000),
+        calendar: RuleRuntimeTests.utcGregorian
+    )
+
+    private static var utcGregorian: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        return calendar
+    }
+
+    func testReserveActivatesAndRollsBackAProvisionalSession() throws {
+        var runtime = RuleRuntime(logicalDay: day, sessionsStarted: 0)
+        let expiry = Date(timeIntervalSince1970: 1_768_464_060)
+
+        try runtime.reserve(activityName: "session.rule", expiresAt: expiry)
+        XCTAssertEqual(runtime.sessionsStarted, 1)
+        XCTAssertEqual(runtime.openSession?.state, .provisional)
+
+        try runtime.rollBackReservedSession()
+        XCTAssertEqual(runtime.sessionsStarted, 0)
+        XCTAssertNil(runtime.openSession)
+
+        try runtime.reserve(activityName: "session.rule", expiresAt: expiry)
+        try runtime.activateReservedSession()
+        XCTAssertEqual(runtime.openSession?.state, .active)
+        XCTAssertThrowsError(try runtime.rollBackReservedSession())
+    }
+
+    func testReserveRejectsAnAlreadyOpenSession() throws {
+        var runtime = RuleRuntime(logicalDay: day, sessionsStarted: 0)
+        try runtime.reserve(activityName: "session.rule", expiresAt: Date(timeIntervalSince1970: 1_768_464_060))
+
+        XCTAssertThrowsError(
+            try runtime.reserve(activityName: "session.other", expiresAt: Date(timeIntervalSince1970: 1_768_464_120))
+        )
+        XCTAssertEqual(runtime.sessionsStarted, 1)
+    }
+
+    func testRolloverResetsCountButKeepsAnUnexpiredSession() throws {
+        var runtime = RuleRuntime(
+            logicalDay: day,
+            sessionsStarted: 2,
+            openSession: OpenSession(
+                activityName: "session.rule",
+                expiresAt: Date(timeIntervalSince1970: 1_768_464_060),
+                state: .active
+            )
+        )
+        let nextDay = CalendarDay(
+            date: Date(timeIntervalSince1970: 1_768_550_400),
+            calendar: Self.utcGregorian
+        )
+
+        runtime.rollOver(to: nextDay)
+
+        XCTAssertEqual(runtime.logicalDay, nextDay)
+        XCTAssertEqual(runtime.sessionsStarted, 0)
+        XCTAssertNotNil(runtime.openSession)
+    }
+
+    func testClearExpiredSessionRemovesTheOpenSession() throws {
+        var runtime = RuleRuntime(
+            logicalDay: day,
+            sessionsStarted: 1,
+            openSession: OpenSession(
+                activityName: "session.rule",
+                expiresAt: Date(timeIntervalSince1970: 1_768_464_060),
+                state: .provisional
+            )
+        )
+
+        runtime.clearExpiredSession(at: Date(timeIntervalSince1970: 1_768_464_060))
+
+        XCTAssertNil(runtime.openSession)
+        XCTAssertEqual(runtime.sessionsStarted, 1)
+    }
+}
