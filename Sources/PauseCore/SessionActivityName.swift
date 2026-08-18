@@ -9,6 +9,8 @@ public enum SessionActivityName {
 
     public static func ruleID(fromSessionActivityName name: String) -> UUID? {
         guard name.hasPrefix(prefix) else { return nil }
-        return UUID(uuidString: String(name.dropFirst(prefix.count)))
+        let identifier = String(name.dropFirst(prefix.count))
+        guard identifier.count == 36, identifier == identifier.lowercased() else { return nil }
+        return UUID(uuidString: identifier)
     }
 }
