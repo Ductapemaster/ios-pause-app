@@ -130,6 +130,13 @@ public enum ConfigurationLoadState: Equatable, Sendable {
     case failed
 }
 
+public enum ConfigurationMutation: Equatable, Sendable {
+    case pickerSelection
+    case ruleEdit
+    case globalSettingsEdit
+    case ruleRemoval
+}
+
 public struct PauseActivationResolution<Payload> {
     public let payload: Payload
     public let performMaintenance: Bool
@@ -166,6 +173,7 @@ public struct PauseActivationCoordinator: Sendable {
 
     public mutating func configurationBecameKnownGood() {
         configurationState = .knownGood
+        hasProtectedState = false
     }
 
     public mutating func configurationWasMissing(hasProtectedState: Bool = false) {
@@ -175,6 +183,45 @@ public struct PauseActivationCoordinator: Sendable {
 
     public mutating func configurationLoadFailed() {
         configurationState = .failed
+    }
+
+    public mutating func configurationSaveCompleted(successfully: Bool) {
+        guard successfully else { return }
+        guard allowsConfigurationMutation(.pickerSelection) else { return }
+        configurationBecameKnownGood()
+    }
+
+    public mutating func authorizationDidChange() {
+        hasHandledCurrentActivation = false
+    }
+
+    public var requiresConfigurationRepair: Bool {
+        switch configurationState {
+        case .failed:
+            true
+        case .missing:
+            hasProtectedState
+        case .knownGood:
+            false
+        }
+    }
+
+    public var canDismissConfigurationRepair: Bool {
+        !requiresConfigurationRepair
+    }
+
+    public func allowsConfigurationMutation(_ mutation: ConfigurationMutation) -> Bool {
+        switch (configurationState, mutation) {
+        case (.knownGood, _):
+            true
+        case (.missing, .pickerSelection):
+            !hasProtectedState
+        case (.missing, .ruleEdit),
+             (.missing, .globalSettingsEdit),
+             (.missing, .ruleRemoval),
+             (.failed, _):
+            false
+        }
     }
 
     public mutating func countdownDidStart() {
@@ -204,22 +251,22 @@ public struct PauseActivationCoordinator: Sendable {
         guard !hasHandledCurrentActivation else { return .unchanged }
         hasHandledCurrentActivation = true
 
-        guard isAuthorized else { return .configuration }
         guard foregroundState != .grantStarted else { return .unchanged }
+
+        if requiresConfigurationRepair {
+            _ = try? consumeIntent()
+            return .repair
+        }
+        guard isAuthorized else { return .configuration }
 
         switch configurationState {
         case .missing:
-            if hasProtectedState {
-                _ = try? consumeIntent()
-                return .repair
-            }
             do {
                 return try consumeIntent() == nil ? .configuration : .repair
             } catch {
                 return .repair
             }
         case .failed:
-            _ = try? consumeIntent()
             return .repair
         case .knownGood:
             break

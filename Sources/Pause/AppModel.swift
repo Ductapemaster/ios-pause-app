@@ -43,6 +43,7 @@ enum AppEntryRoute {
 
 enum AppModelError: LocalizedError {
     case storageUnavailable
+    case unsafeConfiguration
     case ruleNotFound
     case invalidSessionsPerDay
     case invalidSessionLength
@@ -52,6 +53,8 @@ enum AppModelError: LocalizedError {
         switch self {
         case .storageUnavailable:
             "Pause cannot reach its shared storage. Close and reopen the app, then try again."
+        case .unsafeConfiguration:
+            "Pause cannot change rules until its saved configuration can be read safely."
         case .ruleNotFound:
             "This app rule no longer exists. Return to the app list and try again."
         case .invalidSessionsPerDay:
@@ -169,6 +172,10 @@ final class AppModel: ObservableObject {
     }
 
     func returnToConfiguration() {
+        guard activationCoordinator.canDismissConfigurationRepair else {
+            entryRoute = .repair(configurationSafetyRepairContent)
+            return
+        }
         isGrantRequested = false
         activationCoordinator.returnedToConfiguration()
         entryRoute = .configuration
@@ -178,9 +185,12 @@ final class AppModel: ObservableObject {
         do {
             try await authorizationCenter.requestAuthorization(for: .individual)
             authorizationStatus = authorizationCenter.authorizationStatus
-            reconcileShieldsIfAuthorized()
+            activationCoordinator.authorizationDidChange()
+            sceneDidBecomeActive()
         } catch {
             authorizationStatus = authorizationCenter.authorizationStatus
+            activationCoordinator.authorizationDidChange()
+            sceneDidBecomeActive()
             presentedError = AppError(title: "Screen Time access wasn't granted", error: error)
         }
     }
@@ -189,9 +199,7 @@ final class AppModel: ObservableObject {
         guard let configurationStore, let runtimeRepository else {
             throw AppModelError.storageUnavailable
         }
-        guard activationCoordinator.configurationState != .failed else {
-            throw AppModelError.storageUnavailable
-        }
+        try requireConfigurationMutation(.pickerSelection)
 
         let selectedTokens = pickerSelection.applicationTokens
         let existingTargets = configuration.targets
@@ -258,15 +266,18 @@ final class AppModel: ObservableObject {
                 )
             }
             configuration = nextConfiguration
-            activationCoordinator.configurationBecameKnownGood()
+            activationCoordinator.configurationSaveCompleted(successfully: true)
         } catch let changeError {
+            activationCoordinator.configurationSaveCompleted(successfully: false)
             var repairErrors: [Error] = []
-            do {
-                try runtimeRepository.deleteOrphanedRuntimes(
-                    keeping: Set(configuration.rules.map(\.id))
-                )
-            } catch {
-                repairErrors.append(error)
+            if activationCoordinator.configurationState == .knownGood {
+                do {
+                    try runtimeRepository.deleteOrphanedRuntimes(
+                        keeping: Set(configuration.rules.map(\.id))
+                    )
+                } catch {
+                    repairErrors.append(error)
+                }
             }
 
             if let removalFailure = changeError as? RuleRemovalFailure {
@@ -289,6 +300,7 @@ final class AppModel: ObservableObject {
     }
 
     func updateRule(id: UUID, sessionsPerDay: Int, sessionLengthMinutes: Int) throws {
+        try requireConfigurationMutation(.ruleEdit)
         guard (1...20).contains(sessionsPerDay) else {
             throw AppModelError.invalidSessionsPerDay
         }
@@ -308,12 +320,18 @@ final class AppModel: ObservableObject {
             sessionsPerDay: sessionsPerDay,
             sessionLengthMinutes: sessionLengthMinutes
         )
-        try configurationStore.save(nextConfiguration)
+        do {
+            try configurationStore.save(nextConfiguration)
+        } catch {
+            activationCoordinator.configurationSaveCompleted(successfully: false)
+            throw error
+        }
         configuration = nextConfiguration
         reconcileShieldsIfAuthorized(title: "Rule saved, but shields need repair")
     }
 
     func updatePauseSeconds(_ seconds: Int) throws {
+        try requireConfigurationMutation(.globalSettingsEdit)
         guard (1...120).contains(seconds) else {
             throw AppModelError.invalidPauseDuration
         }
@@ -323,11 +341,17 @@ final class AppModel: ObservableObject {
 
         var nextConfiguration = configuration
         nextConfiguration.settings = try GlobalSettings(pauseSeconds: seconds)
-        try configurationStore.save(nextConfiguration)
+        do {
+            try configurationStore.save(nextConfiguration)
+        } catch {
+            activationCoordinator.configurationSaveCompleted(successfully: false)
+            throw error
+        }
         configuration = nextConfiguration
     }
 
     func removeRule(id: UUID) throws {
+        try requireConfigurationMutation(.ruleRemoval)
         guard let configurationStore, let runtimeRepository else {
             throw AppModelError.storageUnavailable
         }
@@ -340,12 +364,18 @@ final class AppModel: ObservableObject {
             rules: configuration.rules.filter { $0.id != id },
             targets: configuration.targets.filter { $0.ruleID != id }
         )
-        let removalOutcome = try commitRuleRemoval(
-            ruleIDs: [id],
-            nextConfiguration: nextConfiguration,
-            configurationStore: configurationStore,
-            runtimeRepository: runtimeRepository
-        )
+        let removalOutcome: RuleRemovalOutcome
+        do {
+            removalOutcome = try commitRuleRemoval(
+                ruleIDs: [id],
+                nextConfiguration: nextConfiguration,
+                configurationStore: configurationStore,
+                runtimeRepository: runtimeRepository
+            )
+        } catch {
+            activationCoordinator.configurationSaveCompleted(successfully: false)
+            throw error
+        }
 
         configuration = nextConfiguration
         pickerSelection.applicationTokens.remove(target.applicationToken)
@@ -357,6 +387,27 @@ final class AppModel: ObservableObject {
         presentedError = AppError(title: title, error: error)
     }
 
+    var requiresConfigurationRepair: Bool {
+        activationCoordinator.requiresConfigurationRepair
+    }
+
+    var configurationSafetyRepairContent: RepairContent {
+        switch activationCoordinator.configurationState {
+        case .failed:
+            RepairContent(
+                applicationToken: nil,
+                title: "Pause couldn't load its configuration",
+                message: "Saved rules couldn't be read safely. Existing apps remain blocked. Close and reopen Pause after repairing the saved data."
+            )
+        case .missing, .knownGood:
+            RepairContent(
+                applicationToken: nil,
+                title: "Pause can't safely rebuild its app list",
+                message: "Saved rules are missing while protected app state remains. Existing apps stay blocked."
+            )
+        }
+    }
+
     private func cleanupOrphanedRuntimes() {
         guard activationCoordinator.configurationState == .knownGood,
               let runtimeRepository else { return }
@@ -366,6 +417,12 @@ final class AppModel: ObservableObject {
             )
         } catch {
             presentedError = AppError(title: "Couldn't finish app-data cleanup", error: error)
+        }
+    }
+
+    private func requireConfigurationMutation(_ mutation: ConfigurationMutation) throws {
+        guard activationCoordinator.allowsConfigurationMutation(mutation) else {
+            throw AppModelError.unsafeConfiguration
         }
     }
 

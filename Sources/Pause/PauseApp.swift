@@ -8,7 +8,12 @@ struct PauseApp: App {
     var body: some Scene {
         WindowGroup {
             NavigationStack {
-                if model.hasScreenTimeAuthorization {
+                if model.requiresConfigurationRepair {
+                    RepairView(
+                        content: model.configurationSafetyRepairContent,
+                        onDismiss: nil
+                    )
+                } else if model.hasScreenTimeAuthorization {
                     authorizedContent
                 } else {
                     AuthorizationView(model: model)

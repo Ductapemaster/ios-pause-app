@@ -398,4 +398,113 @@ final class PauseActivationCoordinatorTests: XCTestCase {
         XCTAssertEqual(outcome, .repair)
         XCTAssertEqual(maintenanceCount, 0)
     }
+
+    func testUnsafeConfigurationCannotDismissOrMutateThroughAppFlowPolicy() {
+        let unsafeCoordinators = [
+            PauseActivationCoordinator(configurationState: .failed),
+            PauseActivationCoordinator(configurationState: .missing, hasProtectedState: true)
+        ]
+
+        for coordinator in unsafeCoordinators {
+            XCTAssertTrue(coordinator.requiresConfigurationRepair)
+            XCTAssertFalse(coordinator.canDismissConfigurationRepair)
+            XCTAssertFalse(coordinator.allowsConfigurationMutation(.pickerSelection))
+            XCTAssertFalse(coordinator.allowsConfigurationMutation(.ruleEdit))
+            XCTAssertFalse(coordinator.allowsConfigurationMutation(.globalSettingsEdit))
+            XCTAssertFalse(coordinator.allowsConfigurationMutation(.ruleRemoval))
+        }
+    }
+
+    func testUnsafeConfigurationPrecedesAuthorizationAndCannotBeBypassedWhenAuthorizationChanges() {
+        var coordinator = PauseActivationCoordinator(configurationState: .failed)
+        var cleanupCount = 0
+        var reconciliationCount = 0
+
+        func activate(isAuthorized: Bool) -> PauseActivationOutcome<String> {
+            coordinator.activate(
+                isAuthorized: isAuthorized,
+                consumeIntent: { nil as Int? },
+                resolveIntent: { _ in
+                    PauseActivationResolution(payload: "pause", performMaintenance: true)
+                },
+                cleanup: { cleanupCount += 1 },
+                reconcile: { reconciliationCount += 1 }
+            )
+        }
+
+        XCTAssertEqual(activate(isAuthorized: false), .repair)
+        coordinator.authorizationDidChange()
+        XCTAssertEqual(activate(isAuthorized: true), .repair)
+        XCTAssertEqual(cleanupCount, 0)
+        XCTAssertEqual(reconciliationCount, 0)
+    }
+
+    func testFreshMissingConfigurationRemainsEditableAcrossAuthorizationChange() {
+        var coordinator = PauseActivationCoordinator(configurationState: .missing)
+
+        XCTAssertFalse(coordinator.requiresConfigurationRepair)
+        XCTAssertTrue(coordinator.canDismissConfigurationRepair)
+        XCTAssertTrue(coordinator.allowsConfigurationMutation(.pickerSelection))
+        XCTAssertFalse(coordinator.allowsConfigurationMutation(.ruleEdit))
+
+        let unauthorized: PauseActivationOutcome<String> = coordinator.activate(
+            isAuthorized: false,
+            consumeIntent: { nil as Int? },
+            resolveIntent: { _ in
+                PauseActivationResolution(payload: "pause", performMaintenance: true)
+            },
+            cleanup: {},
+            reconcile: {}
+        )
+        XCTAssertEqual(unauthorized, .configuration)
+
+        coordinator.authorizationDidChange()
+        let authorized: PauseActivationOutcome<String> = coordinator.activate(
+            isAuthorized: true,
+            consumeIntent: { nil as Int? },
+            resolveIntent: { _ in
+                PauseActivationResolution(payload: "pause", performMaintenance: true)
+            },
+            cleanup: {},
+            reconcile: {}
+        )
+        XCTAssertEqual(authorized, .configuration)
+    }
+
+    func testPickerSaveOnlyLegitimizesFreshMissingStateAfterSuccess() {
+        var fresh = PauseActivationCoordinator(configurationState: .missing)
+        fresh.configurationSaveCompleted(successfully: false)
+        XCTAssertEqual(fresh.configurationState, .missing)
+        XCTAssertTrue(fresh.allowsConfigurationMutation(.pickerSelection))
+        XCTAssertFalse(fresh.allowsConfigurationMutation(.ruleEdit))
+
+        fresh.configurationSaveCompleted(successfully: true)
+        XCTAssertEqual(fresh.configurationState, .knownGood)
+        XCTAssertTrue(fresh.allowsConfigurationMutation(.ruleEdit))
+        XCTAssertTrue(fresh.allowsConfigurationMutation(.globalSettingsEdit))
+        XCTAssertTrue(fresh.allowsConfigurationMutation(.ruleRemoval))
+
+        var protected = PauseActivationCoordinator(
+            configurationState: .missing,
+            hasProtectedState: true
+        )
+        protected.configurationSaveCompleted(successfully: false)
+        XCTAssertEqual(protected.configurationState, .missing)
+        XCTAssertTrue(protected.requiresConfigurationRepair)
+        XCTAssertFalse(protected.allowsConfigurationMutation(.pickerSelection))
+
+        var failed = PauseActivationCoordinator(configurationState: .failed)
+        failed.configurationSaveCompleted(successfully: false)
+        XCTAssertEqual(failed.configurationState, .failed)
+        XCTAssertFalse(failed.allowsConfigurationMutation(.pickerSelection))
+    }
+
+    func testKnownGoodConfigurationAllowsExistingTaskFourMutations() {
+        let coordinator = PauseActivationCoordinator(configurationState: .knownGood)
+
+        XCTAssertTrue(coordinator.allowsConfigurationMutation(.pickerSelection))
+        XCTAssertTrue(coordinator.allowsConfigurationMutation(.ruleEdit))
+        XCTAssertTrue(coordinator.allowsConfigurationMutation(.globalSettingsEdit))
+        XCTAssertTrue(coordinator.allowsConfigurationMutation(.ruleRemoval))
+    }
 }

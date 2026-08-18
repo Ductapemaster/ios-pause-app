@@ -2,7 +2,7 @@ import SwiftUI
 
 struct RepairView: View {
     let content: RepairContent
-    let onDismiss: () -> Void
+    let onDismiss: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -21,8 +21,10 @@ struct RepairView: View {
             Text(content.message)
                 .foregroundStyle(.secondary)
 
-            Button("Back to app list", action: onDismiss)
-                .buttonStyle(.borderedProminent)
+            if let onDismiss {
+                Button("Back to app list", action: onDismiss)
+                    .buttonStyle(.borderedProminent)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(24)
