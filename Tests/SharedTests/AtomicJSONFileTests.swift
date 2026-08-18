@@ -82,6 +82,24 @@ final class AtomicJSONFileTests: XCTestCase {
         XCTAssertNil(try store.load())
     }
 
+    func testLoadRejectsMismatchedConfigurationWithoutChangingItsJSON() throws {
+        let store = ConfigurationStore(directoryURL: directoryURL)
+        let ruleID = UUID(uuidString: "A1623BFB-03A7-47D4-A1B5-9ECFC4F47DE4")!
+        let document = try ConfigurationDocument(
+            settings: GlobalSettings(pauseSeconds: 10),
+            rules: [AppRule(id: ruleID, sessionsPerDay: 1, sessionLengthMinutes: 15)],
+            targets: []
+        )
+        let configurationURL = directoryURL.appendingPathComponent("configuration.json")
+        let originalData = try JSONEncoder().encode(document)
+        try originalData.write(to: configurationURL)
+
+        XCTAssertThrowsError(try store.load()) { error in
+            XCTAssertEqual(error as? ConfigurationError, .missingTarget(ruleID))
+        }
+        XCTAssertEqual(try Data(contentsOf: configurationURL), originalData)
+    }
+
     func testInstagramLaunchRouteUsesPublicApplicationMetadata() {
         XCTAssertEqual(
             LaunchRoute.detected(for: ManagedSettings.Application(bundleIdentifier: "com.burbn.instagram")),

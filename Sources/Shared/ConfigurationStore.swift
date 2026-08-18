@@ -12,7 +12,11 @@ public struct ConfigurationStore {
     }
 
     public func load() throws -> ConfigurationDocument? {
-        try file.load()
+        guard let document = try file.load() else {
+            return nil
+        }
+        try document.validate()
+        return document
     }
 
     public func save(_ document: ConfigurationDocument) throws {
