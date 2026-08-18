@@ -2,8 +2,12 @@ import Foundation
 
 public enum PersistenceError: Error, Equatable {
     case corruptFile(URL)
+    case invalidRuntimeFile(UUID)
     case missingAppGroupContainer
     case missingRuntime(UUID)
+    case missingStagedRuntime(UUID)
+    case runtimeRestoreDestinationExists(UUID)
+    case stagedRuntimeAlreadyExists(UUID)
 }
 
 public struct AtomicJSONFile<Value: Codable> {

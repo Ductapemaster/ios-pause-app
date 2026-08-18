@@ -27,6 +27,55 @@ public final class RuntimeRepository: @unchecked Sendable {
         try file(for: ruleID).delete()
     }
 
+    public func stageRemoval(ruleID: UUID) throws -> StagedRuntimeRemoval {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let originalURL = fileURL(for: ruleID)
+        let stagedURL = stagedFileURL(for: ruleID)
+        guard !FileManager.default.fileExists(atPath: stagedURL.path) else {
+            throw PersistenceError.stagedRuntimeAlreadyExists(ruleID)
+        }
+        guard FileManager.default.fileExists(atPath: originalURL.path) else {
+            return StagedRuntimeRemoval(ruleID: ruleID, wasPresent: false)
+        }
+        let resourceValues = try originalURL.resourceValues(forKeys: [.isRegularFileKey])
+        guard resourceValues.isRegularFile == true else {
+            throw PersistenceError.invalidRuntimeFile(ruleID)
+        }
+
+        try FileManager.default.moveItem(at: originalURL, to: stagedURL)
+        return StagedRuntimeRemoval(ruleID: ruleID, wasPresent: true)
+    }
+
+    public func restoreRemoval(_ stage: StagedRuntimeRemoval) throws {
+        guard stage.wasPresent else { return }
+        lock.lock()
+        defer { lock.unlock() }
+
+        let originalURL = fileURL(for: stage.ruleID)
+        let stagedURL = stagedFileURL(for: stage.ruleID)
+        guard FileManager.default.fileExists(atPath: stagedURL.path) else {
+            throw PersistenceError.missingStagedRuntime(stage.ruleID)
+        }
+        guard !FileManager.default.fileExists(atPath: originalURL.path) else {
+            throw PersistenceError.runtimeRestoreDestinationExists(stage.ruleID)
+        }
+        try FileManager.default.moveItem(at: stagedURL, to: originalURL)
+    }
+
+    public func finalizeRemoval(_ stage: StagedRuntimeRemoval) throws {
+        guard stage.wasPresent else { return }
+        lock.lock()
+        defer { lock.unlock() }
+
+        let stagedURL = stagedFileURL(for: stage.ruleID)
+        guard FileManager.default.fileExists(atPath: stagedURL.path) else {
+            throw PersistenceError.missingStagedRuntime(stage.ruleID)
+        }
+        try FileManager.default.removeItem(at: stagedURL)
+    }
+
     public func deleteOrphanedRuntimes(keeping ruleIDs: Set<UUID>) throws {
         lock.lock()
         defer { lock.unlock() }
@@ -67,7 +116,17 @@ public final class RuntimeRepository: @unchecked Sendable {
     }
 
     private func file(for ruleID: UUID) -> AtomicJSONFile<RuleRuntime> {
-        AtomicJSONFile(url: directoryURL.appendingPathComponent("runtime-\(ruleID.uuidString.lowercased()).json"))
+        AtomicJSONFile(url: fileURL(for: ruleID))
+    }
+
+    private func fileURL(for ruleID: UUID) -> URL {
+        directoryURL.appendingPathComponent("runtime-\(ruleID.uuidString.lowercased()).json")
+    }
+
+    private func stagedFileURL(for ruleID: UUID) -> URL {
+        directoryURL.appendingPathComponent(
+            "runtime-\(ruleID.uuidString.lowercased()).json.removal-stage"
+        )
     }
 
     private func ruleID(for fileURL: URL) -> UUID? {

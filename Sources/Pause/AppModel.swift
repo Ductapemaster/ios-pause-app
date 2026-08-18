@@ -16,20 +16,6 @@ struct AppError: Identifiable {
     }
 }
 
-private struct ConfigurationRepairError: LocalizedError {
-    let changeError: Error
-    let repairError: Error
-
-    var errorDescription: String? {
-        "The change couldn't be completed (\(changeError.localizedDescription)). Pause also couldn't fully restore the previous app state (\(repairError.localizedDescription)). Close and reopen Pause to retry repair."
-    }
-}
-
-private struct RuntimeSnapshot {
-    let ruleID: UUID
-    let runtime: RuleRuntime?
-}
-
 enum AppModelError: LocalizedError {
     case storageUnavailable
     case ruleNotFound
@@ -62,6 +48,7 @@ final class AppModel: ObservableObject {
 
     private let authorizationCenter: AuthorizationCenter
     private let activityCenter: DeviceActivityCenter
+    private let ruleRemovalCoordinator: RuleRemovalCoordinator
     private let shieldReconciler: ShieldReconciler
     private var configurationStore: ConfigurationStore?
     private var runtimeRepository: RuntimeRepository?
@@ -70,10 +57,12 @@ final class AppModel: ObservableObject {
         authorizationCenter: AuthorizationCenter = .shared,
         appGroupContainer: AppGroupContainer = AppGroupContainer(),
         activityCenter: DeviceActivityCenter = DeviceActivityCenter(),
+        ruleRemovalCoordinator: RuleRemovalCoordinator = RuleRemovalCoordinator(),
         shieldReconciler: ShieldReconciler = ShieldReconciler()
     ) {
         self.authorizationCenter = authorizationCenter
         self.activityCenter = activityCenter
+        self.ruleRemovalCoordinator = ruleRemovalCoordinator
         self.shieldReconciler = shieldReconciler
         authorizationStatus = authorizationCenter.authorizationStatus
         configuration = Self.emptyConfiguration
@@ -137,8 +126,7 @@ final class AppModel: ObservableObject {
 
         var nextRules: [AppRule] = []
         var nextTargets: [RuleTarget] = []
-        var removedRuntimeSnapshots: [RuntimeSnapshot] = []
-        var attemptedConfigurationSave = false
+        var removalOutcome = RuleRemovalOutcome(cleanupErrors: [])
 
         for target in existingTargets {
             guard retainedTokens.contains(target.applicationToken) else { continue }
@@ -174,27 +162,34 @@ final class AppModel: ObservableObject {
                 rules: nextRules,
                 targets: nextTargets
             )
-            try cleanUpRules(
-                removedRuleIDs,
-                runtimeRepository: runtimeRepository,
-                snapshots: &removedRuntimeSnapshots
-            )
-            attemptedConfigurationSave = true
-            try configurationStore.save(nextConfiguration)
-            configuration = nextConfiguration
-        } catch let changeError {
-            do {
-                try repairFailedConfigurationChange(
-                    previousConfiguration: configuration,
-                    runtimeSnapshots: removedRuntimeSnapshots,
-                    restoreConfiguration: attemptedConfigurationSave,
+            if removedRuleIDs.isEmpty {
+                try configurationStore.save(nextConfiguration)
+            } else {
+                removalOutcome = try commitRuleRemoval(
+                    ruleIDs: removedRuleIDs,
+                    nextConfiguration: nextConfiguration,
                     configurationStore: configurationStore,
                     runtimeRepository: runtimeRepository
                 )
-            } catch let repairError {
-                throw ConfigurationRepairError(
-                    changeError: changeError,
-                    repairError: repairError
+            }
+            configuration = nextConfiguration
+        } catch let changeError {
+            var repairErrors: [Error] = []
+            do {
+                try runtimeRepository.deleteOrphanedRuntimes(
+                    keeping: Set(configuration.rules.map(\.id))
+                )
+            } catch {
+                repairErrors.append(error)
+            }
+
+            if let removalFailure = changeError as? RuleRemovalFailure {
+                throw removalFailure.addingRepairErrors(repairErrors)
+            }
+            if !repairErrors.isEmpty {
+                throw RuleRemovalFailure(
+                    primaryError: changeError,
+                    repairErrors: repairErrors
                 )
             }
             throw changeError
@@ -204,6 +199,7 @@ final class AppModel: ObservableObject {
         normalizedSelection.applicationTokens = selectedTokens
         pickerSelection = normalizedSelection
         reconcileShieldsIfAuthorized(title: "Apps updated, but shields need repair")
+        presentRemovalCleanupErrors(removalOutcome.cleanupErrors)
     }
 
     func updateRule(id: UUID, sessionsPerDay: Int, sessionLengthMinutes: Int) throws {
@@ -253,44 +249,22 @@ final class AppModel: ObservableObject {
             throw AppModelError.ruleNotFound
         }
 
-        let previousConfiguration = configuration
         let nextConfiguration = try ConfigurationDocument(
             settings: configuration.settings,
             rules: configuration.rules.filter { $0.id != id },
             targets: configuration.targets.filter { $0.ruleID != id }
         )
-        var runtimeSnapshots: [RuntimeSnapshot] = []
-        var attemptedConfigurationSave = false
-
-        do {
-            try cleanUpRules(
-                [id],
-                runtimeRepository: runtimeRepository,
-                snapshots: &runtimeSnapshots
-            )
-            attemptedConfigurationSave = true
-            try configurationStore.save(nextConfiguration)
-        } catch let changeError {
-            do {
-                try repairFailedConfigurationChange(
-                    previousConfiguration: previousConfiguration,
-                    runtimeSnapshots: runtimeSnapshots,
-                    restoreConfiguration: attemptedConfigurationSave,
-                    configurationStore: configurationStore,
-                    runtimeRepository: runtimeRepository
-                )
-            } catch let repairError {
-                throw ConfigurationRepairError(
-                    changeError: changeError,
-                    repairError: repairError
-                )
-            }
-            throw changeError
-        }
+        let removalOutcome = try commitRuleRemoval(
+            ruleIDs: [id],
+            nextConfiguration: nextConfiguration,
+            configurationStore: configurationStore,
+            runtimeRepository: runtimeRepository
+        )
 
         configuration = nextConfiguration
         pickerSelection.applicationTokens.remove(target.applicationToken)
         reconcileShieldsIfAuthorized(title: "App removed, but shields need repair")
+        presentRemovalCleanupErrors(removalOutcome.cleanupErrors)
     }
 
     func present(_ error: Error, title: String = "Couldn't save changes") {
@@ -308,71 +282,61 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func cleanUpRules(
-        _ ruleIDs: [UUID],
-        runtimeRepository: RuntimeRepository,
-        snapshots: inout [RuntimeSnapshot]
-    ) throws {
-        for ruleID in ruleIDs {
-            let runtime = try runtimeRepository.load(ruleID: ruleID)
-            activityCenter.stopMonitoring([
-                DeviceActivityName(SessionActivityName.sessionActivityName(for: ruleID))
-            ])
-            snapshots.append(RuntimeSnapshot(ruleID: ruleID, runtime: runtime))
-            try runtimeRepository.delete(ruleID: ruleID)
-            try shieldReconciler.unshield(ruleID: ruleID, configuration: configuration)
-        }
-    }
-
-    private func repairFailedConfigurationChange(
-        previousConfiguration: ConfigurationDocument,
-        runtimeSnapshots: [RuntimeSnapshot],
-        restoreConfiguration: Bool,
+    private func commitRuleRemoval(
+        ruleIDs: [UUID],
+        nextConfiguration: ConfigurationDocument,
         configurationStore: ConfigurationStore,
         runtimeRepository: RuntimeRepository
-    ) throws {
-        var firstRepairError: Error?
-
-        if restoreConfiguration {
-            do {
-                try configurationStore.save(previousConfiguration)
-            } catch {
-                firstRepairError = error
-            }
-        }
-
-        for snapshot in runtimeSnapshots {
-            guard let runtime = snapshot.runtime else { continue }
-            do {
-                try runtimeRepository.save(runtime, ruleID: snapshot.ruleID)
-            } catch {
-                firstRepairError = firstRepairError ?? error
-            }
-        }
-
-        do {
-            try runtimeRepository.deleteOrphanedRuntimes(
-                keeping: Set(previousConfiguration.rules.map(\.id))
-            )
-        } catch {
-            firstRepairError = firstRepairError ?? error
-        }
-
-        if canApplyManagedSettings {
-            do {
+    ) throws -> RuleRemovalOutcome {
+        let previousConfiguration = configuration
+        return try ruleRemovalCoordinator.remove(
+            ruleIDs: ruleIDs,
+            stageRuntime: { ruleID in
+                try runtimeRepository.stageRemoval(ruleID: ruleID)
+            },
+            restoreRuntime: { stage in
+                try runtimeRepository.restoreRemoval(stage)
+            },
+            finalizeRuntime: { stage in
+                try runtimeRepository.finalizeRemoval(stage)
+            },
+            unshield: { ruleID in
+                guard canApplyManagedSettings else { return }
+                try shieldReconciler.unshield(
+                    ruleID: ruleID,
+                    configuration: previousConfiguration
+                )
+            },
+            restoreShields: { failedRuntimeRestores in
+                guard canApplyManagedSettings else { return }
                 try shieldReconciler.reconcile(
                     configuration: previousConfiguration,
                     runtimeRepository: runtimeRepository,
-                    now: Date()
+                    now: Date(),
+                    forceShieldedRuleIDs: failedRuntimeRestores
                 )
-            } catch {
-                firstRepairError = firstRepairError ?? error
+            },
+            commitConfiguration: {
+                try configurationStore.save(nextConfiguration)
+            },
+            stopMonitoring: { ruleIDs in
+                activityCenter.stopMonitoring(
+                    ruleIDs.map { ruleID in
+                        DeviceActivityName(
+                            SessionActivityName.sessionActivityName(for: ruleID)
+                        )
+                    }
+                )
             }
-        }
+        )
+    }
 
-        if let firstRepairError {
-            throw firstRepairError
-        }
+    private func presentRemovalCleanupErrors(_ errors: [Error]) {
+        guard !errors.isEmpty else { return }
+        presentedError = AppError(
+            title: "App removed, but cleanup failed",
+            error: RuleRemovalCleanupError(errors: errors)
+        )
     }
 
     private func reconcileShieldsIfAuthorized(

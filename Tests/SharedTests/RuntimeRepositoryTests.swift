@@ -47,6 +47,72 @@ final class RuntimeRepositoryTests: XCTestCase {
         XCTAssertEqual(try repository.load(ruleID: secondID), second)
     }
 
+    func testStagedRemovalCanRestoreTheOriginalRuntimeFile() throws {
+        let ruleID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
+        let original = runtime(sessionsStarted: 2)
+        try repository.save(original, ruleID: ruleID)
+
+        let stage = try repository.stageRemoval(ruleID: ruleID)
+
+        XCTAssertTrue(stage.wasPresent)
+        XCTAssertNil(try repository.load(ruleID: ruleID))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directoryURL.path).count, 1)
+
+        try repository.restoreRemoval(stage)
+
+        XCTAssertEqual(try repository.load(ruleID: ruleID), original)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directoryURL.path).count, 1)
+    }
+
+    func testFinalizingStagedRemovalDeletesTheStagedRuntime() throws {
+        let ruleID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
+        try repository.save(runtime(sessionsStarted: 2), ruleID: ruleID)
+        let stage = try repository.stageRemoval(ruleID: ruleID)
+
+        try repository.finalizeRemoval(stage)
+
+        XCTAssertNil(try repository.load(ruleID: ruleID))
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directoryURL.path).isEmpty)
+    }
+
+    func testFailedRestoreLeavesTheStagedRuntimeAvailableForRetry() throws {
+        let ruleID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
+        let original = runtime(sessionsStarted: 2)
+        let unexpectedReplacement = runtime(sessionsStarted: 9)
+        try repository.save(original, ruleID: ruleID)
+        let stage = try repository.stageRemoval(ruleID: ruleID)
+        try repository.save(unexpectedReplacement, ruleID: ruleID)
+
+        XCTAssertThrowsError(try repository.restoreRemoval(stage)) { error in
+            XCTAssertEqual(error as? PersistenceError, .runtimeRestoreDestinationExists(ruleID))
+        }
+        XCTAssertEqual(try repository.load(ruleID: ruleID), unexpectedReplacement)
+
+        try repository.delete(ruleID: ruleID)
+        try repository.restoreRemoval(stage)
+
+        XCTAssertEqual(try repository.load(ruleID: ruleID), original)
+    }
+
+    func testStageRemovalRejectsCanonicalLookingDirectory() throws {
+        let ruleID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
+        let runtimeDirectoryURL = directoryURL.appendingPathComponent(
+            "runtime-\(ruleID.uuidString.lowercased()).json",
+            isDirectory: true
+        )
+        let sentinelURL = runtimeDirectoryURL.appendingPathComponent("sentinel")
+        try FileManager.default.createDirectory(
+            at: runtimeDirectoryURL,
+            withIntermediateDirectories: false
+        )
+        try Data("leave me".utf8).write(to: sentinelURL)
+
+        XCTAssertThrowsError(try repository.stageRemoval(ruleID: ruleID)) { error in
+            XCTAssertEqual(error as? PersistenceError, .invalidRuntimeFile(ruleID))
+        }
+        XCTAssertEqual(try Data(contentsOf: sentinelURL), Data("leave me".utf8))
+    }
+
     func testDeleteOrphanedRuntimesRemovesOnlyRulesOutsideKeepSet() throws {
         let retainedID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
         let orphanedID = UUID(uuidString: "00F7635F-BA5B-4B8B-9CC8-D68B9E6A8DD7")!

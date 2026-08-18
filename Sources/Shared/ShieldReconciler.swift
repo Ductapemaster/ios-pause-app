@@ -24,12 +24,14 @@ public struct ShieldReconciler {
     public func reconcile(
         configuration: ConfigurationDocument,
         runtimeRepository: RuntimeRepository,
-        now: Date
+        now: Date,
+        forceShieldedRuleIDs: Set<UUID> = []
     ) throws {
         var shieldedApplications = Set(configuration.targets.map(\.applicationToken))
         var unreadableRuleIDs: [UUID] = []
 
         for target in configuration.targets {
+            guard !forceShieldedRuleIDs.contains(target.ruleID) else { continue }
             do {
                 guard var runtime = try runtimeRepository.load(ruleID: target.ruleID) else {
                     unreadableRuleIDs.append(target.ruleID)
