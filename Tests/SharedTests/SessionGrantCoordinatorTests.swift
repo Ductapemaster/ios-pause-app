@@ -2,6 +2,7 @@ import Foundation
 import PauseCore
 import XCTest
 
+@MainActor
 final class SessionGrantCoordinatorTests: XCTestCase {
     private let ruleID = UUID(uuidString: "bb6aa453-a819-4bc9-9f72-a40a78a6cc71")!
     private let now = Date(timeIntervalSince1970: 1_750_000_000)
@@ -40,6 +41,25 @@ final class SessionGrantCoordinatorTests: XCTestCase {
         XCTAssertTrue(harness.shield.isShielded)
     }
 
+    func testReservationAndStopFailuresRetainPrimaryAndRepairError() async {
+        let harness = Harness(ruleID: ruleID)
+        harness.runtime.reserveError = TestError.reservation
+        harness.scheduler.stopError = TestError.stop
+
+        do {
+            _ = try await harness.coordinator.grant(rule: rule, now: now)
+            XCTFail("Expected reservation failure")
+        } catch let failure as SessionGrantFailure {
+            XCTAssertEqual(failure.primaryError as? TestError, .reservation)
+            XCTAssertEqual(failure.repairErrors.map(\.step), [.stopMonitoring])
+            XCTAssertEqual(failure.repairErrors[0].underlyingError as? TestError, .stop)
+            XCTAssertEqual(failure.chargeState, .notCharged)
+            XCTAssertEqual(failure.shieldState, .blocked)
+        } catch {
+            XCTFail("Expected SessionGrantFailure, got \(error)")
+        }
+    }
+
     func testUnshieldFailureRollsBackStopsAndReconciles() async {
         let harness = Harness(ruleID: ruleID)
         harness.shield.unshieldError = TestError.unshield
@@ -48,7 +68,7 @@ final class SessionGrantCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(
             harness.log.values,
-            ["register", "reserve", "unshield", "rollback", "stop", "reconcile"]
+            ["register", "reserve", "unshield", "rollback", "stop", "force-shield"]
         )
         XCTAssertFalse(harness.runtime.isReserved)
         XCTAssertTrue(harness.shield.isShielded)
@@ -61,7 +81,7 @@ final class SessionGrantCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(
             harness.log.values,
-            ["register", "reserve", "unshield", "has-route", "open", "rollback", "stop", "reconcile"]
+            ["register", "reserve", "unshield", "has-route", "open", "rollback", "stop", "force-shield"]
         )
         XCTAssertFalse(harness.runtime.isReserved)
         XCTAssertTrue(harness.shield.isShielded)
@@ -96,11 +116,104 @@ final class SessionGrantCoordinatorTests: XCTestCase {
         XCTAssertFalse(harness.shield.isShielded)
     }
 
+    func testActivationPersistenceFailureForManualReturnLeavesProvisionalCharged() async {
+        let harness = Harness(ruleID: ruleID, automaticRoute: false)
+        harness.runtime.activateError = TestError.activation
+
+        do {
+            _ = try await harness.coordinator.grant(rule: rule, now: now)
+            XCTFail("Expected activation persistence failure")
+        } catch let failure as SessionGrantFailure {
+            XCTAssertEqual(failure.chargeState, .charged)
+            XCTAssertEqual(failure.shieldState, .unblocked)
+        } catch {
+            XCTFail("Expected SessionGrantFailure, got \(error)")
+        }
+        XCTAssertEqual(
+            harness.log.values,
+            ["register", "reserve", "unshield", "has-route", "activate"]
+        )
+    }
+
+    func testSubsecondGrantCeilsExpiryBeforeSchedulingPersistenceAndResult() async throws {
+        let subsecondNow = Date(timeIntervalSinceReferenceDate: 800_000_000.25)
+        let harness = Harness(ruleID: ruleID, automaticRoute: false)
+
+        let result = try await harness.coordinator.grant(rule: rule, now: subsecondNow)
+
+        let expected = Date(timeIntervalSinceReferenceDate: 800_000_301)
+        XCTAssertEqual(harness.scheduler.registeredExpiresAt, expected)
+        XCTAssertEqual(harness.runtime.reservedExpiresAt, expected)
+        XCTAssertEqual(result, .readyForManualReturn(expiresAt: expected))
+    }
+
+    func testUnshieldFailureRetainsEveryRepairFailureAndUnknownResultingState() async {
+        let harness = Harness(ruleID: ruleID)
+        harness.shield.unshieldError = TestError.unshield
+        harness.runtime.rollbackError = TestError.rollback
+        harness.scheduler.stopError = TestError.stop
+        harness.shield.forceShieldError = TestError.reconcile
+
+        do {
+            _ = try await harness.coordinator.grant(rule: rule, now: now)
+            XCTFail("Expected unshield failure")
+        } catch let failure as SessionGrantFailure {
+            XCTAssertEqual(failure.primaryError as? TestError, .unshield)
+            XCTAssertEqual(
+                failure.repairErrors.map(\.step),
+                [.rollBackRuntime, .stopMonitoring, .forceShield]
+            )
+            XCTAssertEqual(failure.chargeState, .unknown)
+            XCTAssertEqual(failure.shieldState, .unknown)
+        } catch {
+            XCTFail("Expected SessionGrantFailure, got \(error)")
+        }
+    }
+
+    func testUnshieldFailureWithRollbackFailureStillForceShieldsSelectedRule() async {
+        let harness = Harness(ruleID: ruleID)
+        harness.shield.unshieldError = TestError.unshield
+        harness.runtime.rollbackError = TestError.rollback
+
+        let failure = await capturedFailure(from: harness)
+
+        XCTAssertEqual(failure?.repairErrors.map(\.step), [.rollBackRuntime])
+        XCTAssertEqual(failure?.chargeState, .unknown)
+        XCTAssertEqual(failure?.shieldState, .blocked)
+        XCTAssertEqual(Array(harness.log.values.suffix(3)), ["rollback", "stop", "force-shield"])
+        XCTAssertTrue(harness.shield.isShielded)
+    }
+
+    func testUnshieldFailureWithStopFailureReportsCleanupButRemainsRolledBackAndBlocked() async {
+        let harness = Harness(ruleID: ruleID)
+        harness.shield.unshieldError = TestError.unshield
+        harness.scheduler.stopError = TestError.stop
+
+        let failure = await capturedFailure(from: harness)
+
+        XCTAssertEqual(failure?.repairErrors.map(\.step), [.stopMonitoring])
+        XCTAssertEqual(failure?.chargeState, .notCharged)
+        XCTAssertEqual(failure?.shieldState, .blocked)
+    }
+
+    func testUnshieldFailureWithForceShieldFailureDoesNotClaimAppIsBlocked() async {
+        let harness = Harness(ruleID: ruleID)
+        harness.shield.unshieldError = TestError.unshield
+        harness.shield.forceShieldError = TestError.reconcile
+
+        let failure = await capturedFailure(from: harness)
+
+        XCTAssertEqual(failure?.repairErrors.map(\.step), [.forceShield])
+        XCTAssertEqual(failure?.chargeState, .notCharged)
+        XCTAssertEqual(failure?.shieldState, .unknown)
+        XCTAssertTrue(failure?.localizedDescription.contains("couldn't confirm whether the app was blocked") == true)
+    }
+
     func testRepairFailuresAreAllAttemptedAndRetainedWithPrimaryFailure() async {
         let harness = Harness(ruleID: ruleID, automaticRoute: true, launchSucceeds: false)
         harness.runtime.rollbackError = TestError.rollback
         harness.scheduler.stopError = TestError.stop
-        harness.shield.reconcileError = TestError.reconcile
+        harness.shield.forceShieldError = TestError.reconcile
 
         do {
             _ = try await harness.coordinator.grant(rule: rule, now: now)
@@ -108,16 +221,19 @@ final class SessionGrantCoordinatorTests: XCTestCase {
         } catch let failure as SessionGrantFailure {
             XCTAssertEqual(failure.primaryError as? SessionGrantError, .automaticLaunchFailed)
             XCTAssertEqual(failure.repairErrors.count, 3)
-            XCTAssertEqual(failure.repairErrors[0] as? TestError, .rollback)
-            XCTAssertEqual(failure.repairErrors[1] as? TestError, .stop)
-            XCTAssertEqual(failure.repairErrors[2] as? TestError, .reconcile)
+            XCTAssertEqual(failure.repairErrors.map(\.step), [.rollBackRuntime, .stopMonitoring, .forceShield])
+            XCTAssertEqual(failure.repairErrors[0].underlyingError as? TestError, .rollback)
+            XCTAssertEqual(failure.repairErrors[1].underlyingError as? TestError, .stop)
+            XCTAssertEqual(failure.repairErrors[2].underlyingError as? TestError, .reconcile)
+            XCTAssertEqual(failure.chargeState, .unknown)
+            XCTAssertEqual(failure.shieldState, .unknown)
         } catch {
             XCTFail("Expected SessionGrantFailure, got \(error)")
         }
 
         XCTAssertEqual(
             harness.log.values,
-            ["register", "reserve", "unshield", "has-route", "open", "rollback", "stop", "reconcile"]
+            ["register", "reserve", "unshield", "has-route", "open", "rollback", "stop", "force-shield"]
         )
     }
 
@@ -127,6 +243,19 @@ final class SessionGrantCoordinatorTests: XCTestCase {
 
     private var expiresAt: Date {
         now.addingTimeInterval(5 * 60)
+    }
+
+    private func capturedFailure(from harness: Harness) async -> SessionGrantFailure? {
+        do {
+            _ = try await harness.coordinator.grant(rule: rule, now: now)
+            XCTFail("Expected grant failure")
+            return nil
+        } catch let failure as SessionGrantFailure {
+            return failure
+        } catch {
+            XCTFail("Expected SessionGrantFailure, got \(error)")
+            return nil
+        }
     }
 }
 
@@ -140,29 +269,32 @@ private enum TestError: Error, Equatable {
     case reconcile
 }
 
-private final class OperationLog: @unchecked Sendable {
-    private let lock = NSLock()
+@MainActor
+private final class OperationLog {
     private var storage: [String] = []
 
     var values: [String] {
-        lock.withLock { storage }
+        storage
     }
 
     func append(_ value: String) {
-        lock.withLock { storage.append(value) }
+        storage.append(value)
     }
 }
 
-private final class FakeScheduler: SessionScheduling, @unchecked Sendable {
+@MainActor
+private final class FakeScheduler: SessionScheduling {
     let log: OperationLog
     var registerError: Error?
     var stopError: Error?
+    var registeredExpiresAt: Date?
 
     init(log: OperationLog) { self.log = log }
 
     func register(ruleID: UUID, startsAt: Date, expiresAt: Date) throws -> String {
         log.append("register")
         if let registerError { throw registerError }
+        registeredExpiresAt = expiresAt
         return SessionActivityName.sessionActivityName(for: ruleID)
     }
 
@@ -172,13 +304,15 @@ private final class FakeScheduler: SessionScheduling, @unchecked Sendable {
     }
 }
 
-private final class FakeRuntime: RuntimePersisting, @unchecked Sendable {
+@MainActor
+private final class FakeRuntime: RuntimePersisting {
     let log: OperationLog
     var reserveError: Error?
     var activateError: Error?
     var rollbackError: Error?
     var isReserved = false
     var isActive = false
+    var reservedExpiresAt: Date?
 
     init(log: OperationLog) { self.log = log }
 
@@ -186,6 +320,7 @@ private final class FakeRuntime: RuntimePersisting, @unchecked Sendable {
         log.append("reserve")
         if let reserveError { throw reserveError }
         isReserved = true
+        reservedExpiresAt = expiresAt
     }
 
     func activate(ruleID: UUID) throws {
@@ -202,10 +337,11 @@ private final class FakeRuntime: RuntimePersisting, @unchecked Sendable {
     }
 }
 
-private final class FakeShield: ShieldControlling, @unchecked Sendable {
+@MainActor
+private final class FakeShield: ShieldControlling {
     let log: OperationLog
     var unshieldError: Error?
-    var reconcileError: Error?
+    var forceShieldError: Error?
     var isShielded = true
 
     init(log: OperationLog) { self.log = log }
@@ -216,14 +352,15 @@ private final class FakeShield: ShieldControlling, @unchecked Sendable {
         isShielded = false
     }
 
-    func reconcile() throws {
-        log.append("reconcile")
-        if let reconcileError { throw reconcileError }
+    func forceShield(ruleID: UUID) throws {
+        log.append("force-shield")
+        if let forceShieldError { throw forceShieldError }
         isShielded = true
     }
 }
 
-private final class FakeLauncher: TargetLaunching, @unchecked Sendable {
+@MainActor
+private final class FakeLauncher: TargetLaunching {
     let log: OperationLog
     let automaticRoute: Bool
     let launchSucceeds: Bool
@@ -245,6 +382,7 @@ private final class FakeLauncher: TargetLaunching, @unchecked Sendable {
     }
 }
 
+@MainActor
 private struct Harness {
     let log = OperationLog()
     let scheduler: FakeScheduler
@@ -271,6 +409,7 @@ private struct Harness {
     }
 }
 
+@MainActor
 private func XCTAssertThrowsErrorAsync<T>(
     _ expression: @autoclosure () async throws -> T,
     file: StaticString = #filePath,

@@ -56,7 +56,7 @@ final class SessionGrantFlowTests: XCTestCase {
             return XCTFail("A failed handoff should finish at configuration with a visible error")
         }
         XCTAssertEqual(harness.scheduler.stopCount, 1)
-        XCTAssertEqual(harness.shield.operations, ["unshield", "reconcile"])
+        XCTAssertEqual(harness.shield.operations, ["unshield", "force-shield"])
         XCTAssertNotNil(harness.model.presentedError)
         let runtime = try XCTUnwrap(RuntimeRepository(directoryURL: harness.directory).load(ruleID: ruleID))
         XCTAssertEqual(runtime.sessionsStarted, 0)
@@ -84,10 +84,75 @@ final class SessionGrantFlowTests: XCTestCase {
         XCTAssertFalse(openedOther)
     }
 
+    func testDuplicateRequestAndSceneReactivationDoNotRestartSuspendedLaunch() async throws {
+        let launcher = SuspendedLauncher()
+        let harness = try makeHarness(
+            route: .instagram,
+            automaticRoute: true,
+            launchSucceeds: true,
+            launcherOverride: launcher
+        )
+        harness.model.sceneDidBecomeActive(now: now)
+
+        let firstGrant = Task {
+            await harness.model.requestSessionGrant(now: now.addingTimeInterval(1))
+        }
+        await launcher.waitUntilOpenStarts()
+
+        await harness.model.requestSessionGrant(now: now.addingTimeInterval(1))
+        harness.model.sceneDidBecomeInactive()
+        harness.model.sceneDidBecomeActive(now: now.addingTimeInterval(2))
+
+        XCTAssertEqual(harness.scheduler.registerCount, 1)
+        XCTAssertEqual(launcher.openCount, 1)
+        XCTAssertTrue(harness.model.isGrantRequested)
+        guard case .pause = harness.model.entryRoute else {
+            return XCTFail("The suspended grant must remain the active flow")
+        }
+
+        launcher.resume(result: true)
+        await firstGrant.value
+        XCTAssertEqual(harness.scheduler.registerCount, 1)
+        guard case .configuration = harness.model.entryRoute else {
+            return XCTFail("The original grant should finish once")
+        }
+    }
+
+    func testRepairFailureAlertReportsUnknownChargeAndShieldState() async throws {
+        let runtime = FailingRollbackRuntime()
+        let scheduler = AppFakeScheduler()
+        scheduler.stopError = AppGrantTestError.stop
+        let shield = AppFakeShield()
+        shield.forceShieldError = AppGrantTestError.forceShield
+        let harness = try makeHarness(
+            route: .instagram,
+            automaticRoute: true,
+            launchSucceeds: false,
+            schedulerOverride: scheduler,
+            shieldOverride: shield,
+            runtimePersistence: runtime
+        )
+        harness.model.sceneDidBecomeActive(now: now)
+
+        await harness.model.requestSessionGrant(now: now.addingTimeInterval(1))
+
+        let message = try XCTUnwrap(harness.model.presentedError?.message)
+        XCTAssertTrue(message.contains("couldn't confirm whether the session was charged"))
+        XCTAssertTrue(message.contains("couldn't confirm whether the app was blocked"))
+        XCTAssertTrue(message.contains("roll back session state"))
+        XCTAssertTrue(message.contains("stop expiry monitoring"))
+        XCTAssertTrue(message.contains("block the app again"))
+        XCTAssertFalse(message.contains("session was not charged, and the app remains blocked"))
+    }
+
     private func makeHarness(
         route: LaunchRoute?,
         automaticRoute: Bool,
-        launchSucceeds: Bool
+        launchSucceeds: Bool,
+        launcherOverride: (any TargetLaunching)? = nil,
+        schedulerOverride: AppFakeScheduler? = nil,
+        shieldOverride: AppFakeShield? = nil,
+        runtimePersistence: (any RuntimePersisting)? = nil
     ) throws -> AppGrantHarness {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("pause-task-seven-\(UUID().uuidString)", isDirectory: true)
@@ -112,8 +177,8 @@ final class SessionGrantFlowTests: XCTestCase {
             ruleID: ruleID
         )
 
-        let scheduler = AppFakeScheduler()
-        let shield = AppFakeShield()
+        let scheduler = schedulerOverride ?? AppFakeScheduler()
+        let shield = shieldOverride ?? AppFakeShield()
         let launcher = AppFakeLauncher(
             automaticRoute: automaticRoute,
             launchSucceeds: launchSucceeds
@@ -145,8 +210,9 @@ final class SessionGrantFlowTests: XCTestCase {
                 )
             },
             sessionScheduler: scheduler,
+            sessionRuntimePersistence: runtimePersistence,
             sessionShieldController: shield,
-            targetLauncher: launcher
+            targetLauncher: launcherOverride ?? launcher
         )
         return AppGrantHarness(
             directory: directory,
@@ -167,26 +233,37 @@ private struct AppGrantHarness {
     let launcher: AppFakeLauncher
 }
 
-private final class AppFakeScheduler: SessionScheduling, @unchecked Sendable {
+@MainActor
+private final class AppFakeScheduler: SessionScheduling {
+    private(set) var registerCount = 0
     private(set) var stopCount = 0
+    var stopError: Error?
 
     func register(ruleID: UUID, startsAt: Date, expiresAt: Date) throws -> String {
-        SessionActivityName.sessionActivityName(for: ruleID)
+        registerCount += 1
+        return SessionActivityName.sessionActivityName(for: ruleID)
     }
 
     func stop(activityName: String) throws {
         stopCount += 1
+        if let stopError { throw stopError }
     }
 }
 
-private final class AppFakeShield: ShieldControlling, @unchecked Sendable {
+@MainActor
+private final class AppFakeShield: ShieldControlling {
     private(set) var operations: [String] = []
+    var forceShieldError: Error?
 
     func unshield(ruleID: UUID) throws { operations.append("unshield") }
-    func reconcile() throws { operations.append("reconcile") }
+    func forceShield(ruleID: UUID) throws {
+        operations.append("force-shield")
+        if let forceShieldError { throw forceShieldError }
+    }
 }
 
-private final class AppFakeLauncher: TargetLaunching, @unchecked Sendable {
+@MainActor
+private final class AppFakeLauncher: TargetLaunching {
     let automaticRoute: Bool
     let launchSucceeds: Bool
     private(set) var openCount = 0
@@ -201,5 +278,58 @@ private final class AppFakeLauncher: TargetLaunching, @unchecked Sendable {
     func open(ruleID: UUID) async -> Bool {
         openCount += 1
         return launchSucceeds
+    }
+}
+
+@MainActor
+private final class SuspendedLauncher: TargetLaunching {
+    private(set) var openCount = 0
+    private var didStart = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var resultContinuation: CheckedContinuation<Bool, Never>?
+
+    func hasAutomaticRoute(ruleID: UUID) -> Bool { true }
+
+    func open(ruleID: UUID) async -> Bool {
+        openCount += 1
+        didStart = true
+        startWaiters.forEach { $0.resume() }
+        startWaiters.removeAll()
+        return await withCheckedContinuation { continuation in
+            resultContinuation = continuation
+        }
+    }
+
+    func waitUntilOpenStarts() async {
+        guard !didStart else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func resume(result: Bool) {
+        resultContinuation?.resume(returning: result)
+        resultContinuation = nil
+    }
+}
+
+@MainActor
+private final class FailingRollbackRuntime: RuntimePersisting {
+    func reserve(ruleID: UUID, activityName: String, expiresAt: Date) throws {}
+    func activate(ruleID: UUID) throws {}
+    func rollBack(ruleID: UUID) throws { throw AppGrantTestError.rollback }
+}
+
+private enum AppGrantTestError: LocalizedError {
+    case rollback
+    case stop
+    case forceShield
+
+    var errorDescription: String? {
+        switch self {
+        case .rollback: "runtime rollback failed"
+        case .stop: "monitor stop failed"
+        case .forceShield: "forced shield failed"
+        }
     }
 }

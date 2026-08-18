@@ -106,6 +106,12 @@ final class AtomicJSONFileTests: XCTestCase {
             .instagram
         )
         XCTAssertNil(LaunchRoute.detected(for: ManagedSettings.Application(bundleIdentifier: "com.example.other")))
+        XCTAssertNil(
+            LaunchRoute.detected(
+                bundleIdentifier: "com.example.same-name",
+                localizedDisplayName: "Instagram"
+            )
+        )
     }
 
     func testConsumeMissingIntentReturnsNil() throws {

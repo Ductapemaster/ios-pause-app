@@ -1,7 +1,8 @@
 import Foundation
 import UIKit
 
-final class AppLaunchRouter: TargetLaunching, @unchecked Sendable {
+@MainActor
+final class AppLaunchRouter: TargetLaunching {
     private let routes: [UUID: LaunchRoute]
     private let openURL: @MainActor (URL) async -> Bool
 

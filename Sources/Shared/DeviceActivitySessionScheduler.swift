@@ -2,7 +2,7 @@ import DeviceActivity
 import Foundation
 import PauseCore
 
-public enum SessionSchedulingError: LocalizedError, Equatable, Sendable {
+public enum SessionSchedulingError: LocalizedError, Equatable {
     case unrepresentableExpiry
 
     public var errorDescription: String? {
@@ -13,10 +13,11 @@ public enum SessionSchedulingError: LocalizedError, Equatable, Sendable {
     }
 }
 
-public final class DeviceActivitySessionScheduler: SessionScheduling, @unchecked Sendable {
+@MainActor
+public final class DeviceActivitySessionScheduler: SessionScheduling {
     typealias CallbackResolver = (DeviceActivitySchedule, Bool) -> Date?
     typealias StartMonitoring = (DeviceActivityName, DeviceActivitySchedule) throws -> Void
-    typealias StopMonitoring = (DeviceActivityName) -> Void
+    typealias StopMonitoring = (DeviceActivityName) throws -> Void
 
     private let calendar: Calendar
     private let resolvedCallbackDate: CallbackResolver
@@ -57,12 +58,12 @@ public final class DeviceActivitySessionScheduler: SessionScheduling, @unchecked
         }
 
         let isShortSession = duration < 15 * 60
-        let scheduleEnd = isShortSession
-            ? startsAt.addingTimeInterval(15 * 60)
-            : expiresAt
         let warningMinutes: Int? = isShortSession
             ? 15 - Int((duration / 60).rounded())
             : nil
+        let scheduleEnd = warningMinutes.map {
+            expiresAt.addingTimeInterval(TimeInterval($0 * 60))
+        } ?? expiresAt
         let schedule = DeviceActivitySchedule(
             intervalStart: absoluteComponents(from: startsAt),
             intervalEnd: absoluteComponents(from: scheduleEnd),
@@ -70,8 +71,11 @@ public final class DeviceActivitySessionScheduler: SessionScheduling, @unchecked
             warningTime: warningMinutes.map { DateComponents(minute: $0) }
         )
 
-        guard let representedExpiry = resolvedCallbackDate(schedule, isShortSession),
-              abs(representedExpiry.timeIntervalSince(expiresAt)) <= 5 else {
+        guard let representedExpiry = resolvedCallbackDate(schedule, isShortSession) else {
+            throw SessionSchedulingError.unrepresentableExpiry
+        }
+        let lateness = representedExpiry.timeIntervalSince(expiresAt)
+        guard lateness >= 0, lateness <= 5 else {
             throw SessionSchedulingError.unrepresentableExpiry
         }
 
@@ -81,7 +85,7 @@ public final class DeviceActivitySessionScheduler: SessionScheduling, @unchecked
     }
 
     public func stop(activityName: String) throws {
-        stopMonitoring(DeviceActivityName(activityName))
+        try stopMonitoring(DeviceActivityName(activityName))
     }
 
     private func absoluteComponents(from date: Date) -> DateComponents {

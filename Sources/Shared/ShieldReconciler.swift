@@ -14,11 +14,22 @@ public enum ShieldReconciliationError: LocalizedError, Equatable {
     }
 }
 
+@MainActor
 public struct ShieldReconciler {
-    private let store: ManagedSettingsStore
+    private let currentApplications: () -> Set<ApplicationToken>?
+    private let applyApplications: (Set<ApplicationToken>) -> Void
 
     public init(store: ManagedSettingsStore = ManagedSettingsStore()) {
-        self.store = store
+        currentApplications = { store.shield.applications }
+        applyApplications = { store.shield.applications = $0 }
+    }
+
+    init(
+        currentApplications: @escaping () -> Set<ApplicationToken>?,
+        applyApplications: @escaping (Set<ApplicationToken>) -> Void
+    ) {
+        self.currentApplications = currentApplications
+        self.applyApplications = applyApplications
     }
 
     public func reconcile(
@@ -52,7 +63,7 @@ public struct ShieldReconciler {
             }
         }
 
-        store.shield.applications = shieldedApplications
+        applyApplications(shieldedApplications)
 
         guard unreadableRuleIDs.isEmpty else {
             throw ShieldReconciliationError.unreadableRuntimes(
@@ -67,8 +78,8 @@ public struct ShieldReconciler {
             throw RuleLookupError.ruleNotFound(ruleID)
         }
 
-        var shieldedApplications = store.shield.applications ?? []
+        var shieldedApplications = currentApplications() ?? []
         shieldedApplications.remove(target.applicationToken)
-        store.shield.applications = shieldedApplications
+        applyApplications(shieldedApplications)
     }
 }

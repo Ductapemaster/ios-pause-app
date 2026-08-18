@@ -93,6 +93,7 @@ final class AppModel: ObservableObject {
     private let cleanupOverride: (() -> Void)?
     private let reconciliationOverride: (() -> Void)?
     private let sessionScheduler: (any SessionScheduling)?
+    private let sessionRuntimePersistence: (any RuntimePersisting)?
     private let sessionShieldController: (any ShieldControlling)?
     private let targetLauncher: (any TargetLaunching)?
     private var configurationStore: ConfigurationStore?
@@ -116,6 +117,7 @@ final class AppModel: ObservableObject {
         cleanupOverride: (() -> Void)? = nil,
         reconciliationOverride: (() -> Void)? = nil,
         sessionScheduler: (any SessionScheduling)? = nil,
+        sessionRuntimePersistence: (any RuntimePersisting)? = nil,
         sessionShieldController: (any ShieldControlling)? = nil,
         targetLauncher: (any TargetLaunching)? = nil
     ) {
@@ -132,6 +134,7 @@ final class AppModel: ObservableObject {
         self.cleanupOverride = cleanupOverride
         self.reconciliationOverride = reconciliationOverride
         self.sessionScheduler = sessionScheduler
+        self.sessionRuntimePersistence = sessionRuntimePersistence
         self.sessionShieldController = sessionShieldController
         self.targetLauncher = targetLauncher
         authorizationStatus = statusProvider()
@@ -245,7 +248,8 @@ final class AppModel: ObservableObject {
         let launcher = targetLauncher ?? AppLaunchRouter(configuration: configuration)
         let coordinator = SessionGrantCoordinator(
             scheduler: scheduler,
-            runtime: RepositoryRuntimePersistence(repository: runtimeRepository, now: now),
+            runtime: sessionRuntimePersistence
+                ?? RepositoryRuntimePersistence(repository: runtimeRepository, now: now),
             shield: shield,
             launcher: launcher
         )

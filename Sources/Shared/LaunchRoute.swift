@@ -6,8 +6,17 @@ public enum LaunchRoute: String, Codable, Equatable, Sendable {
 
 public extension LaunchRoute {
     static func detected(for application: ManagedSettings.Application) -> LaunchRoute? {
-        if application.bundleIdentifier == "com.burbn.instagram" ||
-            application.localizedDisplayName == "Instagram" {
+        detected(
+            bundleIdentifier: application.bundleIdentifier,
+            localizedDisplayName: application.localizedDisplayName
+        )
+    }
+
+    static func detected(
+        bundleIdentifier: String?,
+        localizedDisplayName: String?
+    ) -> LaunchRoute? {
+        if bundleIdentifier == "com.burbn.instagram" {
             return .instagram
         }
         return nil

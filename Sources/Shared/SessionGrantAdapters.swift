@@ -1,7 +1,8 @@
 import Foundation
 import PauseCore
 
-public final class RepositoryRuntimePersistence: RuntimePersisting, @unchecked Sendable {
+@MainActor
+public final class RepositoryRuntimePersistence: RuntimePersisting {
     private let repository: RuntimeRepository
     private let logicalDay: CalendarDay
     private let now: Date
@@ -37,7 +38,8 @@ public final class RepositoryRuntimePersistence: RuntimePersisting, @unchecked S
     }
 }
 
-public final class ConfigurationShieldController: ShieldControlling, @unchecked Sendable {
+@MainActor
+public final class ConfigurationShieldController: ShieldControlling {
     private let configuration: ConfigurationDocument
     private let runtimeRepository: RuntimeRepository
     private let reconciler: ShieldReconciler
@@ -59,11 +61,12 @@ public final class ConfigurationShieldController: ShieldControlling, @unchecked 
         try reconciler.unshield(ruleID: ruleID, configuration: configuration)
     }
 
-    public func reconcile() throws {
+    public func forceShield(ruleID: UUID) throws {
         try reconciler.reconcile(
             configuration: configuration,
             runtimeRepository: runtimeRepository,
-            now: now
+            now: now,
+            forceShieldedRuleIDs: [ruleID]
         )
     }
 }

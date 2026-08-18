@@ -1,61 +1,132 @@
 import Foundation
 import PauseCore
 
-public protocol SessionScheduling: Sendable {
+@MainActor
+public protocol SessionScheduling {
     func register(ruleID: UUID, startsAt: Date, expiresAt: Date) throws -> String
     func stop(activityName: String) throws
 }
 
-public protocol RuntimePersisting: Sendable {
+@MainActor
+public protocol RuntimePersisting {
     func reserve(ruleID: UUID, activityName: String, expiresAt: Date) throws
     func activate(ruleID: UUID) throws
     func rollBack(ruleID: UUID) throws
 }
 
-public protocol ShieldControlling: Sendable {
+@MainActor
+public protocol ShieldControlling {
     func unshield(ruleID: UUID) throws
-    func reconcile() throws
+    func forceShield(ruleID: UUID) throws
 }
 
-public protocol TargetLaunching: Sendable {
+@MainActor
+public protocol TargetLaunching {
     func hasAutomaticRoute(ruleID: UUID) -> Bool
     func open(ruleID: UUID) async -> Bool
 }
 
-public enum GrantResult: Equatable, Sendable {
+public enum GrantResult: Equatable {
     case openedAutomatically(expiresAt: Date)
     case readyForManualReturn(expiresAt: Date)
 }
 
-public enum SessionGrantError: LocalizedError, Equatable, Sendable {
+public enum SessionGrantError: LocalizedError, Equatable {
     case automaticLaunchFailed
 
     public var errorDescription: String? {
         switch self {
         case .automaticLaunchFailed:
-            "Pause couldn't return to this app. The session was not charged, and the app remains blocked."
+            "Pause couldn't return to this app."
         }
     }
 }
 
-public struct SessionGrantFailure: LocalizedError, @unchecked Sendable {
-    public let primaryError: any Error
-    public let repairErrors: [any Error]
+public enum SessionChargeState: Equatable, Sendable {
+    case notCharged
+    case charged
+    case unknown
+}
 
-    public init(primaryError: any Error, repairErrors: [any Error] = []) {
-        self.primaryError = primaryError
-        self.repairErrors = repairErrors
-    }
+public enum GrantShieldState: Equatable, Sendable {
+    case blocked
+    case unblocked
+    case unknown
+}
 
-    public var errorDescription: String? {
-        let primary = primaryError.localizedDescription
-        guard !repairErrors.isEmpty else { return primary }
-        let repairs = repairErrors.map(\.localizedDescription).joined(separator: " ")
-        return "\(primary) Pause also couldn't finish repairing the failed grant: \(repairs)"
+public enum SessionGrantRepairStep: String, Equatable, Sendable {
+    case rollBackRuntime
+    case stopMonitoring
+    case forceShield
+
+    fileprivate var description: String {
+        switch self {
+        case .rollBackRuntime: "roll back session state"
+        case .stopMonitoring: "stop expiry monitoring"
+        case .forceShield: "block the app again"
+        }
     }
 }
 
-public struct SessionGrantCoordinator: Sendable {
+public struct SessionGrantRepairFailure: Sendable {
+    public let step: SessionGrantRepairStep
+    public let underlyingError: any Error
+
+    public init(step: SessionGrantRepairStep, underlyingError: any Error) {
+        self.step = step
+        self.underlyingError = underlyingError
+    }
+}
+
+public struct SessionGrantFailure: LocalizedError {
+    public let primaryError: any Error
+    public let repairErrors: [SessionGrantRepairFailure]
+    public let chargeState: SessionChargeState
+    public let shieldState: GrantShieldState
+
+    public init(
+        primaryError: any Error,
+        repairErrors: [SessionGrantRepairFailure] = [],
+        chargeState: SessionChargeState,
+        shieldState: GrantShieldState
+    ) {
+        self.primaryError = primaryError
+        self.repairErrors = repairErrors
+        self.chargeState = chargeState
+        self.shieldState = shieldState
+    }
+
+    public var errorDescription: String? {
+        var parts = [primaryError.localizedDescription, stateDescription]
+        if !repairErrors.isEmpty {
+            let repairs = repairErrors.map { failure in
+                "Pause couldn't \(failure.step.description): \(failure.underlyingError.localizedDescription)"
+            }
+            parts.append(repairs.joined(separator: " "))
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private var stateDescription: String {
+        let charge: String
+        switch chargeState {
+        case .notCharged: charge = "The session was not charged."
+        case .charged: charge = "The provisional session remains charged."
+        case .unknown: charge = "Pause couldn't confirm whether the session was charged."
+        }
+
+        let shield: String
+        switch shieldState {
+        case .blocked: shield = "The app is blocked."
+        case .unblocked: shield = "The app remains available until the recorded expiry."
+        case .unknown: shield = "Pause couldn't confirm whether the app was blocked."
+        }
+        return "\(charge) \(shield)"
+    }
+}
+
+@MainActor
+public struct SessionGrantCoordinator {
     private let scheduler: any SessionScheduling
     private let runtime: any RuntimePersisting
     private let shield: any ShieldControlling
@@ -74,40 +145,43 @@ public struct SessionGrantCoordinator: Sendable {
     }
 
     public func grant(rule: AppRule, now: Date) async throws -> GrantResult {
-        let expiresAt = now.addingTimeInterval(Double(rule.sessionLengthMinutes) * 60)
+        let rawExpiry = now.addingTimeInterval(Double(rule.sessionLengthMinutes) * 60)
+        let expiresAt = Date(
+            timeIntervalSinceReferenceDate: ceil(rawExpiry.timeIntervalSinceReferenceDate)
+        )
         let activityName: String
 
         do {
-            activityName = try scheduler.register(
-                ruleID: rule.id,
-                startsAt: now,
-                expiresAt: expiresAt
-            )
-        } catch {
-            throw SessionGrantFailure(primaryError: error)
-        }
-
-        do {
-            try runtime.reserve(
-                ruleID: rule.id,
-                activityName: activityName,
-                expiresAt: expiresAt
-            )
+            activityName = try scheduler.register(ruleID: rule.id, startsAt: now, expiresAt: expiresAt)
         } catch {
             throw SessionGrantFailure(
                 primaryError: error,
-                repairErrors: collectRepairErrors {
-                    try scheduler.stop(activityName: activityName)
-                }
+                chargeState: .notCharged,
+                shieldState: .blocked
+            )
+        }
+
+        do {
+            try runtime.reserve(ruleID: rule.id, activityName: activityName, expiresAt: expiresAt)
+        } catch {
+            let repairErrors = collectRepairFailure(step: .stopMonitoring) {
+                try scheduler.stop(activityName: activityName)
+            }
+            throw SessionGrantFailure(
+                primaryError: error,
+                repairErrors: repairErrors,
+                chargeState: .notCharged,
+                shieldState: .blocked
             )
         }
 
         do {
             try shield.unshield(ruleID: rule.id)
         } catch {
-            throw SessionGrantFailure(
+            throw repairedFailure(
                 primaryError: error,
-                repairErrors: repairFailedGrant(ruleID: rule.id, activityName: activityName)
+                ruleID: rule.id,
+                activityName: activityName
             )
         }
 
@@ -116,17 +190,19 @@ public struct SessionGrantCoordinator: Sendable {
                 try runtime.activate(ruleID: rule.id)
                 return .readyForManualReturn(expiresAt: expiresAt)
             } catch {
-                // The provisional session remains charged and recoverable. Rolling it back
-                // here would grant untracked access after the shield has already moved.
-                throw SessionGrantFailure(primaryError: error)
+                throw SessionGrantFailure(
+                    primaryError: error,
+                    chargeState: .charged,
+                    shieldState: .unblocked
+                )
             }
         }
 
         guard await launcher.open(ruleID: rule.id) else {
-            let primary = SessionGrantError.automaticLaunchFailed
-            throw SessionGrantFailure(
-                primaryError: primary,
-                repairErrors: repairFailedGrant(ruleID: rule.id, activityName: activityName)
+            throw repairedFailure(
+                primaryError: SessionGrantError.automaticLaunchFailed,
+                ruleID: rule.id,
+                activityName: activityName
             )
         }
 
@@ -134,26 +210,49 @@ public struct SessionGrantCoordinator: Sendable {
             try runtime.activate(ruleID: rule.id)
             return .openedAutomatically(expiresAt: expiresAt)
         } catch {
-            // Opening succeeded. The provisional record is deliberately preserved so
-            // launch recovery charges it instead of accidentally granting free access.
-            throw SessionGrantFailure(primaryError: error)
+            throw SessionGrantFailure(
+                primaryError: error,
+                chargeState: .charged,
+                shieldState: .unblocked
+            )
         }
     }
 
-    private func repairFailedGrant(ruleID: UUID, activityName: String) -> [any Error] {
-        var errors: [any Error] = []
-        errors.append(contentsOf: collectRepairErrors { try runtime.rollBack(ruleID: ruleID) })
-        errors.append(contentsOf: collectRepairErrors { try scheduler.stop(activityName: activityName) })
-        errors.append(contentsOf: collectRepairErrors { try shield.reconcile() })
-        return errors
+    private func repairedFailure(
+        primaryError: any Error,
+        ruleID: UUID,
+        activityName: String
+    ) -> SessionGrantFailure {
+        var failures: [SessionGrantRepairFailure] = []
+        let rollback = collectRepairFailure(step: .rollBackRuntime) {
+            try runtime.rollBack(ruleID: ruleID)
+        }
+        failures.append(contentsOf: rollback)
+        failures.append(contentsOf: collectRepairFailure(step: .stopMonitoring) {
+            try scheduler.stop(activityName: activityName)
+        })
+        let forceShield = collectRepairFailure(step: .forceShield) {
+            try shield.forceShield(ruleID: ruleID)
+        }
+        failures.append(contentsOf: forceShield)
+
+        return SessionGrantFailure(
+            primaryError: primaryError,
+            repairErrors: failures,
+            chargeState: rollback.isEmpty ? .notCharged : .unknown,
+            shieldState: forceShield.isEmpty ? .blocked : .unknown
+        )
     }
 
-    private func collectRepairErrors(_ operation: () throws -> Void) -> [any Error] {
+    private func collectRepairFailure(
+        step: SessionGrantRepairStep,
+        _ operation: () throws -> Void
+    ) -> [SessionGrantRepairFailure] {
         do {
             try operation()
             return []
         } catch {
-            return [error]
+            return [SessionGrantRepairFailure(step: step, underlyingError: error)]
         }
     }
 }
