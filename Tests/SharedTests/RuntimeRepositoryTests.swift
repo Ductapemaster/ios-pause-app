@@ -74,6 +74,56 @@ final class RuntimeRepositoryTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: unrelatedURL), contents)
     }
 
+    func testDeleteOrphanedRuntimesRetriesAfterDeletionFailure() throws {
+        let orphanedID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
+        let orphaned = runtime(sessionsStarted: 1)
+        try repository.save(orphaned, ruleID: orphanedID)
+
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o500],
+            ofItemAtPath: directoryURL.path
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: directoryURL.path
+            )
+        }
+
+        XCTAssertThrowsError(try repository.deleteOrphanedRuntimes(keeping: []))
+        XCTAssertEqual(try repository.load(ruleID: orphanedID), orphaned)
+
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: directoryURL.path
+        )
+        try repository.deleteOrphanedRuntimes(keeping: [])
+
+        XCTAssertNil(try repository.load(ruleID: orphanedID))
+    }
+
+    func testDeleteOrphanedRuntimesIgnoresCanonicalLookingDirectory() throws {
+        let directoryID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
+        let runtimeDirectoryURL = directoryURL.appendingPathComponent(
+            "runtime-\(directoryID.uuidString.lowercased()).json",
+            isDirectory: true
+        )
+        let sentinelURL = runtimeDirectoryURL.appendingPathComponent("sentinel")
+        let sentinel = Data("leave me".utf8)
+        try FileManager.default.createDirectory(
+            at: runtimeDirectoryURL,
+            withIntermediateDirectories: false
+        )
+        try sentinel.write(to: sentinelURL)
+
+        try repository.deleteOrphanedRuntimes(keeping: [])
+
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: runtimeDirectoryURL.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
+        XCTAssertEqual(try Data(contentsOf: sentinelURL), sentinel)
+    }
+
     func testUpdatePersistsCompleteMutation() throws {
         let ruleID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
         try repository.save(runtime(sessionsStarted: 1), ruleID: ruleID)

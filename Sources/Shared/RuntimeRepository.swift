@@ -33,9 +33,11 @@ public final class RuntimeRepository: @unchecked Sendable {
 
         let fileURLs = try FileManager.default.contentsOfDirectory(
             at: directoryURL,
-            includingPropertiesForKeys: nil
+            includingPropertiesForKeys: [.isRegularFileKey]
         )
         for fileURL in fileURLs {
+            let resourceValues = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
+            guard resourceValues.isRegularFile == true else { continue }
             guard let ruleID = ruleID(for: fileURL), !ruleIDs.contains(ruleID) else { continue }
             try FileManager.default.removeItem(at: fileURL)
         }
