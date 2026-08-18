@@ -9,7 +9,7 @@ struct PauseApp: App {
         WindowGroup {
             NavigationStack {
                 if model.hasScreenTimeAuthorization {
-                    RulesView(model: model)
+                    authorizedContent
                 } else {
                     AuthorizationView(model: model)
                 }
@@ -23,9 +23,34 @@ struct PauseApp: App {
                 )
             }
             .onChange(of: scenePhase) { _, phase in
-                guard phase == .active else { return }
-                model.refreshAuthorizationStatus()
+                if phase == .active {
+                    model.sceneDidBecomeActive()
+                } else {
+                    model.sceneDidBecomeInactive()
+                }
             }
+            .task {
+                guard scenePhase == .active else { return }
+                model.sceneDidBecomeActive()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var authorizedContent: some View {
+        switch model.entryRoute {
+        case .configuration:
+            RulesView(model: model)
+        case let .pause(entry):
+            PauseView(
+                entry: entry,
+                isGrantRequested: model.isGrantRequested,
+                onUseSession: model.requestSessionGrant
+            )
+        case let .refused(content):
+            RefusalView(content: content, onDismiss: model.returnToConfiguration)
+        case let .repair(content):
+            RepairView(content: content, onDismiss: model.returnToConfiguration)
         }
     }
 }

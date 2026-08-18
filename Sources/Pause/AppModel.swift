@@ -16,6 +16,31 @@ struct AppError: Identifiable {
     }
 }
 
+struct PauseEntryContext {
+    let details: PauseEntryDetails
+    let applicationToken: ApplicationToken
+    let countdown: PauseCountdown
+}
+
+struct RefusalContent {
+    let applicationToken: ApplicationToken
+    let title: String
+    let message: String
+}
+
+struct RepairContent {
+    let applicationToken: ApplicationToken?
+    let title: String
+    let message: String
+}
+
+enum AppEntryRoute {
+    case configuration
+    case pause(PauseEntryContext)
+    case refused(RefusalContent)
+    case repair(RepairContent)
+}
+
 enum AppModelError: LocalizedError {
     case storageUnavailable
     case ruleNotFound
@@ -45,25 +70,32 @@ final class AppModel: ObservableObject {
     @Published private(set) var configuration: ConfigurationDocument
     @Published var pickerSelection: FamilyActivitySelection
     @Published var presentedError: AppError?
+    @Published private(set) var entryRoute: AppEntryRoute = .configuration
+    @Published private(set) var isGrantRequested = false
 
     private let authorizationCenter: AuthorizationCenter
     private let activityCenter: DeviceActivityCenter
     private let ruleRemovalCoordinator: RuleRemovalCoordinator
     private let shieldReconciler: ShieldReconciler
+    private let shieldIntentStore: ShieldIntentStore
     private var configurationStore: ConfigurationStore?
     private var runtimeRepository: RuntimeRepository?
+    private var hasHandledCurrentActivation = false
+    private var foregroundPauseState = ForegroundPauseState.configuration
 
     init(
         authorizationCenter: AuthorizationCenter = .shared,
         appGroupContainer: AppGroupContainer = AppGroupContainer(),
         activityCenter: DeviceActivityCenter = DeviceActivityCenter(),
         ruleRemovalCoordinator: RuleRemovalCoordinator = RuleRemovalCoordinator(),
-        shieldReconciler: ShieldReconciler = ShieldReconciler()
+        shieldReconciler: ShieldReconciler = ShieldReconciler(),
+        shieldIntentStore: ShieldIntentStore = ShieldIntentStore()
     ) {
         self.authorizationCenter = authorizationCenter
         self.activityCenter = activityCenter
         self.ruleRemovalCoordinator = ruleRemovalCoordinator
         self.shieldReconciler = shieldReconciler
+        self.shieldIntentStore = shieldIntentStore
         authorizationStatus = authorizationCenter.authorizationStatus
         configuration = Self.emptyConfiguration
         pickerSelection = FamilyActivitySelection()
@@ -90,6 +122,40 @@ final class AppModel: ObservableObject {
         authorizationStatus = authorizationCenter.authorizationStatus
         cleanupOrphanedRuntimes()
         reconcileShieldsIfAuthorized()
+    }
+
+    func sceneDidBecomeActive(now: Date = Date()) {
+        guard !hasHandledCurrentActivation else { return }
+        hasHandledCurrentActivation = true
+        refreshAuthorizationStatus()
+
+        guard canApplyManagedSettings else {
+            entryRoute = .configuration
+            return
+        }
+        guard foregroundPauseState != .grantStarted else { return }
+
+        routeShieldIntent(now: now)
+    }
+
+    func sceneDidBecomeInactive() {
+        hasHandledCurrentActivation = false
+        foregroundPauseState = foregroundPauseState.transitioned(for: .sceneBecameInactive)
+        if foregroundPauseState == .configuration, case .pause = entryRoute {
+            entryRoute = .configuration
+        }
+    }
+
+    func requestSessionGrant() {
+        guard case .pause = entryRoute else { return }
+        foregroundPauseState = .grantStarted
+        isGrantRequested = true
+    }
+
+    func returnToConfiguration() {
+        isGrantRequested = false
+        foregroundPauseState = .configuration
+        entryRoute = .configuration
     }
 
     func requestAuthorization() async {
@@ -280,6 +346,129 @@ final class AppModel: ObservableObject {
         } catch {
             presentedError = AppError(title: "Couldn't finish app-data cleanup", error: error)
         }
+    }
+
+    private func routeShieldIntent(now: Date) {
+        isGrantRequested = false
+        foregroundPauseState = .configuration
+
+        let intent: ShieldIntent
+        do {
+            guard let consumedIntent = try shieldIntentStore.consume() else {
+                entryRoute = .configuration
+                return
+            }
+            intent = consumedIntent
+        } catch {
+            entryRoute = .repair(
+                RepairContent(
+                    applicationToken: nil,
+                    title: "Pause couldn't read this request",
+                    message: "The app remains blocked. Return to the app and try again."
+                )
+            )
+            return
+        }
+
+        let age = now.timeIntervalSince(intent.createdAt)
+        guard age >= 0, age <= PauseEntryRouter.maximumIntentAge else {
+            entryRoute = .repair(
+                RepairContent(
+                    applicationToken: intent.applicationToken,
+                    title: "This request expired",
+                    message: "The app remains blocked. Return to it and try again."
+                )
+            )
+            return
+        }
+
+        do {
+            guard let runtimeRepository else {
+                throw AppModelError.storageUnavailable
+            }
+            let matchingTargets = configuration.targets.filter {
+                $0.applicationToken == intent.applicationToken
+            }
+            guard matchingTargets.count == 1, let target = matchingTargets.first else {
+                throw RuleLookupError.targetNotFound
+            }
+            guard let rule = configuration.rules.first(where: { $0.id == target.ruleID }) else {
+                throw RuleLookupError.ruleNotFound(target.ruleID)
+            }
+
+            let today = CalendarDay(date: now, calendar: .current)
+            let runtime = try runtimeRepository.load(ruleID: rule.id)
+                ?? RuleRuntime(logicalDay: today, sessionsStarted: 0)
+            let evaluation = RuleLookup.evaluate(
+                rule: rule,
+                runtime: runtime,
+                now: now,
+                calendar: .current
+            )
+            let resolution = PauseEntryResolution.resolved(
+                ruleID: rule.id,
+                sessionsPerDay: rule.sessionsPerDay,
+                pauseSeconds: configuration.settings.pauseSeconds,
+                decision: evaluation.decision
+            )
+
+            switch PauseEntryRouter.route(
+                input: .intent(createdAt: intent.createdAt, resolution: resolution),
+                now: now
+            ) {
+            case let .pause(details):
+                foregroundPauseState = .countingDown
+                entryRoute = .pause(
+                    PauseEntryContext(
+                        details: details,
+                        applicationToken: target.applicationToken,
+                        countdown: try PauseCountdown(
+                            ruleID: details.ruleID,
+                            seconds: details.pauseSeconds,
+                            now: now
+                        )
+                    )
+                )
+            case let .refused(reason):
+                entryRoute = .refused(refusalContent(for: reason, token: target.applicationToken))
+            case .configuration:
+                entryRoute = .configuration
+            case .repair:
+                entryRoute = genericRepairContent(for: intent.applicationToken)
+            }
+        } catch {
+            entryRoute = genericRepairContent(for: intent.applicationToken)
+        }
+    }
+
+    private func refusalContent(
+        for reason: RefusalReason,
+        token: ApplicationToken
+    ) -> RefusalContent {
+        switch reason {
+        case let .dailyAllowanceExhausted(limit):
+            RefusalContent(
+                applicationToken: token,
+                title: "No sessions left today",
+                message: "All \(limit) sessions have been used. This app remains blocked until the daily reset."
+            )
+        case let .sessionAlreadyOpen(until):
+            RefusalContent(
+                applicationToken: token,
+                title: "A session is already open",
+                message: "The current session runs until \(until.formatted(date: .omitted, time: .shortened))."
+            )
+        }
+    }
+
+    private func genericRepairContent(for token: ApplicationToken?) -> AppEntryRoute {
+        .repair(
+            RepairContent(
+                applicationToken: token,
+                title: "Pause needs repair",
+                message: "This app's rule or session data couldn't be read safely. The app remains blocked."
+            )
+        )
     }
 
     private func commitRuleRemoval(
