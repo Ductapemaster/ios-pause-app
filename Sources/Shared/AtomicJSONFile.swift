@@ -3,6 +3,7 @@ import Foundation
 public enum PersistenceError: Error, Equatable {
     case corruptFile(URL)
     case invalidRuntimeFile(UUID)
+    case invalidStagedRuntimeFile(UUID)
     case missingAppGroupContainer
     case missingRuntime(UUID)
     case missingStagedRuntime(UUID)

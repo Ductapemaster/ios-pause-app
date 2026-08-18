@@ -75,6 +75,36 @@ final class RuntimeRepositoryTests: XCTestCase {
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directoryURL.path).isEmpty)
     }
 
+    func testSecondStagingAttemptReusesStageWhenCanonicalRuntimeIsAbsent() throws {
+        let ruleID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
+        try repository.save(runtime(sessionsStarted: 2), ruleID: ruleID)
+        let firstStage = try repository.stageRemoval(ruleID: ruleID)
+
+        let retryStage = try repository.stageRemoval(ruleID: ruleID)
+
+        XCTAssertEqual(retryStage, firstStage)
+        XCTAssertNil(try repository.load(ruleID: ruleID))
+        try repository.finalizeRemoval(retryStage)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directoryURL.path).isEmpty)
+    }
+
+    func testStagingWithStaleStageAndCanonicalRuntimeUsesCurrentCanonicalBytes() throws {
+        let ruleID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
+        let stale = runtime(sessionsStarted: 2)
+        let current = runtime(sessionsStarted: 9)
+        try repository.save(stale, ruleID: ruleID)
+        _ = try repository.stageRemoval(ruleID: ruleID)
+        try repository.save(current, ruleID: ruleID)
+
+        let retryStage = try repository.stageRemoval(ruleID: ruleID)
+        XCTAssertNil(try repository.load(ruleID: ruleID))
+
+        try repository.restoreRemoval(retryStage)
+
+        XCTAssertEqual(try repository.load(ruleID: ruleID), current)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directoryURL.path).count, 1)
+    }
+
     func testFailedRestoreLeavesTheStagedRuntimeAvailableForRetry() throws {
         let ruleID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
         let original = runtime(sessionsStarted: 2)
@@ -111,6 +141,27 @@ final class RuntimeRepositoryTests: XCTestCase {
             XCTAssertEqual(error as? PersistenceError, .invalidRuntimeFile(ruleID))
         }
         XCTAssertEqual(try Data(contentsOf: sentinelURL), Data("leave me".utf8))
+    }
+
+    func testStageRemovalRejectsDirectoryShapedStageWithoutDeletingIt() throws {
+        let ruleID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
+        try repository.save(runtime(sessionsStarted: 2), ruleID: ruleID)
+        let stagedDirectoryURL = directoryURL.appendingPathComponent(
+            "runtime-\(ruleID.uuidString.lowercased()).json.removal-stage",
+            isDirectory: true
+        )
+        let sentinelURL = stagedDirectoryURL.appendingPathComponent("sentinel")
+        try FileManager.default.createDirectory(
+            at: stagedDirectoryURL,
+            withIntermediateDirectories: false
+        )
+        try Data("leave me".utf8).write(to: sentinelURL)
+
+        XCTAssertThrowsError(try repository.stageRemoval(ruleID: ruleID)) { error in
+            XCTAssertEqual(error as? PersistenceError, .invalidStagedRuntimeFile(ruleID))
+        }
+        XCTAssertEqual(try Data(contentsOf: sentinelURL), Data("leave me".utf8))
+        XCTAssertEqual(try repository.load(ruleID: ruleID), runtime(sessionsStarted: 2))
     }
 
     func testDeleteOrphanedRuntimesRemovesOnlyRulesOutsideKeepSet() throws {
