@@ -56,7 +56,7 @@ final class SessionGrantFlowTests: XCTestCase {
             return XCTFail("A failed handoff should finish at configuration with a visible error")
         }
         XCTAssertEqual(harness.scheduler.stopCount, 1)
-        XCTAssertEqual(harness.shield.operations, ["unshield", "force-shield"])
+        XCTAssertEqual(harness.shield.operations, ["unshield", "shield"])
         XCTAssertNotNil(harness.model.presentedError)
         let runtime = try XCTUnwrap(RuntimeRepository(directoryURL: harness.directory).load(ruleID: ruleID))
         XCTAssertEqual(runtime.sessionsStarted, 0)
@@ -123,7 +123,7 @@ final class SessionGrantFlowTests: XCTestCase {
         let scheduler = AppFakeScheduler()
         scheduler.stopError = AppGrantTestError.stop
         let shield = AppFakeShield()
-        shield.forceShieldError = AppGrantTestError.forceShield
+        shield.failedGrantShieldError = AppGrantTestError.forceShield
         let harness = try makeHarness(
             route: .instagram,
             automaticRoute: true,
@@ -146,13 +146,15 @@ final class SessionGrantFlowTests: XCTestCase {
     }
 
     func testFailedGrantAlertReportsImmediateBlockWithUnknownDurability() async throws {
+        let runtime = FailingRollbackRuntime()
         let shield = AppFakeShield()
-        shield.forceShieldOutcome = .immediateOnly(AppGrantTestError.markerPersistence)
+        shield.failedGrantShieldOutcome = .immediateOnly(AppGrantTestError.markerPersistence)
         let harness = try makeHarness(
             route: .instagram,
             automaticRoute: true,
             launchSucceeds: false,
-            shieldOverride: shield
+            shieldOverride: shield,
+            runtimePersistence: runtime
         )
         harness.model.sceneDidBecomeActive(now: now)
 
@@ -273,14 +275,20 @@ private final class AppFakeScheduler: SessionScheduling {
 @MainActor
 private final class AppFakeShield: ShieldControlling {
     private(set) var operations: [String] = []
-    var forceShieldError: Error?
-    var forceShieldOutcome: ForceShieldOutcome = .durable
+    var shieldError: Error?
+    var failedGrantShieldError: Error?
+    var failedGrantShieldOutcome: ForceShieldOutcome = .durable
 
     func unshield(ruleID: UUID) throws { operations.append("unshield") }
-    func forceShield(ruleID: UUID) throws -> ForceShieldOutcome {
-        operations.append("force-shield")
-        if let forceShieldError { throw forceShieldError }
-        return forceShieldOutcome
+    func shield(ruleID: UUID) throws {
+        operations.append("shield")
+        if let shieldError { throw shieldError }
+    }
+
+    func forceShieldForFailedGrant(ruleID: UUID) throws -> ForceShieldOutcome {
+        operations.append("force-failed-grant-shield")
+        if let failedGrantShieldError { throw failedGrantShieldError }
+        return failedGrantShieldOutcome
     }
 }
 

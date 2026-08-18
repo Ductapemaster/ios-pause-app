@@ -68,7 +68,7 @@ final class SessionGrantCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(
             harness.log.values,
-            ["register", "reserve", "unshield", "rollback", "stop", "force-shield"]
+            ["register", "reserve", "unshield", "rollback", "stop", "shield"]
         )
         XCTAssertFalse(harness.runtime.isReserved)
         XCTAssertTrue(harness.shield.isShielded)
@@ -81,7 +81,7 @@ final class SessionGrantCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(
             harness.log.values,
-            ["register", "reserve", "unshield", "has-route", "open", "rollback", "stop", "force-shield"]
+            ["register", "reserve", "unshield", "has-route", "open", "rollback", "stop", "shield"]
         )
         XCTAssertFalse(harness.runtime.isReserved)
         XCTAssertTrue(harness.shield.isShielded)
@@ -152,7 +152,7 @@ final class SessionGrantCoordinatorTests: XCTestCase {
         harness.shield.unshieldError = TestError.unshield
         harness.runtime.rollbackError = TestError.rollback
         harness.scheduler.stopError = TestError.stop
-        harness.shield.forceShieldError = TestError.reconcile
+        harness.shield.failedGrantShieldError = TestError.reconcile
 
         do {
             _ = try await harness.coordinator.grant(rule: rule, now: now)
@@ -180,7 +180,7 @@ final class SessionGrantCoordinatorTests: XCTestCase {
         XCTAssertEqual(failure?.repairErrors.map(\.step), [.rollBackRuntime])
         XCTAssertEqual(failure?.chargeState, .unknown)
         XCTAssertEqual(failure?.shieldState, .blocked)
-        XCTAssertEqual(Array(harness.log.values.suffix(2)), ["rollback", "force-shield"])
+        XCTAssertEqual(Array(harness.log.values.suffix(2)), ["rollback", "force-failed-grant-shield"])
         XCTAssertFalse(harness.log.values.contains("stop"))
         XCTAssertTrue(harness.shield.isShielded)
     }
@@ -188,17 +188,22 @@ final class SessionGrantCoordinatorTests: XCTestCase {
     func testImmediateOnlyForceShieldReportsUnknownDurability() async {
         let harness = Harness(ruleID: ruleID)
         harness.shield.unshieldError = TestError.unshield
-        harness.shield.forceShieldOutcome = .immediateOnly(TestError.markerPersistence)
+        harness.runtime.rollbackError = TestError.rollback
+        harness.shield.failedGrantShieldOutcome = .immediateOnly(TestError.markerPersistence)
 
         let failure = await capturedFailure(from: harness)
 
-        XCTAssertEqual(failure?.repairErrors.map(\.step), [.persistFailedGrantBlock])
         XCTAssertEqual(
-            failure?.repairErrors.first?.underlyingError as? TestError,
+            failure?.repairErrors.map(\.step),
+            [.rollBackRuntime, .persistFailedGrantBlock]
+        )
+        XCTAssertEqual(
+            failure?.repairErrors.last?.underlyingError as? TestError,
             .markerPersistence
         )
-        XCTAssertEqual(failure?.chargeState, .notCharged)
+        XCTAssertEqual(failure?.chargeState, .unknown)
         XCTAssertEqual(failure?.shieldState, .blockedDurabilityUnknown)
+        XCTAssertFalse(harness.log.values.contains("stop"))
         XCTAssertTrue(
             failure?.localizedDescription.contains("blocked now") == true
         )
@@ -222,7 +227,7 @@ final class SessionGrantCoordinatorTests: XCTestCase {
     func testUnshieldFailureWithForceShieldFailureDoesNotClaimAppIsBlocked() async {
         let harness = Harness(ruleID: ruleID)
         harness.shield.unshieldError = TestError.unshield
-        harness.shield.forceShieldError = TestError.reconcile
+        harness.shield.shieldError = TestError.reconcile
 
         let failure = await capturedFailure(from: harness)
 
@@ -235,7 +240,7 @@ final class SessionGrantCoordinatorTests: XCTestCase {
     func testRepairFailuresAreAllAttemptedAndRetainedWithPrimaryFailure() async {
         let harness = Harness(ruleID: ruleID, automaticRoute: true, launchSucceeds: false)
         harness.runtime.rollbackError = TestError.rollback
-        harness.shield.forceShieldError = TestError.reconcile
+        harness.shield.failedGrantShieldError = TestError.reconcile
 
         do {
             _ = try await harness.coordinator.grant(rule: rule, now: now)
@@ -254,7 +259,7 @@ final class SessionGrantCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(
             harness.log.values,
-            ["register", "reserve", "unshield", "has-route", "open", "rollback", "force-shield"]
+            ["register", "reserve", "unshield", "has-route", "open", "rollback", "force-failed-grant-shield"]
         )
     }
 
@@ -363,8 +368,9 @@ private final class FakeRuntime: RuntimePersisting {
 private final class FakeShield: ShieldControlling {
     let log: OperationLog
     var unshieldError: Error?
-    var forceShieldError: Error?
-    var forceShieldOutcome: ForceShieldOutcome = .durable
+    var shieldError: Error?
+    var failedGrantShieldError: Error?
+    var failedGrantShieldOutcome: ForceShieldOutcome = .durable
     var isShielded = true
 
     init(log: OperationLog) { self.log = log }
@@ -375,11 +381,17 @@ private final class FakeShield: ShieldControlling {
         isShielded = false
     }
 
-    func forceShield(ruleID: UUID) throws -> ForceShieldOutcome {
-        log.append("force-shield")
-        if let forceShieldError { throw forceShieldError }
+    func shield(ruleID: UUID) throws {
+        log.append("shield")
+        if let shieldError { throw shieldError }
         isShielded = true
-        return forceShieldOutcome
+    }
+
+    func forceShieldForFailedGrant(ruleID: UUID) throws -> ForceShieldOutcome {
+        log.append("force-failed-grant-shield")
+        if let failedGrantShieldError { throw failedGrantShieldError }
+        isShielded = true
+        return failedGrantShieldOutcome
     }
 }
 

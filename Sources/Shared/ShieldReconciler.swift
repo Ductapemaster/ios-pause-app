@@ -106,13 +106,24 @@ public struct ShieldReconciler {
     }
 
     public func forceShield(ruleID: UUID, configuration: ConfigurationDocument) throws {
+        let token = try applicationToken(ruleID: ruleID, configuration: configuration)
+        forceShield(applicationToken: token)
+    }
+
+    func applicationToken(
+        ruleID: UUID,
+        configuration: ConfigurationDocument
+    ) throws -> ApplicationToken {
         let matchingTargets = configuration.targets.filter { $0.ruleID == ruleID }
         guard matchingTargets.count == 1, let target = matchingTargets.first else {
             throw RuleLookupError.ruleNotFound(ruleID)
         }
+        return target.applicationToken
+    }
 
+    func forceShield(applicationToken: ApplicationToken) {
         var shieldedApplications = currentApplications() ?? []
-        shieldedApplications.insert(target.applicationToken)
+        shieldedApplications.insert(applicationToken)
         applyApplications(shieldedApplications)
     }
 }

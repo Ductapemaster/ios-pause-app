@@ -17,7 +17,8 @@ public protocol RuntimePersisting {
 @MainActor
 public protocol ShieldControlling {
     func unshield(ruleID: UUID) throws
-    func forceShield(ruleID: UUID) throws -> ForceShieldOutcome
+    func shield(ruleID: UUID) throws
+    func forceShieldForFailedGrant(ruleID: UUID) throws -> ForceShieldOutcome
 }
 
 @MainActor
@@ -252,35 +253,45 @@ public struct SessionGrantCoordinator {
             failures.append(contentsOf: collectRepairFailure(step: .stopMonitoring) {
                 try scheduler.stop(activityName: activityName)
             })
-        }
-
-        let shieldState: GrantShieldState
-        do {
-            switch try shield.forceShield(ruleID: ruleID) {
-            case .durable:
-                shieldState = .blocked
-            case let .immediateOnly(error):
-                failures.append(
-                    SessionGrantRepairFailure(
-                        step: .persistFailedGrantBlock,
-                        underlyingError: error
-                    )
-                )
-                shieldState = .blockedDurabilityUnknown
+            let shieldRepair = collectRepairFailure(step: .forceShield) {
+                try shield.shield(ruleID: ruleID)
             }
-        } catch {
-            failures.append(
-                SessionGrantRepairFailure(step: .forceShield, underlyingError: error)
+            failures.append(contentsOf: shieldRepair)
+            return SessionGrantFailure(
+                primaryError: primaryError,
+                repairErrors: failures,
+                chargeState: .notCharged,
+                shieldState: shieldRepair.isEmpty ? .blocked : .unknown
             )
-            shieldState = .unknown
-        }
+        } else {
+            let shieldState: GrantShieldState
+            do {
+                switch try shield.forceShieldForFailedGrant(ruleID: ruleID) {
+                case .durable:
+                    shieldState = .blocked
+                case let .immediateOnly(error):
+                    failures.append(
+                        SessionGrantRepairFailure(
+                            step: .persistFailedGrantBlock,
+                            underlyingError: error
+                        )
+                    )
+                    shieldState = .blockedDurabilityUnknown
+                }
+            } catch {
+                failures.append(
+                    SessionGrantRepairFailure(step: .forceShield, underlyingError: error)
+                )
+                shieldState = .unknown
+            }
 
-        return SessionGrantFailure(
-            primaryError: primaryError,
-            repairErrors: failures,
-            chargeState: rollback.isEmpty ? .notCharged : .unknown,
-            shieldState: shieldState
-        )
+            return SessionGrantFailure(
+                primaryError: primaryError,
+                repairErrors: failures,
+                chargeState: .unknown,
+                shieldState: shieldState
+            )
+        }
     }
 
     private func collectRepairFailure(

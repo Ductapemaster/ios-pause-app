@@ -58,13 +58,25 @@ public final class ConfigurationShieldController: ShieldControlling {
         try reconciler.unshield(ruleID: ruleID, configuration: configuration)
     }
 
-    public func forceShield(ruleID: UUID) throws -> ForceShieldOutcome {
+    public func shield(ruleID: UUID) throws {
         try reconciler.forceShield(ruleID: ruleID, configuration: configuration)
+    }
+
+    public func forceShieldForFailedGrant(ruleID: UUID) throws -> ForceShieldOutcome {
+        let applicationToken = try reconciler.applicationToken(
+            ruleID: ruleID,
+            configuration: configuration
+        )
+        var persistenceError: (any Error)?
         do {
             try failedGrantBlockStore.add(ruleID: ruleID)
-            return .durable
         } catch {
-            return .immediateOnly(error)
+            persistenceError = error
         }
+        reconciler.forceShield(applicationToken: applicationToken)
+        if let persistenceError {
+            return .immediateOnly(persistenceError)
+        }
+        return .durable
     }
 }
