@@ -32,6 +32,19 @@ struct RepairContent {
     let applicationToken: ApplicationToken?
     let title: String
     let message: String
+    let runtimeResetRuleID: UUID?
+
+    init(
+        applicationToken: ApplicationToken?,
+        title: String,
+        message: String,
+        runtimeResetRuleID: UUID? = nil
+    ) {
+        self.applicationToken = applicationToken
+        self.title = title
+        self.message = message
+        self.runtimeResetRuleID = runtimeResetRuleID
+    }
 }
 
 enum AppEntryRoute {
@@ -102,6 +115,7 @@ final class AppModel: ObservableObject {
     private var activationCoordinator = PauseActivationCoordinator(configurationState: .failed)
     private var isSceneActive = false
     private var authorizationStatusAtLastActivation: AuthorizationStatus?
+    private var activationRuntimeRepair: RepairContent?
 
     init(
         authorizationCenter: AuthorizationCenter = .shared,
@@ -187,7 +201,7 @@ final class AppModel: ObservableObject {
                 consumeIntent: { try entryActivationProvider(now) },
                 resolveIntent: { $0 },
                 cleanup: { [self] in cleanupOrphanedRuntimes() },
-                reconcile: { [self] in reconcileShieldsIfAuthorized() }
+                reconcile: { [self] in reconcileSessionsIfAuthorized(now: now) }
             )
         } else {
             outcome = coordinator.activate(
@@ -197,7 +211,7 @@ final class AppModel: ObservableObject {
                     try resolveShieldIntent(intent, now: now)
                 },
                 cleanup: { [self] in cleanupOrphanedRuntimes() },
-                reconcile: { [self] in reconcileShieldsIfAuthorized() }
+                reconcile: { [self] in reconcileSessionsIfAuthorized(now: now) }
             )
         }
         activationCoordinator = coordinator
@@ -215,6 +229,10 @@ final class AppModel: ObservableObject {
             if case .pause = route {
                 activationCoordinator.countdownDidStart()
             }
+        }
+        if let activationRuntimeRepair {
+            entryRoute = .repair(activationRuntimeRepair)
+            self.activationRuntimeRepair = nil
         }
     }
 
@@ -293,6 +311,38 @@ final class AppModel: ObservableObject {
         isGrantRequested = false
         activationCoordinator.returnedToConfiguration()
         entryRoute = .configuration
+    }
+
+    func resetRuntime(ruleID: UUID, now: Date = Date()) {
+        guard activationCoordinator.configurationState == .knownGood,
+              let runtimeRepository,
+              let failedGrantBlockStore else { return }
+        let coordinator = SessionReconciliationCoordinator(
+            loadFailedGrantBlocks: failedGrantBlockStore.load
+        )
+        let result = coordinator.resetRuntime(
+            ruleID: ruleID,
+            logicalDay: CalendarDay(date: now, calendar: .current),
+            saveRuntime: runtimeRepository.save,
+            clearFailedGrantBlock: failedGrantBlockStore.clear,
+            applyShields: { [self] in
+                guard canApplyManagedSettings else { return }
+                try shieldReconciler.reconcile(
+                    configuration: configuration,
+                    runtimeRepository: runtimeRepository,
+                    now: now,
+                    persistExpiredSessions: false
+                )
+            }
+        )
+        guard result.issues.isEmpty else {
+            presentedError = AppError(title: "Couldn't reset this app", error: result)
+            if let content = runtimeRepairContent(for: ruleID) {
+                entryRoute = .repair(content)
+            }
+            return
+        }
+        returnToConfiguration()
     }
 
     func requestAuthorization() async {
@@ -598,8 +648,25 @@ final class AppModel: ObservableObject {
             throw RuleLookupError.ruleNotFound(target.ruleID)
         }
 
-        guard let runtime = try runtimeRepository.load(ruleID: rule.id) else {
-            throw RuleLookupError.runtimeNotFound(rule.id)
+        let runtime: RuleRuntime
+        do {
+            guard let loadedRuntime = try runtimeRepository.load(ruleID: rule.id) else {
+                throw RuleLookupError.runtimeNotFound(rule.id)
+            }
+            runtime = loadedRuntime
+        } catch {
+            return PauseActivationResolution(
+                payload: .repair(
+                    runtimeRepairContent(for: rule.id)
+                        ?? RepairContent(
+                            applicationToken: target.applicationToken,
+                            title: "This app's runtime needs repair",
+                            message: "Pause kept this app blocked because its session data couldn't be read or repaired.",
+                            runtimeResetRuleID: rule.id
+                        )
+                ),
+                performMaintenance: false
+            )
         }
         let evaluation = RuleLookup.evaluate(
             rule: rule,
@@ -779,6 +846,57 @@ final class AppModel: ObservableObject {
         } catch {
             presentedError = AppError(title: title, error: error)
         }
+    }
+
+    private func reconcileSessionsIfAuthorized(now: Date) {
+        guard activationCoordinator.configurationState == .knownGood,
+              canApplyManagedSettings,
+              let runtimeRepository,
+              let failedGrantBlockStore else { return }
+        if let reconciliationOverride {
+            reconciliationOverride()
+            return
+        }
+
+        let coordinator = SessionReconciliationCoordinator(
+            loadFailedGrantBlocks: failedGrantBlockStore.load
+        )
+        let result = coordinator.reconcile(
+            ruleIDs: configuration.rules.map(\.id),
+            now: now,
+            trigger: .appActivation,
+            loadRuntime: runtimeRepository.load,
+            saveRuntime: runtimeRepository.save,
+            clearFailedGrantBlock: failedGrantBlockStore.clear,
+            applyShields: { [self] in
+                try shieldReconciler.reconcile(
+                    configuration: configuration,
+                    runtimeRepository: runtimeRepository,
+                    now: now
+                )
+            },
+            stopMonitoring: { _ in }
+        )
+        if let ruleID = result.repairRuleIDs.sorted(by: {
+            $0.uuidString < $1.uuidString
+        }).first {
+            activationRuntimeRepair = runtimeRepairContent(for: ruleID)
+        }
+        if !result.issues.isEmpty {
+            presentedError = AppError(title: "Pause needs repair", error: result)
+        }
+    }
+
+    private func runtimeRepairContent(for ruleID: UUID) -> RepairContent? {
+        guard let target = configuration.targets.first(where: { $0.ruleID == ruleID }) else {
+            return nil
+        }
+        return RepairContent(
+            applicationToken: target.applicationToken,
+            title: "This app's runtime needs repair",
+            message: "Pause kept this app blocked because its session data couldn't be read or repaired.",
+            runtimeResetRuleID: ruleID
+        )
     }
 
     private var canApplyManagedSettings: Bool {

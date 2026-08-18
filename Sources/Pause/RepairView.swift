@@ -3,6 +3,18 @@ import SwiftUI
 struct RepairView: View {
     let content: RepairContent
     let onDismiss: (() -> Void)?
+    let onResetRuntime: ((UUID) -> Void)?
+    @State private var isResetConfirmationPresented = false
+
+    init(
+        content: RepairContent,
+        onDismiss: (() -> Void)?,
+        onResetRuntime: ((UUID) -> Void)? = nil
+    ) {
+        self.content = content
+        self.onDismiss = onDismiss
+        self.onResetRuntime = onResetRuntime
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -21,7 +33,14 @@ struct RepairView: View {
             Text(content.message)
                 .foregroundStyle(.secondary)
 
-            if let onDismiss {
+            if content.runtimeResetRuleID != nil, onResetRuntime != nil {
+                Button("Reset this app’s runtime", role: .destructive) {
+                    isResetConfirmationPresented = true
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            if content.runtimeResetRuleID == nil, let onDismiss {
                 Button("Back to app list", action: onDismiss)
                     .buttonStyle(.borderedProminent)
             }
@@ -30,5 +49,19 @@ struct RepairView: View {
         .padding(24)
         .navigationTitle("Pause")
         .navigationBarBackButtonHidden()
+        .confirmationDialog(
+            "Reset this app’s runtime?",
+            isPresented: $isResetConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            if let ruleID = content.runtimeResetRuleID, let onResetRuntime {
+                Button("Reset this app’s runtime", role: .destructive) {
+                    onResetRuntime(ruleID)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This can reset today’s session count for this app. No other app will be changed.")
+        }
     }
 }

@@ -12,7 +12,8 @@ struct PauseApp: App {
                 case .configurationRepair:
                     RepairView(
                         content: model.configurationSafetyRepairContent,
-                        onDismiss: nil
+                        onDismiss: nil,
+                        onResetRuntime: nil
                     )
                 case .authorizedContent:
                     authorizedContent
@@ -58,7 +59,11 @@ struct PauseApp: App {
         case let .refused(content):
             RefusalView(content: content, onDismiss: model.returnToConfiguration)
         case let .repair(content):
-            RepairView(content: content, onDismiss: model.returnToConfiguration)
+            RepairView(
+                content: content,
+                onDismiss: model.returnToConfiguration,
+                onResetRuntime: { model.resetRuntime(ruleID: $0) }
+            )
         }
     }
 }

@@ -49,7 +49,8 @@ public struct ShieldReconciler {
         configuration: ConfigurationDocument,
         runtimeRepository: RuntimeRepository,
         now: Date,
-        forceShieldedRuleIDs: Set<UUID> = []
+        forceShieldedRuleIDs: Set<UUID> = [],
+        persistExpiredSessions: Bool = true
     ) throws {
         var shieldedApplications = Set(configuration.targets.map(\.applicationToken))
         var unreadableRuleIDs: [UUID] = []
@@ -76,7 +77,7 @@ public struct ShieldReconciler {
                     continue
                 }
 
-                if runtime.openSession != nil {
+                if runtime.openSession != nil, persistExpiredSessions {
                     runtime.clearExpiredSession(at: now)
                     try runtimeRepository.save(runtime, ruleID: target.ruleID)
                 }
