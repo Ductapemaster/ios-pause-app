@@ -27,6 +27,20 @@ public final class RuntimeRepository: @unchecked Sendable {
         try file(for: ruleID).delete()
     }
 
+    public func deleteOrphanedRuntimes(keeping ruleIDs: Set<UUID>) throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let fileURLs = try FileManager.default.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: nil
+        )
+        for fileURL in fileURLs {
+            guard let ruleID = ruleID(for: fileURL), !ruleIDs.contains(ruleID) else { continue }
+            try FileManager.default.removeItem(at: fileURL)
+        }
+    }
+
     public func update(
         ruleID: UUID,
         _ mutation: (inout RuleRuntime) throws -> Void
@@ -52,5 +66,19 @@ public final class RuntimeRepository: @unchecked Sendable {
 
     private func file(for ruleID: UUID) -> AtomicJSONFile<RuleRuntime> {
         AtomicJSONFile(url: directoryURL.appendingPathComponent("runtime-\(ruleID.uuidString.lowercased()).json"))
+    }
+
+    private func ruleID(for fileURL: URL) -> UUID? {
+        let filename = fileURL.lastPathComponent
+        let prefix = "runtime-"
+        let suffix = ".json"
+        guard filename.hasPrefix(prefix), filename.hasSuffix(suffix) else { return nil }
+
+        let idStart = filename.index(filename.startIndex, offsetBy: prefix.count)
+        let idEnd = filename.index(filename.endIndex, offsetBy: -suffix.count)
+        let idString = String(filename[idStart..<idEnd])
+        guard let ruleID = UUID(uuidString: idString) else { return nil }
+        guard filename == "runtime-\(ruleID.uuidString.lowercased()).json" else { return nil }
+        return ruleID
     }
 }

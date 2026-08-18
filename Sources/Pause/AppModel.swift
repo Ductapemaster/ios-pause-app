@@ -15,6 +15,15 @@ struct AppError: Identifiable {
     }
 }
 
+private struct SelectionRollbackError: LocalizedError {
+    let saveError: Error
+    let cleanupError: Error
+
+    var errorDescription: String? {
+        "The app selection couldn't be saved (\(saveError.localizedDescription)). Pause also couldn't remove incomplete runtime data (\(cleanupError.localizedDescription)); it will try again when the app becomes active."
+    }
+}
+
 enum AppModelError: LocalizedError {
     case storageUnavailable
     case ruleNotFound
@@ -69,6 +78,7 @@ final class AppModel: ObservableObject {
                 configuration = savedConfiguration
                 pickerSelection.applicationTokens = Set(savedConfiguration.targets.map(\.applicationToken))
             }
+            cleanupOrphanedRuntimes()
         } catch {
             presentedError = AppError(title: "Couldn't load Pause", error: error)
         }
@@ -76,6 +86,7 @@ final class AppModel: ObservableObject {
 
     func refreshAuthorizationStatus() {
         authorizationStatus = authorizationCenter.authorizationStatus
+        cleanupOrphanedRuntimes()
     }
 
     func requestAuthorization() async {
@@ -94,20 +105,11 @@ final class AppModel: ObservableObject {
         }
 
         let selectedTokens = pickerSelection.applicationTokens
-        let existingTargetsByID = try Dictionary(
-            uniqueKeysWithValues: configuration.targets.map { target in
-                (try selectionID(for: target.applicationToken), target)
-            }
-        )
-        let selectedTokensByID = try Dictionary(
-            uniqueKeysWithValues: selectedTokens.map { token in
-                (try selectionID(for: token), token)
-            }
-        )
-        let change = selectionChange(
-            existing: Set(existingTargetsByID.keys),
-            selected: Set(selectedTokensByID.keys)
-        )
+        let existingTargets = configuration.targets
+        let existingTokens = Set(existingTargets.map(\.applicationToken))
+        let addedTokens = selectedTokens.subtracting(existingTokens)
+        let retainedTokens = selectedTokens.intersection(existingTokens)
+        let removedTokens = existingTokens.subtracting(selectedTokens)
         let rulesByID = Dictionary(uniqueKeysWithValues: configuration.rules.map { ($0.id, $0) })
         let applicationsByToken = Dictionary(
             uniqueKeysWithValues: pickerSelection.applications.compactMap { application in
@@ -118,9 +120,8 @@ final class AppModel: ObservableObject {
         var nextRules: [AppRule] = []
         var nextTargets: [RuleTarget] = []
 
-        for target in configuration.targets {
-            let targetSelectionID = try selectionID(for: target.applicationToken)
-            guard change.retained.contains(targetSelectionID) else { continue }
+        for target in existingTargets {
+            guard retainedTokens.contains(target.applicationToken) else { continue }
             guard let rule = rulesByID[target.ruleID] else { continue }
             let detectedRoute = applicationsByToken[target.applicationToken].flatMap(LaunchRoute.detected)
             nextRules.append(rule)
@@ -134,10 +135,8 @@ final class AppModel: ObservableObject {
         }
 
         let today = CalendarDay(date: Date(), calendar: .current)
-        var addedRuleIDs: [UUID] = []
         do {
-            for selectionID in change.added {
-                guard let token = selectedTokensByID[selectionID] else { continue }
+            for token in addedTokens {
                 let rule = try AppRule(sessionsPerDay: 3, sessionLengthMinutes: 5)
                 let launchRoute = applicationsByToken[token].flatMap(LaunchRoute.detected)
                 nextRules.append(rule)
@@ -148,7 +147,6 @@ final class AppModel: ObservableObject {
                     RuleRuntime(logicalDay: today, sessionsStarted: 0),
                     ruleID: rule.id
                 )
-                addedRuleIDs.append(rule.id)
             }
 
             let nextConfiguration = try ConfigurationDocument(
@@ -158,18 +156,24 @@ final class AppModel: ObservableObject {
             )
             try configurationStore.save(nextConfiguration)
             configuration = nextConfiguration
-        } catch {
-            for ruleID in addedRuleIDs {
-                try? runtimeRepository.delete(ruleID: ruleID)
+        } catch let saveError {
+            do {
+                try runtimeRepository.deleteOrphanedRuntimes(
+                    keeping: Set(configuration.rules.map(\.id))
+                )
+            } catch let cleanupError {
+                throw SelectionRollbackError(saveError: saveError, cleanupError: cleanupError)
             }
-            throw error
+            throw saveError
         }
 
         var normalizedSelection = FamilyActivitySelection()
         normalizedSelection.applicationTokens = selectedTokens
         pickerSelection = normalizedSelection
 
-        let removedRuleIDs = change.removed.compactMap { existingTargetsByID[$0]?.ruleID }
+        let removedRuleIDs = existingTargets.compactMap { target in
+            removedTokens.contains(target.applicationToken) ? target.ruleID : nil
+        }
         var removalError: Error?
         for ruleID in removedRuleIDs {
             do {
@@ -240,10 +244,15 @@ final class AppModel: ObservableObject {
         presentedError = AppError(title: title, error: error)
     }
 
-    private func selectionID(for token: ApplicationToken) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .sortedKeys
-        return try encoder.encode(token)
+    private func cleanupOrphanedRuntimes() {
+        guard let runtimeRepository else { return }
+        do {
+            try runtimeRepository.deleteOrphanedRuntimes(
+                keeping: Set(configuration.rules.map(\.id))
+            )
+        } catch {
+            presentedError = AppError(title: "Couldn't finish app-data cleanup", error: error)
+        }
     }
 
     private static var emptyConfiguration: ConfigurationDocument {

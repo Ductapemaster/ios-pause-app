@@ -47,6 +47,33 @@ final class RuntimeRepositoryTests: XCTestCase {
         XCTAssertEqual(try repository.load(ruleID: secondID), second)
     }
 
+    func testDeleteOrphanedRuntimesRemovesOnlyRulesOutsideKeepSet() throws {
+        let retainedID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
+        let orphanedID = UUID(uuidString: "00F7635F-BA5B-4B8B-9CC8-D68B9E6A8DD7")!
+        let retained = runtime(sessionsStarted: 1)
+        try repository.save(retained, ruleID: retainedID)
+        try repository.save(runtime(sessionsStarted: 2), ruleID: orphanedID)
+
+        try repository.deleteOrphanedRuntimes(keeping: [retainedID])
+
+        XCTAssertEqual(try repository.load(ruleID: retainedID), retained)
+        XCTAssertNil(try repository.load(ruleID: orphanedID))
+    }
+
+    func testDeleteOrphanedRuntimesIgnoresNoncanonicalFiles() throws {
+        let ruleID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
+        let uppercaseRuntimeURL = directoryURL.appendingPathComponent("runtime-\(ruleID.uuidString).json")
+        let unrelatedURL = directoryURL.appendingPathComponent("configuration.json")
+        let contents = Data("leave me".utf8)
+        try contents.write(to: uppercaseRuntimeURL)
+        try contents.write(to: unrelatedURL)
+
+        try repository.deleteOrphanedRuntimes(keeping: [])
+
+        XCTAssertEqual(try Data(contentsOf: uppercaseRuntimeURL), contents)
+        XCTAssertEqual(try Data(contentsOf: unrelatedURL), contents)
+    }
+
     func testUpdatePersistsCompleteMutation() throws {
         let ruleID = UUID(uuidString: "77E8662F-875F-4D9E-B1BB-CFCA0AD999B8")!
         try repository.save(runtime(sessionsStarted: 1), ruleID: ruleID)
