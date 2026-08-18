@@ -140,9 +140,29 @@ final class SessionGrantFlowTests: XCTestCase {
         XCTAssertTrue(message.contains("couldn't confirm whether the session was charged"))
         XCTAssertTrue(message.contains("couldn't confirm whether the app was blocked"))
         XCTAssertTrue(message.contains("roll back session state"))
-        XCTAssertTrue(message.contains("stop expiry monitoring"))
+        XCTAssertFalse(message.contains("stop expiry monitoring"))
         XCTAssertTrue(message.contains("block the app again"))
         XCTAssertFalse(message.contains("session was not charged, and the app remains blocked"))
+    }
+
+    func testFailedGrantAlertReportsImmediateBlockWithUnknownDurability() async throws {
+        let shield = AppFakeShield()
+        shield.forceShieldOutcome = .immediateOnly(AppGrantTestError.markerPersistence)
+        let harness = try makeHarness(
+            route: .instagram,
+            automaticRoute: true,
+            launchSucceeds: false,
+            shieldOverride: shield
+        )
+        harness.model.sceneDidBecomeActive(now: now)
+
+        await harness.model.requestSessionGrant(now: now.addingTimeInterval(1))
+
+        let message = try XCTUnwrap(harness.model.presentedError?.message)
+        XCTAssertTrue(message.contains("blocked now"))
+        XCTAssertTrue(message.contains("future reconciliation"))
+        XCTAssertTrue(message.contains("save the failed-session block"))
+        XCTAssertFalse(message.contains("couldn't confirm whether the app was blocked"))
     }
 
     private func makeHarness(
@@ -254,11 +274,13 @@ private final class AppFakeScheduler: SessionScheduling {
 private final class AppFakeShield: ShieldControlling {
     private(set) var operations: [String] = []
     var forceShieldError: Error?
+    var forceShieldOutcome: ForceShieldOutcome = .durable
 
     func unshield(ruleID: UUID) throws { operations.append("unshield") }
-    func forceShield(ruleID: UUID) throws {
+    func forceShield(ruleID: UUID) throws -> ForceShieldOutcome {
         operations.append("force-shield")
         if let forceShieldError { throw forceShieldError }
+        return forceShieldOutcome
     }
 }
 
@@ -324,12 +346,14 @@ private enum AppGrantTestError: LocalizedError {
     case rollback
     case stop
     case forceShield
+    case markerPersistence
 
     var errorDescription: String? {
         switch self {
         case .rollback: "runtime rollback failed"
         case .stop: "monitor stop failed"
         case .forceShield: "forced shield failed"
+        case .markerPersistence: "marker persistence failed"
         }
     }
 }

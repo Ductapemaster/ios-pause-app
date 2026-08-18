@@ -41,32 +41,30 @@ public final class RepositoryRuntimePersistence: RuntimePersisting {
 @MainActor
 public final class ConfigurationShieldController: ShieldControlling {
     private let configuration: ConfigurationDocument
-    private let runtimeRepository: RuntimeRepository
     private let reconciler: ShieldReconciler
-    private let now: Date
+    private let failedGrantBlockStore: any FailedGrantBlockStoring
 
     public init(
         configuration: ConfigurationDocument,
-        runtimeRepository: RuntimeRepository,
         reconciler: ShieldReconciler,
-        now: Date
+        failedGrantBlockStore: any FailedGrantBlockStoring
     ) {
         self.configuration = configuration
-        self.runtimeRepository = runtimeRepository
         self.reconciler = reconciler
-        self.now = now
+        self.failedGrantBlockStore = failedGrantBlockStore
     }
 
     public func unshield(ruleID: UUID) throws {
         try reconciler.unshield(ruleID: ruleID, configuration: configuration)
     }
 
-    public func forceShield(ruleID: UUID) throws {
-        try reconciler.reconcile(
-            configuration: configuration,
-            runtimeRepository: runtimeRepository,
-            now: now,
-            forceShieldedRuleIDs: [ruleID]
-        )
+    public func forceShield(ruleID: UUID) throws -> ForceShieldOutcome {
+        try reconciler.forceShield(ruleID: ruleID, configuration: configuration)
+        do {
+            try failedGrantBlockStore.add(ruleID: ruleID)
+            return .durable
+        } catch {
+            return .immediateOnly(error)
+        }
     }
 }

@@ -98,6 +98,7 @@ final class AppModel: ObservableObject {
     private let targetLauncher: (any TargetLaunching)?
     private var configurationStore: ConfigurationStore?
     private var runtimeRepository: RuntimeRepository?
+    private var failedGrantBlockStore: FailedGrantBlockStore?
     private var activationCoordinator = PauseActivationCoordinator(configurationState: .failed)
     private var isSceneActive = false
     private var authorizationStatusAtLastActivation: AuthorizationStatus?
@@ -152,6 +153,7 @@ final class AppModel: ObservableObject {
             let runtimeRepository = RuntimeRepository(directoryURL: directoryURL)
             self.configurationStore = configurationStore
             self.runtimeRepository = runtimeRepository
+            failedGrantBlockStore = FailedGrantBlockStore(directoryURL: directoryURL)
 
             if let savedConfiguration = try configurationStore.load() {
                 configuration = savedConfiguration
@@ -239,12 +241,17 @@ final class AppModel: ObservableObject {
         isGrantRequested = true
 
         let scheduler = sessionScheduler ?? DeviceActivitySessionScheduler(center: activityCenter)
-        let shield = sessionShieldController ?? ConfigurationShieldController(
-            configuration: configuration,
-            runtimeRepository: runtimeRepository,
-            reconciler: shieldReconciler,
-            now: now
-        )
+        let shield: any ShieldControlling
+        if let sessionShieldController {
+            shield = sessionShieldController
+        } else {
+            guard let failedGrantBlockStore else { return }
+            shield = ConfigurationShieldController(
+                configuration: configuration,
+                reconciler: shieldReconciler,
+                failedGrantBlockStore: failedGrantBlockStore
+            )
+        }
         let launcher = targetLauncher ?? AppLaunchRouter(configuration: configuration)
         let coordinator = SessionGrantCoordinator(
             scheduler: scheduler,

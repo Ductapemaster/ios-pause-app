@@ -73,21 +73,127 @@ final class SessionGrantAdaptersTests: XCTestCase {
             ]
         )
         var appliedApplications: Set<ApplicationToken>?
+        let blockStore = FailedGrantBlockStore(directoryURL: directory)
         let reconciler = ShieldReconciler(
             currentApplications: { appliedApplications },
-            applyApplications: { appliedApplications = $0 }
+            applyApplications: { appliedApplications = $0 },
+            failedGrantBlockIDs: { try blockStore.load() }
         )
         let adapter = ConfigurationShieldController(
             configuration: configuration,
-            runtimeRepository: repository,
             reconciler: reconciler,
+            failedGrantBlockStore: blockStore
+        )
+
+        let outcome = try adapter.forceShield(ruleID: selectedID)
+
+        XCTAssertTrue(outcome.isDurable)
+        XCTAssertEqual(appliedApplications, [selectedToken])
+        XCTAssertFalse(appliedApplications?.contains(otherToken) == true)
+
+        let reloadedBlockStore = FailedGrantBlockStore(directoryURL: directory)
+        XCTAssertTrue(try reloadedBlockStore.contains(ruleID: selectedID))
+        var reconciledApplications: Set<ApplicationToken>?
+        let newReconciler = ShieldReconciler(
+            currentApplications: { reconciledApplications },
+            applyApplications: { reconciledApplications = $0 },
+            failedGrantBlockIDs: { try reloadedBlockStore.load() }
+        )
+
+        try newReconciler.reconcile(
+            configuration: configuration,
+            runtimeRepository: RuntimeRepository(directoryURL: directory),
             now: now
         )
 
-        try adapter.forceShield(ruleID: selectedID)
+        XCTAssertEqual(reconciledApplications, [selectedToken])
+        XCTAssertFalse(reconciledApplications?.contains(otherToken) == true)
+    }
 
+    func testForceShieldDoesNotInspectUnrelatedUnreadableRuntime() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selectedID = UUID(uuidString: "d8aa967e-10a8-4a9d-a4ab-e49aaf19fa9a")!
+        let otherID = UUID(uuidString: "d16fdfd3-8764-437c-994b-adc70ae406d3")!
+        let selectedToken = try token(seed: "selected")
+        let otherToken = try token(seed: "other")
+        let configuration = try twoRuleConfiguration(
+            selectedID: selectedID,
+            selectedToken: selectedToken,
+            otherID: otherID,
+            otherToken: otherToken
+        )
+        try Data("not-json".utf8).write(
+            to: directory.appendingPathComponent("runtime-\(otherID.uuidString.lowercased()).json")
+        )
+        var appliedApplications: Set<ApplicationToken>? = [otherToken]
+        let blockStore = FailedGrantBlockStore(directoryURL: directory)
+        let reconciler = ShieldReconciler(
+            currentApplications: { appliedApplications },
+            applyApplications: { appliedApplications = $0 },
+            failedGrantBlockIDs: { try blockStore.load() }
+        )
+        let adapter = ConfigurationShieldController(
+            configuration: configuration,
+            reconciler: reconciler,
+            failedGrantBlockStore: blockStore
+        )
+
+        let outcome = try adapter.forceShield(ruleID: selectedID)
+
+        XCTAssertTrue(outcome.isDurable)
+        XCTAssertEqual(appliedApplications, [selectedToken, otherToken])
+    }
+
+    func testForceShieldAppliesImmediateBlockWhenDurableMarkerCannotBeStored() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let markerURL = directory.appendingPathComponent(SharedIdentifiers.failedGrantBlocksFilename)
+        try FileManager.default.createDirectory(at: markerURL, withIntermediateDirectories: false)
+        let ruleID = UUID(uuidString: "d8aa967e-10a8-4a9d-a4ab-e49aaf19fa9a")!
+        let selectedToken = try token(seed: "selected")
+        let configuration = try ConfigurationDocument(
+            settings: .phaseOneDefault,
+            rules: [AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)],
+            targets: [RuleTarget(ruleID: ruleID, applicationToken: selectedToken, launchRoute: nil)]
+        )
+        var appliedApplications: Set<ApplicationToken>?
+        let blockStore = FailedGrantBlockStore(directoryURL: directory)
+        let reconciler = ShieldReconciler(
+            currentApplications: { appliedApplications },
+            applyApplications: { appliedApplications = $0 },
+            failedGrantBlockIDs: { try blockStore.load() }
+        )
+        let adapter = ConfigurationShieldController(
+            configuration: configuration,
+            reconciler: reconciler,
+            failedGrantBlockStore: blockStore
+        )
+
+        let outcome = try adapter.forceShield(ruleID: ruleID)
+
+        XCTAssertFalse(outcome.isDurable)
+        XCTAssertNotNil(outcome.persistenceError)
         XCTAssertEqual(appliedApplications, [selectedToken])
-        XCTAssertFalse(appliedApplications?.contains(otherToken) == true)
+    }
+
+    private func twoRuleConfiguration(
+        selectedID: UUID,
+        selectedToken: ApplicationToken,
+        otherID: UUID,
+        otherToken: ApplicationToken
+    ) throws -> ConfigurationDocument {
+        try ConfigurationDocument(
+            settings: .phaseOneDefault,
+            rules: [
+                AppRule(id: selectedID, sessionsPerDay: 3, sessionLengthMinutes: 5),
+                AppRule(id: otherID, sessionsPerDay: 3, sessionLengthMinutes: 5),
+            ],
+            targets: [
+                RuleTarget(ruleID: selectedID, applicationToken: selectedToken, launchRoute: nil),
+                RuleTarget(ruleID: otherID, applicationToken: otherToken, launchRoute: nil),
+            ]
+        )
     }
 
     private func temporaryDirectory() throws -> URL {

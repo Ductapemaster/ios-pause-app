@@ -126,6 +126,26 @@ final class DeviceActivitySessionSchedulerTests: XCTestCase {
         }
     }
 
+    func testProductionNextIntervalResolverAcceptsDynamicFutureOrdinaryDate() throws {
+        let startOfTomorrow = try XCTUnwrap(
+            calendar.date(byAdding: .day, value: 2, to: calendar.startOfDay(for: Date()))
+        )
+        let startsAt = try XCTUnwrap(
+            calendar.date(byAdding: DateComponents(hour: 10, minute: 4, second: 23), to: startOfTomorrow)
+        )
+        let expiresAt = startsAt.addingTimeInterval(5 * 60)
+        var registrationCount = 0
+        let scheduler = DeviceActivitySessionScheduler(
+            calendar: calendar,
+            startMonitoring: { _, _ in registrationCount += 1 },
+            stopMonitoring: { _ in }
+        )
+
+        _ = try scheduler.register(ruleID: ruleID, startsAt: startsAt, expiresAt: expiresAt)
+
+        XCTAssertEqual(registrationCount, 1)
+    }
+
     private func makeScheduler(
         callbackDate: Date,
         start: @escaping (DeviceActivityName, DeviceActivitySchedule) throws -> Void

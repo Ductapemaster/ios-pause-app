@@ -161,7 +161,7 @@ final class SessionGrantCoordinatorTests: XCTestCase {
             XCTAssertEqual(failure.primaryError as? TestError, .unshield)
             XCTAssertEqual(
                 failure.repairErrors.map(\.step),
-                [.rollBackRuntime, .stopMonitoring, .forceShield]
+                [.rollBackRuntime, .forceShield]
             )
             XCTAssertEqual(failure.chargeState, .unknown)
             XCTAssertEqual(failure.shieldState, .unknown)
@@ -180,8 +180,31 @@ final class SessionGrantCoordinatorTests: XCTestCase {
         XCTAssertEqual(failure?.repairErrors.map(\.step), [.rollBackRuntime])
         XCTAssertEqual(failure?.chargeState, .unknown)
         XCTAssertEqual(failure?.shieldState, .blocked)
-        XCTAssertEqual(Array(harness.log.values.suffix(3)), ["rollback", "stop", "force-shield"])
+        XCTAssertEqual(Array(harness.log.values.suffix(2)), ["rollback", "force-shield"])
+        XCTAssertFalse(harness.log.values.contains("stop"))
         XCTAssertTrue(harness.shield.isShielded)
+    }
+
+    func testImmediateOnlyForceShieldReportsUnknownDurability() async {
+        let harness = Harness(ruleID: ruleID)
+        harness.shield.unshieldError = TestError.unshield
+        harness.shield.forceShieldOutcome = .immediateOnly(TestError.markerPersistence)
+
+        let failure = await capturedFailure(from: harness)
+
+        XCTAssertEqual(failure?.repairErrors.map(\.step), [.persistFailedGrantBlock])
+        XCTAssertEqual(
+            failure?.repairErrors.first?.underlyingError as? TestError,
+            .markerPersistence
+        )
+        XCTAssertEqual(failure?.chargeState, .notCharged)
+        XCTAssertEqual(failure?.shieldState, .blockedDurabilityUnknown)
+        XCTAssertTrue(
+            failure?.localizedDescription.contains("blocked now") == true
+        )
+        XCTAssertTrue(
+            failure?.localizedDescription.contains("future reconciliation") == true
+        )
     }
 
     func testUnshieldFailureWithStopFailureReportsCleanupButRemainsRolledBackAndBlocked() async {
@@ -212,7 +235,6 @@ final class SessionGrantCoordinatorTests: XCTestCase {
     func testRepairFailuresAreAllAttemptedAndRetainedWithPrimaryFailure() async {
         let harness = Harness(ruleID: ruleID, automaticRoute: true, launchSucceeds: false)
         harness.runtime.rollbackError = TestError.rollback
-        harness.scheduler.stopError = TestError.stop
         harness.shield.forceShieldError = TestError.reconcile
 
         do {
@@ -220,11 +242,10 @@ final class SessionGrantCoordinatorTests: XCTestCase {
             XCTFail("Expected the failed launch to throw")
         } catch let failure as SessionGrantFailure {
             XCTAssertEqual(failure.primaryError as? SessionGrantError, .automaticLaunchFailed)
-            XCTAssertEqual(failure.repairErrors.count, 3)
-            XCTAssertEqual(failure.repairErrors.map(\.step), [.rollBackRuntime, .stopMonitoring, .forceShield])
+            XCTAssertEqual(failure.repairErrors.count, 2)
+            XCTAssertEqual(failure.repairErrors.map(\.step), [.rollBackRuntime, .forceShield])
             XCTAssertEqual(failure.repairErrors[0].underlyingError as? TestError, .rollback)
-            XCTAssertEqual(failure.repairErrors[1].underlyingError as? TestError, .stop)
-            XCTAssertEqual(failure.repairErrors[2].underlyingError as? TestError, .reconcile)
+            XCTAssertEqual(failure.repairErrors[1].underlyingError as? TestError, .reconcile)
             XCTAssertEqual(failure.chargeState, .unknown)
             XCTAssertEqual(failure.shieldState, .unknown)
         } catch {
@@ -233,7 +254,7 @@ final class SessionGrantCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(
             harness.log.values,
-            ["register", "reserve", "unshield", "has-route", "open", "rollback", "stop", "force-shield"]
+            ["register", "reserve", "unshield", "has-route", "open", "rollback", "force-shield"]
         )
     }
 
@@ -267,6 +288,7 @@ private enum TestError: Error, Equatable {
     case rollback
     case stop
     case reconcile
+    case markerPersistence
 }
 
 @MainActor
@@ -342,6 +364,7 @@ private final class FakeShield: ShieldControlling {
     let log: OperationLog
     var unshieldError: Error?
     var forceShieldError: Error?
+    var forceShieldOutcome: ForceShieldOutcome = .durable
     var isShielded = true
 
     init(log: OperationLog) { self.log = log }
@@ -352,10 +375,11 @@ private final class FakeShield: ShieldControlling {
         isShielded = false
     }
 
-    func forceShield(ruleID: UUID) throws {
+    func forceShield(ruleID: UUID) throws -> ForceShieldOutcome {
         log.append("force-shield")
         if let forceShieldError { throw forceShieldError }
         isShielded = true
+        return forceShieldOutcome
     }
 }
 

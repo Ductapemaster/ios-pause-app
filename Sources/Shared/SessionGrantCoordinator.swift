@@ -17,7 +17,7 @@ public protocol RuntimePersisting {
 @MainActor
 public protocol ShieldControlling {
     func unshield(ruleID: UUID) throws
-    func forceShield(ruleID: UUID) throws
+    func forceShield(ruleID: UUID) throws -> ForceShieldOutcome
 }
 
 @MainActor
@@ -50,19 +50,37 @@ public enum SessionChargeState: Equatable, Sendable {
 
 public enum GrantShieldState: Equatable, Sendable {
     case blocked
+    case blockedDurabilityUnknown
     case unblocked
     case unknown
+}
+
+public enum ForceShieldOutcome {
+    case durable
+    case immediateOnly(any Error)
+
+    public var isDurable: Bool {
+        if case .durable = self { return true }
+        return false
+    }
+
+    public var persistenceError: (any Error)? {
+        if case let .immediateOnly(error) = self { return error }
+        return nil
+    }
 }
 
 public enum SessionGrantRepairStep: String, Equatable, Sendable {
     case rollBackRuntime
     case stopMonitoring
+    case persistFailedGrantBlock
     case forceShield
 
     fileprivate var description: String {
         switch self {
         case .rollBackRuntime: "roll back session state"
         case .stopMonitoring: "stop expiry monitoring"
+        case .persistFailedGrantBlock: "save the failed-session block"
         case .forceShield: "block the app again"
         }
     }
@@ -118,6 +136,8 @@ public struct SessionGrantFailure: LocalizedError {
         let shield: String
         switch shieldState {
         case .blocked: shield = "The app is blocked."
+        case .blockedDurabilityUnknown:
+            shield = "The app is blocked now, but Pause couldn't guarantee that future reconciliation will keep it blocked."
         case .unblocked: shield = "The app remains available until the recorded expiry."
         case .unknown: shield = "Pause couldn't confirm whether the app was blocked."
         }
@@ -228,19 +248,38 @@ public struct SessionGrantCoordinator {
             try runtime.rollBack(ruleID: ruleID)
         }
         failures.append(contentsOf: rollback)
-        failures.append(contentsOf: collectRepairFailure(step: .stopMonitoring) {
-            try scheduler.stop(activityName: activityName)
-        })
-        let forceShield = collectRepairFailure(step: .forceShield) {
-            try shield.forceShield(ruleID: ruleID)
+        if rollback.isEmpty {
+            failures.append(contentsOf: collectRepairFailure(step: .stopMonitoring) {
+                try scheduler.stop(activityName: activityName)
+            })
         }
-        failures.append(contentsOf: forceShield)
+
+        let shieldState: GrantShieldState
+        do {
+            switch try shield.forceShield(ruleID: ruleID) {
+            case .durable:
+                shieldState = .blocked
+            case let .immediateOnly(error):
+                failures.append(
+                    SessionGrantRepairFailure(
+                        step: .persistFailedGrantBlock,
+                        underlyingError: error
+                    )
+                )
+                shieldState = .blockedDurabilityUnknown
+            }
+        } catch {
+            failures.append(
+                SessionGrantRepairFailure(step: .forceShield, underlyingError: error)
+            )
+            shieldState = .unknown
+        }
 
         return SessionGrantFailure(
             primaryError: primaryError,
             repairErrors: failures,
             chargeState: rollback.isEmpty ? .notCharged : .unknown,
-            shieldState: forceShield.isEmpty ? .blocked : .unknown
+            shieldState: shieldState
         )
     }
 
