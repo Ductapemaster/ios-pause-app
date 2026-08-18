@@ -10,7 +10,7 @@ Reaching for a distracting app is usually reflex rather than decision. The app i
 
 ## Choosing which apps are restricted
 
-Apps are picked from the system's own picker. Each needs a display name chosen from a built-in list, once, when the rule is created. Restricted apps are blocked by default.
+Any eligible installed app can be picked from the system's own picker. Pause uses Apple's label and icon for the selected app. Restricted apps are blocked by default.
 
 ## Configuring an app
 
@@ -21,13 +21,13 @@ Optionally an app carries one or more **windows** — periods when it cannot be 
 
 Two global settings exist: 
 1. **pause duration**: how long the user must "pause" before being allowed to enter an app.
-2. **day reset**: when during the day the number of available sessions should reset. Resets can be scheduled for multiple days (ex: weekdays) via a selector.
+2. **day reset**: when during each day the number of available sessions resets. The same time applies every day by default; weekdays and weekends can use different times.
 
 ## Entering a restricted app
 
 1. Tap the restricted app. It opens to a blocked screen naming which session this would be — *"Instagram — 3rd of 4 sessions today."*
 2. Tap **Continue**. The Pause app comes forward with a breathe animation and countdown.
-3. Tap **Use for X minutes**, where X is the session length for that app. The target app opens.
+3. Tap **Use for X minutes**, where X is the session length for that app. Pause opens the target automatically when the target exposes a supported launch route; otherwise it grants the session and tells the user to return manually.
 4. At expiry the app is blocked again, and reaching for it starts over at step 1.
 
 **The screen informs with a count and refuses with a reason** — inside a window, or out of sessions for today.
@@ -41,9 +41,9 @@ Two global settings exist:
 - **Windows gate entry, not use.** A session granted at 08:55, before a window opens at 09:00, runs its full length.
 - **A session spanning the day reset keeps running** and counts only against the day it started in.
 
-## History
+## Roadmap
 
-Sessions are recorded — granted, abandoned at the breathe screen, expired — and can be counted and compared over time.
+Explore whether basic session history would improve the behavior-modification loop enough to justify a product feature. History is not part of the initial implementation.
 
 ## Not building
 
