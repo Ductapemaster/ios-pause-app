@@ -37,6 +37,7 @@ struct RepairContent {
 enum AppEntryRoute {
     case configuration
     case pause(PauseEntryContext)
+    case manualReturn(ManualReturnContent)
     case refused(RefusalContent)
     case repair(RepairContent)
 }
@@ -91,6 +92,9 @@ final class AppModel: ObservableObject {
     private let entryActivationProvider: ((Date) throws -> PauseActivationResolution<AppEntryRoute>?)?
     private let cleanupOverride: (() -> Void)?
     private let reconciliationOverride: (() -> Void)?
+    private let sessionScheduler: (any SessionScheduling)?
+    private let sessionShieldController: (any ShieldControlling)?
+    private let targetLauncher: (any TargetLaunching)?
     private var configurationStore: ConfigurationStore?
     private var runtimeRepository: RuntimeRepository?
     private var activationCoordinator = PauseActivationCoordinator(configurationState: .failed)
@@ -110,7 +114,10 @@ final class AppModel: ObservableObject {
         entryActivationProvider: ((Date) throws -> PauseActivationResolution<AppEntryRoute>?)? = nil,
         protectedStateDetector: ((URL) -> Bool)? = nil,
         cleanupOverride: (() -> Void)? = nil,
-        reconciliationOverride: (() -> Void)? = nil
+        reconciliationOverride: (() -> Void)? = nil,
+        sessionScheduler: (any SessionScheduling)? = nil,
+        sessionShieldController: (any ShieldControlling)? = nil,
+        targetLauncher: (any TargetLaunching)? = nil
     ) {
         let statusProvider = authorizationStatusProvider
             ?? { authorizationCenter.authorizationStatus }
@@ -124,6 +131,9 @@ final class AppModel: ObservableObject {
         self.entryActivationProvider = entryActivationProvider
         self.cleanupOverride = cleanupOverride
         self.reconciliationOverride = reconciliationOverride
+        self.sessionScheduler = sessionScheduler
+        self.sessionShieldController = sessionShieldController
+        self.targetLauncher = targetLauncher
         authorizationStatus = statusProvider()
         configuration = Self.emptyConfiguration
         pickerSelection = FamilyActivitySelection()
@@ -213,9 +223,55 @@ final class AppModel: ObservableObject {
     }
 
     func requestSessionGrant() {
-        guard case .pause = entryRoute else { return }
+        Task { await requestSessionGrant(now: Date()) }
+    }
+
+    func requestSessionGrant(now: Date) async {
+        guard !isGrantRequested,
+              case let .pause(entry) = entryRoute,
+              entry.countdown.isComplete(at: now),
+              let rule = configuration.rules.first(where: { $0.id == entry.details.ruleID }),
+              let runtimeRepository else { return }
         activationCoordinator.grantDidStart()
         isGrantRequested = true
+
+        let scheduler = sessionScheduler ?? DeviceActivitySessionScheduler(center: activityCenter)
+        let shield = sessionShieldController ?? ConfigurationShieldController(
+            configuration: configuration,
+            runtimeRepository: runtimeRepository,
+            reconciler: shieldReconciler,
+            now: now
+        )
+        let launcher = targetLauncher ?? AppLaunchRouter(configuration: configuration)
+        let coordinator = SessionGrantCoordinator(
+            scheduler: scheduler,
+            runtime: RepositoryRuntimePersistence(repository: runtimeRepository, now: now),
+            shield: shield,
+            launcher: launcher
+        )
+
+        do {
+            let result = try await coordinator.grant(rule: rule, now: now)
+            isGrantRequested = false
+            activationCoordinator.returnedToConfiguration()
+            switch result {
+            case .openedAutomatically:
+                entryRoute = .configuration
+            case let .readyForManualReturn(expiresAt):
+                entryRoute = .manualReturn(
+                    ManualReturnContent(
+                        ruleID: rule.id,
+                        applicationToken: entry.applicationToken,
+                        expiresAt: expiresAt
+                    )
+                )
+            }
+        } catch {
+            isGrantRequested = false
+            activationCoordinator.returnedToConfiguration()
+            entryRoute = .configuration
+            presentedError = AppError(title: "Couldn't start session", error: error)
+        }
     }
 
     func returnToConfiguration() {

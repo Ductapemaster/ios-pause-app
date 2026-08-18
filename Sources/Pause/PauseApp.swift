@@ -53,6 +53,8 @@ struct PauseApp: App {
                 isGrantRequested: model.isGrantRequested,
                 onUseSession: model.requestSessionGrant
             )
+        case let .manualReturn(content):
+            ManualReturnView(content: content)
         case let .refused(content):
             RefusalView(content: content, onDismiss: model.returnToConfiguration)
         case let .repair(content):
