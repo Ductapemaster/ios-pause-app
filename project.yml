@@ -141,6 +141,17 @@ targets:
     dependencies:
       - target: PauseCore
 
+  PauseAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests/PauseAppTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Pause
+
 schemes:
   Pause:
     build:
@@ -158,3 +169,4 @@ schemes:
       targets:
         - PauseCoreTests
         - PauseSharedTests
+        - PauseAppTests

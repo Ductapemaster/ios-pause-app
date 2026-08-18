@@ -41,6 +41,12 @@ enum AppEntryRoute {
     case repair(RepairContent)
 }
 
+enum AppRootRoute: Equatable {
+    case configurationRepair
+    case authorization
+    case authorizedContent
+}
+
 enum AppModelError: LocalizedError {
     case storageUnavailable
     case unsafeConfiguration
@@ -76,14 +82,20 @@ final class AppModel: ObservableObject {
     @Published private(set) var entryRoute: AppEntryRoute = .configuration
     @Published private(set) var isGrantRequested = false
 
-    private let authorizationCenter: AuthorizationCenter
+    private let authorizationStatusProvider: () -> AuthorizationStatus
+    private let authorizationRequester: () async throws -> Void
     private let activityCenter: DeviceActivityCenter
     private let ruleRemovalCoordinator: RuleRemovalCoordinator
     private let shieldReconciler: ShieldReconciler
     private let shieldIntentStore: ShieldIntentStore
+    private let entryActivationProvider: ((Date) throws -> PauseActivationResolution<AppEntryRoute>?)?
+    private let cleanupOverride: (() -> Void)?
+    private let reconciliationOverride: (() -> Void)?
     private var configurationStore: ConfigurationStore?
     private var runtimeRepository: RuntimeRepository?
     private var activationCoordinator = PauseActivationCoordinator(configurationState: .failed)
+    private var isSceneActive = false
+    private var authorizationStatusAtLastActivation: AuthorizationStatus?
 
     init(
         authorizationCenter: AuthorizationCenter = .shared,
@@ -91,19 +103,38 @@ final class AppModel: ObservableObject {
         activityCenter: DeviceActivityCenter = DeviceActivityCenter(),
         ruleRemovalCoordinator: RuleRemovalCoordinator = RuleRemovalCoordinator(),
         shieldReconciler: ShieldReconciler = ShieldReconciler(),
-        shieldIntentStore: ShieldIntentStore = ShieldIntentStore()
+        shieldIntentStore: ShieldIntentStore = ShieldIntentStore(),
+        storageDirectoryURL: URL? = nil,
+        authorizationStatusProvider: (() -> AuthorizationStatus)? = nil,
+        authorizationRequester: (() async throws -> Void)? = nil,
+        entryActivationProvider: ((Date) throws -> PauseActivationResolution<AppEntryRoute>?)? = nil,
+        protectedStateDetector: ((URL) -> Bool)? = nil,
+        cleanupOverride: (() -> Void)? = nil,
+        reconciliationOverride: (() -> Void)? = nil
     ) {
-        self.authorizationCenter = authorizationCenter
+        let statusProvider = authorizationStatusProvider
+            ?? { authorizationCenter.authorizationStatus }
+        self.authorizationStatusProvider = statusProvider
+        self.authorizationRequester = authorizationRequester
+            ?? { try await authorizationCenter.requestAuthorization(for: .individual) }
         self.activityCenter = activityCenter
         self.ruleRemovalCoordinator = ruleRemovalCoordinator
         self.shieldReconciler = shieldReconciler
         self.shieldIntentStore = shieldIntentStore
-        authorizationStatus = authorizationCenter.authorizationStatus
+        self.entryActivationProvider = entryActivationProvider
+        self.cleanupOverride = cleanupOverride
+        self.reconciliationOverride = reconciliationOverride
+        authorizationStatus = statusProvider()
         configuration = Self.emptyConfiguration
         pickerSelection = FamilyActivitySelection()
 
         do {
-            let directoryURL = try appGroupContainer.directoryURL()
+            let directoryURL: URL
+            if let storageDirectoryURL {
+                directoryURL = storageDirectoryURL
+            } else {
+                directoryURL = try appGroupContainer.directoryURL()
+            }
             let configurationStore = ConfigurationStore(directoryURL: directoryURL)
             let runtimeRepository = RuntimeRepository(directoryURL: directoryURL)
             self.configurationStore = configurationStore
@@ -115,7 +146,8 @@ final class AppModel: ObservableObject {
                 activationCoordinator.configurationBecameKnownGood()
             } else {
                 activationCoordinator.configurationWasMissing(
-                    hasProtectedState: Self.hasProtectedState(in: directoryURL)
+                    hasProtectedState: protectedStateDetector?(directoryURL)
+                        ?? Self.hasProtectedState(in: directoryURL)
                 )
             }
         } catch {
@@ -125,23 +157,36 @@ final class AppModel: ObservableObject {
     }
 
     func refreshAuthorizationStatus() {
-        authorizationStatus = authorizationCenter.authorizationStatus
+        authorizationStatus = authorizationStatusProvider()
     }
 
     func sceneDidBecomeActive(now: Date = Date()) {
+        isSceneActive = true
         refreshAuthorizationStatus()
 
         var coordinator = activationCoordinator
-        let outcome: PauseActivationOutcome<AppEntryRoute> = coordinator.activate(
-            isAuthorized: canApplyManagedSettings,
-            consumeIntent: shieldIntentStore.consume,
-            resolveIntent: { [self] intent in
-                try resolveShieldIntent(intent, now: now)
-            },
-            cleanup: { [self] in cleanupOrphanedRuntimes() },
-            reconcile: { [self] in reconcileShieldsIfAuthorized() }
-        )
+        let outcome: PauseActivationOutcome<AppEntryRoute>
+        if let entryActivationProvider {
+            outcome = coordinator.activate(
+                isAuthorized: canApplyManagedSettings,
+                consumeIntent: { try entryActivationProvider(now) },
+                resolveIntent: { $0 },
+                cleanup: { [self] in cleanupOrphanedRuntimes() },
+                reconcile: { [self] in reconcileShieldsIfAuthorized() }
+            )
+        } else {
+            outcome = coordinator.activate(
+                isAuthorized: canApplyManagedSettings,
+                consumeIntent: shieldIntentStore.consume,
+                resolveIntent: { [self] intent in
+                    try resolveShieldIntent(intent, now: now)
+                },
+                cleanup: { [self] in cleanupOrphanedRuntimes() },
+                reconcile: { [self] in reconcileShieldsIfAuthorized() }
+            )
+        }
         activationCoordinator = coordinator
+        authorizationStatusAtLastActivation = authorizationStatus
 
         switch outcome {
         case .unchanged:
@@ -159,6 +204,8 @@ final class AppModel: ObservableObject {
     }
 
     func sceneDidBecomeInactive() {
+        isSceneActive = false
+        authorizationStatusAtLastActivation = nil
         activationCoordinator.sceneDidBecomeInactive()
         if activationCoordinator.foregroundState == .configuration, case .pause = entryRoute {
             entryRoute = .configuration
@@ -183,14 +230,10 @@ final class AppModel: ObservableObject {
 
     func requestAuthorization() async {
         do {
-            try await authorizationCenter.requestAuthorization(for: .individual)
-            authorizationStatus = authorizationCenter.authorizationStatus
-            activationCoordinator.authorizationDidChange()
-            sceneDidBecomeActive()
+            try await authorizationRequester()
+            handleAuthorizationCompletion()
         } catch {
-            authorizationStatus = authorizationCenter.authorizationStatus
-            activationCoordinator.authorizationDidChange()
-            sceneDidBecomeActive()
+            handleAuthorizationCompletion()
             presentedError = AppError(title: "Screen Time access wasn't granted", error: error)
         }
     }
@@ -391,6 +434,17 @@ final class AppModel: ObservableObject {
         activationCoordinator.requiresConfigurationRepair
     }
 
+    var configurationLoadState: ConfigurationLoadState {
+        activationCoordinator.configurationState
+    }
+
+    var rootRoute: AppRootRoute {
+        if requiresConfigurationRepair {
+            return .configurationRepair
+        }
+        return canApplyManagedSettings ? .authorizedContent : .authorization
+    }
+
     var configurationSafetyRepairContent: RepairContent {
         switch activationCoordinator.configurationState {
         case .failed:
@@ -411,6 +465,10 @@ final class AppModel: ObservableObject {
     private func cleanupOrphanedRuntimes() {
         guard activationCoordinator.configurationState == .knownGood,
               let runtimeRepository else { return }
+        if let cleanupOverride {
+            cleanupOverride()
+            return
+        }
         do {
             try runtimeRepository.deleteOrphanedRuntimes(
                 keeping: Set(configuration.rules.map(\.id))
@@ -424,6 +482,20 @@ final class AppModel: ObservableObject {
         guard activationCoordinator.allowsConfigurationMutation(mutation) else {
             throw AppModelError.unsafeConfiguration
         }
+    }
+
+    private func handleAuthorizationCompletion() {
+        refreshAuthorizationStatus()
+
+        guard isSceneActive else {
+            activationCoordinator.authorizationDidChange()
+            authorizationStatusAtLastActivation = nil
+            return
+        }
+        guard authorizationStatusAtLastActivation != authorizationStatus else { return }
+
+        activationCoordinator.authorizationDidChange()
+        sceneDidBecomeActive()
     }
 
     private func resolveShieldIntent(
@@ -627,6 +699,10 @@ final class AppModel: ObservableObject {
         guard activationCoordinator.configurationState == .knownGood,
               canApplyManagedSettings,
               let runtimeRepository else { return }
+        if let reconciliationOverride {
+            reconciliationOverride()
+            return
+        }
         do {
             try shieldReconciler.reconcile(
                 configuration: configuration,

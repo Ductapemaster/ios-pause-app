@@ -8,14 +8,15 @@ struct PauseApp: App {
     var body: some Scene {
         WindowGroup {
             NavigationStack {
-                if model.requiresConfigurationRepair {
+                switch model.rootRoute {
+                case .configurationRepair:
                     RepairView(
                         content: model.configurationSafetyRepairContent,
                         onDismiss: nil
                     )
-                } else if model.hasScreenTimeAuthorization {
+                case .authorizedContent:
                     authorizedContent
-                } else {
+                case .authorization:
                     AuthorizationView(model: model)
                 }
             }
@@ -56,19 +57,6 @@ struct PauseApp: App {
             RefusalView(content: content, onDismiss: model.returnToConfiguration)
         case let .repair(content):
             RepairView(content: content, onDismiss: model.returnToConfiguration)
-        }
-    }
-}
-
-private extension AppModel {
-    var hasScreenTimeAuthorization: Bool {
-        switch authorizationStatus {
-        case .approved, .approvedWithDataAccess:
-            true
-        case .notDetermined, .denied:
-            false
-        @unknown default:
-            false
         }
     }
 }
