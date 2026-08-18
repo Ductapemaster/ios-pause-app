@@ -1,4 +1,5 @@
 import Combine
+import DeviceActivity
 @preconcurrency import FamilyControls
 import Foundation
 import ManagedSettings
@@ -15,13 +16,18 @@ struct AppError: Identifiable {
     }
 }
 
-private struct SelectionRollbackError: LocalizedError {
-    let saveError: Error
-    let cleanupError: Error
+private struct ConfigurationRepairError: LocalizedError {
+    let changeError: Error
+    let repairError: Error
 
     var errorDescription: String? {
-        "The app selection couldn't be saved (\(saveError.localizedDescription)). Pause also couldn't remove incomplete runtime data (\(cleanupError.localizedDescription)); it will try again when the app becomes active."
+        "The change couldn't be completed (\(changeError.localizedDescription)). Pause also couldn't fully restore the previous app state (\(repairError.localizedDescription)). Close and reopen Pause to retry repair."
     }
+}
+
+private struct RuntimeSnapshot {
+    let ruleID: UUID
+    let runtime: RuleRuntime?
 }
 
 enum AppModelError: LocalizedError {
@@ -55,14 +61,20 @@ final class AppModel: ObservableObject {
     @Published var presentedError: AppError?
 
     private let authorizationCenter: AuthorizationCenter
+    private let activityCenter: DeviceActivityCenter
+    private let shieldReconciler: ShieldReconciler
     private var configurationStore: ConfigurationStore?
     private var runtimeRepository: RuntimeRepository?
 
     init(
         authorizationCenter: AuthorizationCenter = .shared,
-        appGroupContainer: AppGroupContainer = AppGroupContainer()
+        appGroupContainer: AppGroupContainer = AppGroupContainer(),
+        activityCenter: DeviceActivityCenter = DeviceActivityCenter(),
+        shieldReconciler: ShieldReconciler = ShieldReconciler()
     ) {
         self.authorizationCenter = authorizationCenter
+        self.activityCenter = activityCenter
+        self.shieldReconciler = shieldReconciler
         authorizationStatus = authorizationCenter.authorizationStatus
         configuration = Self.emptyConfiguration
         pickerSelection = FamilyActivitySelection()
@@ -79,6 +91,7 @@ final class AppModel: ObservableObject {
                 pickerSelection.applicationTokens = Set(savedConfiguration.targets.map(\.applicationToken))
             }
             cleanupOrphanedRuntimes()
+            reconcileShieldsIfAuthorized()
         } catch {
             presentedError = AppError(title: "Couldn't load Pause", error: error)
         }
@@ -87,12 +100,14 @@ final class AppModel: ObservableObject {
     func refreshAuthorizationStatus() {
         authorizationStatus = authorizationCenter.authorizationStatus
         cleanupOrphanedRuntimes()
+        reconcileShieldsIfAuthorized()
     }
 
     func requestAuthorization() async {
         do {
             try await authorizationCenter.requestAuthorization(for: .individual)
             authorizationStatus = authorizationCenter.authorizationStatus
+            reconcileShieldsIfAuthorized()
         } catch {
             authorizationStatus = authorizationCenter.authorizationStatus
             presentedError = AppError(title: "Screen Time access wasn't granted", error: error)
@@ -110,6 +125,9 @@ final class AppModel: ObservableObject {
         let addedTokens = selectedTokens.subtracting(existingTokens)
         let retainedTokens = selectedTokens.intersection(existingTokens)
         let removedTokens = existingTokens.subtracting(selectedTokens)
+        let removedRuleIDs = existingTargets.compactMap { target in
+            removedTokens.contains(target.applicationToken) ? target.ruleID : nil
+        }
         let rulesByID = Dictionary(uniqueKeysWithValues: configuration.rules.map { ($0.id, $0) })
         let applicationsByToken = Dictionary(
             uniqueKeysWithValues: pickerSelection.applications.compactMap { application in
@@ -119,6 +137,8 @@ final class AppModel: ObservableObject {
 
         var nextRules: [AppRule] = []
         var nextTargets: [RuleTarget] = []
+        var removedRuntimeSnapshots: [RuntimeSnapshot] = []
+        var attemptedConfigurationSave = false
 
         for target in existingTargets {
             guard retainedTokens.contains(target.applicationToken) else { continue }
@@ -154,37 +174,36 @@ final class AppModel: ObservableObject {
                 rules: nextRules,
                 targets: nextTargets
             )
+            try cleanUpRules(
+                removedRuleIDs,
+                runtimeRepository: runtimeRepository,
+                snapshots: &removedRuntimeSnapshots
+            )
+            attemptedConfigurationSave = true
             try configurationStore.save(nextConfiguration)
             configuration = nextConfiguration
-        } catch let saveError {
+        } catch let changeError {
             do {
-                try runtimeRepository.deleteOrphanedRuntimes(
-                    keeping: Set(configuration.rules.map(\.id))
+                try repairFailedConfigurationChange(
+                    previousConfiguration: configuration,
+                    runtimeSnapshots: removedRuntimeSnapshots,
+                    restoreConfiguration: attemptedConfigurationSave,
+                    configurationStore: configurationStore,
+                    runtimeRepository: runtimeRepository
                 )
-            } catch let cleanupError {
-                throw SelectionRollbackError(saveError: saveError, cleanupError: cleanupError)
+            } catch let repairError {
+                throw ConfigurationRepairError(
+                    changeError: changeError,
+                    repairError: repairError
+                )
             }
-            throw saveError
+            throw changeError
         }
 
         var normalizedSelection = FamilyActivitySelection()
         normalizedSelection.applicationTokens = selectedTokens
         pickerSelection = normalizedSelection
-
-        let removedRuleIDs = existingTargets.compactMap { target in
-            removedTokens.contains(target.applicationToken) ? target.ruleID : nil
-        }
-        var removalError: Error?
-        for ruleID in removedRuleIDs {
-            do {
-                try runtimeRepository.delete(ruleID: ruleID)
-            } catch {
-                removalError = removalError ?? error
-            }
-        }
-        if let removalError {
-            presentedError = AppError(title: "Apps updated, but cleanup failed", error: removalError)
-        }
+        reconcileShieldsIfAuthorized(title: "Apps updated, but shields need repair")
     }
 
     func updateRule(id: UUID, sessionsPerDay: Int, sessionLengthMinutes: Int) throws {
@@ -209,6 +228,7 @@ final class AppModel: ObservableObject {
         )
         try configurationStore.save(nextConfiguration)
         configuration = nextConfiguration
+        reconcileShieldsIfAuthorized(title: "Rule saved, but shields need repair")
     }
 
     func updatePauseSeconds(_ seconds: Int) throws {
@@ -226,18 +246,51 @@ final class AppModel: ObservableObject {
     }
 
     func removeRule(id: UUID) throws {
+        guard let configurationStore, let runtimeRepository else {
+            throw AppModelError.storageUnavailable
+        }
         guard let target = configuration.targets.first(where: { $0.ruleID == id }) else {
             throw AppModelError.ruleNotFound
         }
 
-        let previousSelection = pickerSelection
-        pickerSelection.applicationTokens.remove(target.applicationToken)
+        let previousConfiguration = configuration
+        let nextConfiguration = try ConfigurationDocument(
+            settings: configuration.settings,
+            rules: configuration.rules.filter { $0.id != id },
+            targets: configuration.targets.filter { $0.ruleID != id }
+        )
+        var runtimeSnapshots: [RuntimeSnapshot] = []
+        var attemptedConfigurationSave = false
+
         do {
-            try applyPickerSelection()
-        } catch {
-            pickerSelection = previousSelection
-            throw error
+            try cleanUpRules(
+                [id],
+                runtimeRepository: runtimeRepository,
+                snapshots: &runtimeSnapshots
+            )
+            attemptedConfigurationSave = true
+            try configurationStore.save(nextConfiguration)
+        } catch let changeError {
+            do {
+                try repairFailedConfigurationChange(
+                    previousConfiguration: previousConfiguration,
+                    runtimeSnapshots: runtimeSnapshots,
+                    restoreConfiguration: attemptedConfigurationSave,
+                    configurationStore: configurationStore,
+                    runtimeRepository: runtimeRepository
+                )
+            } catch let repairError {
+                throw ConfigurationRepairError(
+                    changeError: changeError,
+                    repairError: repairError
+                )
+            }
+            throw changeError
         }
+
+        configuration = nextConfiguration
+        pickerSelection.applicationTokens.remove(target.applicationToken)
+        reconcileShieldsIfAuthorized(title: "App removed, but shields need repair")
     }
 
     func present(_ error: Error, title: String = "Couldn't save changes") {
@@ -252,6 +305,99 @@ final class AppModel: ObservableObject {
             )
         } catch {
             presentedError = AppError(title: "Couldn't finish app-data cleanup", error: error)
+        }
+    }
+
+    private func cleanUpRules(
+        _ ruleIDs: [UUID],
+        runtimeRepository: RuntimeRepository,
+        snapshots: inout [RuntimeSnapshot]
+    ) throws {
+        for ruleID in ruleIDs {
+            let runtime = try runtimeRepository.load(ruleID: ruleID)
+            activityCenter.stopMonitoring([
+                DeviceActivityName(SessionActivityName.sessionActivityName(for: ruleID))
+            ])
+            snapshots.append(RuntimeSnapshot(ruleID: ruleID, runtime: runtime))
+            try runtimeRepository.delete(ruleID: ruleID)
+            try shieldReconciler.unshield(ruleID: ruleID, configuration: configuration)
+        }
+    }
+
+    private func repairFailedConfigurationChange(
+        previousConfiguration: ConfigurationDocument,
+        runtimeSnapshots: [RuntimeSnapshot],
+        restoreConfiguration: Bool,
+        configurationStore: ConfigurationStore,
+        runtimeRepository: RuntimeRepository
+    ) throws {
+        var firstRepairError: Error?
+
+        if restoreConfiguration {
+            do {
+                try configurationStore.save(previousConfiguration)
+            } catch {
+                firstRepairError = error
+            }
+        }
+
+        for snapshot in runtimeSnapshots {
+            guard let runtime = snapshot.runtime else { continue }
+            do {
+                try runtimeRepository.save(runtime, ruleID: snapshot.ruleID)
+            } catch {
+                firstRepairError = firstRepairError ?? error
+            }
+        }
+
+        do {
+            try runtimeRepository.deleteOrphanedRuntimes(
+                keeping: Set(previousConfiguration.rules.map(\.id))
+            )
+        } catch {
+            firstRepairError = firstRepairError ?? error
+        }
+
+        if canApplyManagedSettings {
+            do {
+                try shieldReconciler.reconcile(
+                    configuration: previousConfiguration,
+                    runtimeRepository: runtimeRepository,
+                    now: Date()
+                )
+            } catch {
+                firstRepairError = firstRepairError ?? error
+            }
+        }
+
+        if let firstRepairError {
+            throw firstRepairError
+        }
+    }
+
+    private func reconcileShieldsIfAuthorized(
+        title: String = "Pause needs repair"
+    ) {
+        guard canApplyManagedSettings, let runtimeRepository else { return }
+        do {
+            try shieldReconciler.reconcile(
+                configuration: configuration,
+                runtimeRepository: runtimeRepository,
+                now: Date()
+            )
+        } catch {
+            presentedError = AppError(title: title, error: error)
+        }
+    }
+
+    private var canApplyManagedSettings: Bool {
+        switch authorizationStatus {
+        case .approved, .approvedWithDataAccess:
+            true
+        case .notDetermined, .denied:
+            false
+        @unknown default:
+            false
         }
     }
 
