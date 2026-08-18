@@ -123,3 +123,131 @@ public enum ForegroundPauseState: Equatable, Sendable {
         }
     }
 }
+
+public enum ConfigurationLoadState: Equatable, Sendable {
+    case missing
+    case knownGood
+    case failed
+}
+
+public struct PauseActivationResolution<Payload> {
+    public let payload: Payload
+    public let performMaintenance: Bool
+
+    public init(payload: Payload, performMaintenance: Bool) {
+        self.payload = payload
+        self.performMaintenance = performMaintenance
+    }
+}
+
+public enum PauseActivationOutcome<Payload> {
+    case unchanged
+    case configuration
+    case repair
+    case resolved(Payload)
+}
+
+extension PauseActivationOutcome: Equatable where Payload: Equatable {}
+extension PauseActivationOutcome: Sendable where Payload: Sendable {}
+
+public struct PauseActivationCoordinator: Sendable {
+    public private(set) var configurationState: ConfigurationLoadState
+    public private(set) var foregroundState: ForegroundPauseState = .configuration
+    private var hasHandledCurrentActivation = false
+    private var hasProtectedState: Bool
+
+    public init(
+        configurationState: ConfigurationLoadState,
+        hasProtectedState: Bool = false
+    ) {
+        self.configurationState = configurationState
+        self.hasProtectedState = hasProtectedState
+    }
+
+    public mutating func configurationBecameKnownGood() {
+        configurationState = .knownGood
+    }
+
+    public mutating func configurationWasMissing(hasProtectedState: Bool = false) {
+        configurationState = .missing
+        self.hasProtectedState = hasProtectedState
+    }
+
+    public mutating func configurationLoadFailed() {
+        configurationState = .failed
+    }
+
+    public mutating func countdownDidStart() {
+        foregroundState = .countingDown
+    }
+
+    public mutating func grantDidStart() {
+        foregroundState = .grantStarted
+    }
+
+    public mutating func returnedToConfiguration() {
+        foregroundState = .configuration
+    }
+
+    public mutating func sceneDidBecomeInactive() {
+        hasHandledCurrentActivation = false
+        foregroundState = foregroundState.transitioned(for: .sceneBecameInactive)
+    }
+
+    public mutating func activate<Intent, Payload>(
+        isAuthorized: Bool,
+        consumeIntent: () throws -> Intent?,
+        resolveIntent: (Intent) throws -> PauseActivationResolution<Payload>,
+        cleanup: () -> Void,
+        reconcile: () -> Void
+    ) -> PauseActivationOutcome<Payload> {
+        guard !hasHandledCurrentActivation else { return .unchanged }
+        hasHandledCurrentActivation = true
+
+        guard isAuthorized else { return .configuration }
+        guard foregroundState != .grantStarted else { return .unchanged }
+
+        switch configurationState {
+        case .missing:
+            if hasProtectedState {
+                _ = try? consumeIntent()
+                return .repair
+            }
+            do {
+                return try consumeIntent() == nil ? .configuration : .repair
+            } catch {
+                return .repair
+            }
+        case .failed:
+            _ = try? consumeIntent()
+            return .repair
+        case .knownGood:
+            break
+        }
+
+        let intent: Intent
+        do {
+            guard let consumedIntent = try consumeIntent() else {
+                cleanup()
+                reconcile()
+                return .configuration
+            }
+            intent = consumedIntent
+        } catch {
+            return .repair
+        }
+
+        let resolution: PauseActivationResolution<Payload>
+        do {
+            resolution = try resolveIntent(intent)
+        } catch {
+            return .repair
+        }
+
+        if resolution.performMaintenance {
+            cleanup()
+            reconcile()
+        }
+        return .resolved(resolution.payload)
+    }
+}

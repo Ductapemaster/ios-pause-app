@@ -80,8 +80,7 @@ final class AppModel: ObservableObject {
     private let shieldIntentStore: ShieldIntentStore
     private var configurationStore: ConfigurationStore?
     private var runtimeRepository: RuntimeRepository?
-    private var hasHandledCurrentActivation = false
-    private var foregroundPauseState = ForegroundPauseState.configuration
+    private var activationCoordinator = PauseActivationCoordinator(configurationState: .failed)
 
     init(
         authorizationCenter: AuthorizationCenter = .shared,
@@ -110,51 +109,68 @@ final class AppModel: ObservableObject {
             if let savedConfiguration = try configurationStore.load() {
                 configuration = savedConfiguration
                 pickerSelection.applicationTokens = Set(savedConfiguration.targets.map(\.applicationToken))
+                activationCoordinator.configurationBecameKnownGood()
+            } else {
+                activationCoordinator.configurationWasMissing(
+                    hasProtectedState: Self.hasProtectedState(in: directoryURL)
+                )
             }
-            cleanupOrphanedRuntimes()
-            reconcileShieldsIfAuthorized()
         } catch {
+            activationCoordinator.configurationLoadFailed()
             presentedError = AppError(title: "Couldn't load Pause", error: error)
         }
     }
 
     func refreshAuthorizationStatus() {
         authorizationStatus = authorizationCenter.authorizationStatus
-        cleanupOrphanedRuntimes()
-        reconcileShieldsIfAuthorized()
     }
 
     func sceneDidBecomeActive(now: Date = Date()) {
-        guard !hasHandledCurrentActivation else { return }
-        hasHandledCurrentActivation = true
         refreshAuthorizationStatus()
 
-        guard canApplyManagedSettings else {
-            entryRoute = .configuration
-            return
-        }
-        guard foregroundPauseState != .grantStarted else { return }
+        var coordinator = activationCoordinator
+        let outcome: PauseActivationOutcome<AppEntryRoute> = coordinator.activate(
+            isAuthorized: canApplyManagedSettings,
+            consumeIntent: shieldIntentStore.consume,
+            resolveIntent: { [self] intent in
+                try resolveShieldIntent(intent, now: now)
+            },
+            cleanup: { [self] in cleanupOrphanedRuntimes() },
+            reconcile: { [self] in reconcileShieldsIfAuthorized() }
+        )
+        activationCoordinator = coordinator
 
-        routeShieldIntent(now: now)
+        switch outcome {
+        case .unchanged:
+            return
+        case .configuration:
+            entryRoute = .configuration
+        case .repair:
+            entryRoute = activationRepairRoute
+        case let .resolved(route):
+            entryRoute = route
+            if case .pause = route {
+                activationCoordinator.countdownDidStart()
+            }
+        }
     }
 
     func sceneDidBecomeInactive() {
-        hasHandledCurrentActivation = false
-        foregroundPauseState = foregroundPauseState.transitioned(for: .sceneBecameInactive)
-        if foregroundPauseState == .configuration, case .pause = entryRoute {
+        activationCoordinator.sceneDidBecomeInactive()
+        if activationCoordinator.foregroundState == .configuration, case .pause = entryRoute {
             entryRoute = .configuration
         }
     }
 
     func requestSessionGrant() {
         guard case .pause = entryRoute else { return }
-        foregroundPauseState = .grantStarted
+        activationCoordinator.grantDidStart()
         isGrantRequested = true
     }
 
     func returnToConfiguration() {
         isGrantRequested = false
-        foregroundPauseState = .configuration
+        activationCoordinator.returnedToConfiguration()
         entryRoute = .configuration
     }
 
@@ -171,6 +187,9 @@ final class AppModel: ObservableObject {
 
     func applyPickerSelection() throws {
         guard let configurationStore, let runtimeRepository else {
+            throw AppModelError.storageUnavailable
+        }
+        guard activationCoordinator.configurationState != .failed else {
             throw AppModelError.storageUnavailable
         }
 
@@ -239,6 +258,7 @@ final class AppModel: ObservableObject {
                 )
             }
             configuration = nextConfiguration
+            activationCoordinator.configurationBecameKnownGood()
         } catch let changeError {
             var repairErrors: [Error] = []
             do {
@@ -338,7 +358,8 @@ final class AppModel: ObservableObject {
     }
 
     private func cleanupOrphanedRuntimes() {
-        guard let runtimeRepository else { return }
+        guard activationCoordinator.configurationState == .knownGood,
+              let runtimeRepository else { return }
         do {
             try runtimeRepository.deleteOrphanedRuntimes(
                 keeping: Set(configuration.rules.map(\.id))
@@ -348,97 +369,89 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func routeShieldIntent(now: Date) {
+    private func resolveShieldIntent(
+        _ intent: ShieldIntent,
+        now: Date
+    ) throws -> PauseActivationResolution<AppEntryRoute> {
         isGrantRequested = false
-        foregroundPauseState = .configuration
-
-        let intent: ShieldIntent
-        do {
-            guard let consumedIntent = try shieldIntentStore.consume() else {
-                entryRoute = .configuration
-                return
-            }
-            intent = consumedIntent
-        } catch {
-            entryRoute = .repair(
-                RepairContent(
-                    applicationToken: nil,
-                    title: "Pause couldn't read this request",
-                    message: "The app remains blocked. Return to the app and try again."
-                )
-            )
-            return
-        }
 
         let age = now.timeIntervalSince(intent.createdAt)
         guard age >= 0, age <= PauseEntryRouter.maximumIntentAge else {
-            entryRoute = .repair(
-                RepairContent(
-                    applicationToken: intent.applicationToken,
-                    title: "This request expired",
-                    message: "The app remains blocked. Return to it and try again."
-                )
+            return PauseActivationResolution(
+                payload: .repair(
+                    RepairContent(
+                        applicationToken: intent.applicationToken,
+                        title: "This request expired",
+                        message: "The app remains blocked. Return to it and try again."
+                    )
+                ),
+                performMaintenance: false
             )
-            return
         }
 
-        do {
-            guard let runtimeRepository else {
-                throw AppModelError.storageUnavailable
-            }
-            let matchingTargets = configuration.targets.filter {
-                $0.applicationToken == intent.applicationToken
-            }
-            guard matchingTargets.count == 1, let target = matchingTargets.first else {
-                throw RuleLookupError.targetNotFound
-            }
-            guard let rule = configuration.rules.first(where: { $0.id == target.ruleID }) else {
-                throw RuleLookupError.ruleNotFound(target.ruleID)
-            }
+        guard let runtimeRepository else {
+            throw AppModelError.storageUnavailable
+        }
+        let matchingTargets = configuration.targets.filter {
+            $0.applicationToken == intent.applicationToken
+        }
+        guard matchingTargets.count == 1, let target = matchingTargets.first else {
+            throw RuleLookupError.targetNotFound
+        }
+        guard let rule = configuration.rules.first(where: { $0.id == target.ruleID }) else {
+            throw RuleLookupError.ruleNotFound(target.ruleID)
+        }
 
-            let today = CalendarDay(date: now, calendar: .current)
-            let runtime = try runtimeRepository.load(ruleID: rule.id)
-                ?? RuleRuntime(logicalDay: today, sessionsStarted: 0)
-            let evaluation = RuleLookup.evaluate(
-                rule: rule,
-                runtime: runtime,
-                now: now,
-                calendar: .current
-            )
-            let resolution = PauseEntryResolution.resolved(
-                ruleID: rule.id,
-                sessionsPerDay: rule.sessionsPerDay,
-                pauseSeconds: configuration.settings.pauseSeconds,
-                decision: evaluation.decision
-            )
+        guard let runtime = try runtimeRepository.load(ruleID: rule.id) else {
+            throw RuleLookupError.runtimeNotFound(rule.id)
+        }
+        let evaluation = RuleLookup.evaluate(
+            rule: rule,
+            runtime: runtime,
+            now: now,
+            calendar: .current
+        )
+        let resolution = PauseEntryResolution.resolved(
+            ruleID: rule.id,
+            sessionsPerDay: rule.sessionsPerDay,
+            pauseSeconds: configuration.settings.pauseSeconds,
+            decision: evaluation.decision
+        )
 
-            switch PauseEntryRouter.route(
-                input: .intent(createdAt: intent.createdAt, resolution: resolution),
-                now: now
-            ) {
-            case let .pause(details):
-                foregroundPauseState = .countingDown
-                entryRoute = .pause(
-                    PauseEntryContext(
-                        details: details,
-                        applicationToken: target.applicationToken,
-                        countdown: try PauseCountdown(
-                            ruleID: details.ruleID,
-                            seconds: details.pauseSeconds,
-                            now: now
-                        )
+        let route: AppEntryRoute
+        switch PauseEntryRouter.route(
+            input: .intent(createdAt: intent.createdAt, resolution: resolution),
+            now: now
+        ) {
+        case let .pause(details):
+            route = .pause(
+                PauseEntryContext(
+                    details: details,
+                    applicationToken: target.applicationToken,
+                    countdown: try PauseCountdown(
+                        ruleID: details.ruleID,
+                        seconds: details.pauseSeconds,
+                        now: now
                     )
                 )
-            case let .refused(reason):
-                entryRoute = .refused(refusalContent(for: reason, token: target.applicationToken))
-            case .configuration:
-                entryRoute = .configuration
-            case .repair:
-                entryRoute = genericRepairContent(for: intent.applicationToken)
-            }
-        } catch {
-            entryRoute = genericRepairContent(for: intent.applicationToken)
+            )
+        case let .refused(reason):
+            route = .refused(refusalContent(for: reason, token: target.applicationToken))
+        case .configuration:
+            route = .configuration
+        case .repair:
+            route = genericRepairContent(for: intent.applicationToken)
         }
+        let performMaintenance: Bool
+        if case .repair = route {
+            performMaintenance = false
+        } else {
+            performMaintenance = true
+        }
+        return PauseActivationResolution(
+            payload: route,
+            performMaintenance: performMaintenance
+        )
     }
 
     private func refusalContent(
@@ -469,6 +482,29 @@ final class AppModel: ObservableObject {
                 message: "This app's rule or session data couldn't be read safely. The app remains blocked."
             )
         )
+    }
+
+    private var activationRepairRoute: AppEntryRoute {
+        switch activationCoordinator.configurationState {
+        case .failed:
+            .repair(
+                RepairContent(
+                    applicationToken: nil,
+                    title: "Pause couldn't load its configuration",
+                    message: "Saved rules couldn't be read safely. Existing apps remain blocked."
+                )
+            )
+        case .missing:
+            .repair(
+                RepairContent(
+                    applicationToken: nil,
+                    title: "Pause can't match this app",
+                    message: "No saved configuration is available. The app remains blocked."
+                )
+            )
+        case .knownGood:
+            genericRepairContent(for: nil)
+        }
     }
 
     private func commitRuleRemoval(
@@ -531,7 +567,9 @@ final class AppModel: ObservableObject {
     private func reconcileShieldsIfAuthorized(
         title: String = "Pause needs repair"
     ) {
-        guard canApplyManagedSettings, let runtimeRepository else { return }
+        guard activationCoordinator.configurationState == .knownGood,
+              canApplyManagedSettings,
+              let runtimeRepository else { return }
         do {
             try shieldReconciler.reconcile(
                 configuration: configuration,
@@ -551,6 +589,26 @@ final class AppModel: ObservableObject {
             false
         @unknown default:
             false
+        }
+    }
+
+    private static func hasProtectedState(in directoryURL: URL) -> Bool {
+        if let shieldedApplications = ManagedSettingsStore().shield.applications,
+           !shieldedApplications.isEmpty {
+            return true
+        }
+
+        do {
+            return try FileManager.default.contentsOfDirectory(
+                at: directoryURL,
+                includingPropertiesForKeys: nil
+            ).contains { fileURL in
+                let name = fileURL.lastPathComponent
+                return name.hasPrefix("runtime-")
+                    && (name.hasSuffix(".json") || name.hasSuffix(".json.removal-stage"))
+            }
+        } catch {
+            return true
         }
     }
 

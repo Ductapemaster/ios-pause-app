@@ -101,6 +101,22 @@ final class PauseEntryRouterTests: XCTestCase {
         XCTAssertEqual(PauseEntryRouter.route(input: input, now: now), .refused(reason))
     }
 
+    func testOpenSessionRefusalRoutesToItsReason() {
+        let until = now.addingTimeInterval(300)
+        let reason = RefusalReason.sessionAlreadyOpen(until: until)
+        let input = PauseEntryInput.intent(
+            createdAt: now,
+            resolution: .resolved(
+                ruleID: ruleID,
+                sessionsPerDay: 3,
+                pauseSeconds: 10,
+                decision: .refused(reason)
+            )
+        )
+
+        XCTAssertEqual(PauseEntryRouter.route(input: input, now: now), .refused(reason))
+    }
+
     func testFutureDatedIntentRoutesToRepair() {
         let input = PauseEntryInput.intent(
             createdAt: now.addingTimeInterval(0.001),
@@ -133,5 +149,253 @@ final class ForegroundPauseStateTests: XCTestCase {
             ForegroundPauseState.grantStarted.transitioned(for: .sceneBecameInactive),
             .grantStarted
         )
+    }
+}
+
+final class PauseActivationCoordinatorTests: XCTestCase {
+    private enum TestError: Error {
+        case missingRuntime
+        case unreadableRuntime
+    }
+
+    func testMissingConfigurationWithPendingIntentRepairsWithoutMaintenance() {
+        var coordinator = PauseActivationCoordinator(configurationState: .missing)
+        var cleanupCount = 0
+        var reconciliationCount = 0
+        var resolutionCount = 0
+
+        let outcome: PauseActivationOutcome<String> = coordinator.activate(
+            isAuthorized: true,
+            consumeIntent: { 1 },
+            resolveIntent: { _ in
+                resolutionCount += 1
+                return PauseActivationResolution(payload: "pause", performMaintenance: true)
+            },
+            cleanup: { cleanupCount += 1 },
+            reconcile: { reconciliationCount += 1 }
+        )
+
+        XCTAssertEqual(outcome, .repair)
+        XCTAssertEqual(cleanupCount, 0)
+        XCTAssertEqual(reconciliationCount, 0)
+        XCTAssertEqual(resolutionCount, 0)
+    }
+
+    func testMissingConfigurationWithExistingProtectedStateRepairsWithoutAnIntent() {
+        var coordinator = PauseActivationCoordinator(
+            configurationState: .missing,
+            hasProtectedState: true
+        )
+        var cleanupCount = 0
+        var reconciliationCount = 0
+
+        let outcome: PauseActivationOutcome<String> = coordinator.activate(
+            isAuthorized: true,
+            consumeIntent: { nil as Int? },
+            resolveIntent: { _ in
+                XCTFail("Unsafe configuration must not resolve an intent")
+                return PauseActivationResolution(payload: "pause", performMaintenance: true)
+            },
+            cleanup: { cleanupCount += 1 },
+            reconcile: { reconciliationCount += 1 }
+        )
+
+        XCTAssertEqual(outcome, .repair)
+        XCTAssertEqual(cleanupCount, 0)
+        XCTAssertEqual(reconciliationCount, 0)
+    }
+
+    func testFailedConfigurationWithPendingIntentRepairsWithoutMaintenance() {
+        var coordinator = PauseActivationCoordinator(configurationState: .failed)
+        var cleanupCount = 0
+        var reconciliationCount = 0
+
+        let outcome: PauseActivationOutcome<String> = coordinator.activate(
+            isAuthorized: true,
+            consumeIntent: { 1 },
+            resolveIntent: { _ in
+                XCTFail("Unsafe configuration must not resolve an intent")
+                return PauseActivationResolution(payload: "pause", performMaintenance: true)
+            },
+            cleanup: { cleanupCount += 1 },
+            reconcile: { reconciliationCount += 1 }
+        )
+
+        XCTAssertEqual(outcome, .repair)
+        XCTAssertEqual(cleanupCount, 0)
+        XCTAssertEqual(reconciliationCount, 0)
+    }
+
+    func testDuplicateActivationDoesNotConsumeASecondIntent() {
+        var coordinator = PauseActivationCoordinator(configurationState: .knownGood)
+        var consumed = 0
+
+        func activate() -> PauseActivationOutcome<String> {
+            coordinator.activate(
+                isAuthorized: true,
+                consumeIntent: {
+                    consumed += 1
+                    return 1
+                },
+                resolveIntent: { _ in
+                    PauseActivationResolution(payload: "pause", performMaintenance: true)
+                },
+                cleanup: {},
+                reconcile: {}
+            )
+        }
+
+        XCTAssertEqual(activate(), .resolved("pause"))
+        XCTAssertEqual(activate(), .unchanged)
+        XCTAssertEqual(consumed, 1)
+    }
+
+    func testReactivationAfterInterruptedCountdownReturnsToConfigurationWithoutANewIntent() {
+        var coordinator = PauseActivationCoordinator(configurationState: .knownGood)
+        var intents = [1]
+
+        func activate() -> PauseActivationOutcome<String> {
+            coordinator.activate(
+                isAuthorized: true,
+                consumeIntent: { intents.isEmpty ? nil : intents.removeFirst() },
+                resolveIntent: { _ in
+                    PauseActivationResolution(payload: "pause", performMaintenance: true)
+                },
+                cleanup: {},
+                reconcile: {}
+            )
+        }
+
+        XCTAssertEqual(activate(), .resolved("pause"))
+        coordinator.countdownDidStart()
+        coordinator.sceneDidBecomeInactive()
+        XCTAssertEqual(coordinator.foregroundState, .configuration)
+        XCTAssertEqual(activate(), .configuration)
+    }
+
+    func testUnreadableRuntimeRepairsWithoutRuntimeOrShieldMutation() {
+        for error in [TestError.missingRuntime, TestError.unreadableRuntime] {
+            var coordinator = PauseActivationCoordinator(configurationState: .knownGood)
+            var cleanupCount = 0
+            var reconciliationCount = 0
+
+            let outcome: PauseActivationOutcome<String> = coordinator.activate(
+                isAuthorized: true,
+                consumeIntent: { 1 },
+                resolveIntent: { _ in
+                    throw error
+                },
+                cleanup: { cleanupCount += 1 },
+                reconcile: { reconciliationCount += 1 }
+            )
+
+            XCTAssertEqual(outcome, .repair)
+            XCTAssertEqual(cleanupCount, 0)
+            XCTAssertEqual(reconciliationCount, 0)
+        }
+    }
+
+    func testBothRefusalReasonsTraverseTheActivationWorkflow() {
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        let ruleID = UUID(uuidString: "2c29cf48-6747-47e3-b9ad-d848630f3178")!
+        let reasons: [RefusalReason] = [
+            .dailyAllowanceExhausted(limit: 3),
+            .sessionAlreadyOpen(until: now.addingTimeInterval(300))
+        ]
+
+        for reason in reasons {
+            var coordinator = PauseActivationCoordinator(configurationState: .knownGood)
+            let outcome: PauseActivationOutcome<PauseEntryRoute> = coordinator.activate(
+                isAuthorized: true,
+                consumeIntent: { now },
+                resolveIntent: { createdAt in
+                    let route = PauseEntryRouter.route(
+                        input: .intent(
+                            createdAt: createdAt,
+                            resolution: .resolved(
+                                ruleID: ruleID,
+                                sessionsPerDay: 3,
+                                pauseSeconds: 10,
+                                decision: .refused(reason)
+                            )
+                        ),
+                        now: now
+                    )
+                    return PauseActivationResolution(payload: route, performMaintenance: true)
+                },
+                cleanup: {},
+                reconcile: {}
+            )
+
+            XCTAssertEqual(outcome, .resolved(.refused(reason)))
+        }
+    }
+
+    func testIntentResolutionPrecedesDestructiveMaintenance() {
+        var coordinator = PauseActivationCoordinator(configurationState: .knownGood)
+        var events: [String] = []
+
+        let outcome: PauseActivationOutcome<String> = coordinator.activate(
+            isAuthorized: true,
+            consumeIntent: {
+                events.append("consume")
+                return 1
+            },
+            resolveIntent: { _ in
+                events.append("resolve")
+                return PauseActivationResolution(payload: "pause", performMaintenance: true)
+            },
+            cleanup: { events.append("cleanup") },
+            reconcile: { events.append("reconcile") }
+        )
+
+        XCTAssertEqual(outcome, .resolved("pause"))
+        XCTAssertEqual(events, ["consume", "resolve", "cleanup", "reconcile"])
+    }
+
+    func testGrantStartedSurvivesInactivityWithoutReconsumingIntent() {
+        var coordinator = PauseActivationCoordinator(configurationState: .knownGood)
+        coordinator.grantDidStart()
+        coordinator.sceneDidBecomeInactive()
+        var consumed = 0
+
+        let outcome: PauseActivationOutcome<String> = coordinator.activate(
+            isAuthorized: true,
+            consumeIntent: {
+                consumed += 1
+                return 1
+            },
+            resolveIntent: { _ in
+                PauseActivationResolution(payload: "pause", performMaintenance: true)
+            },
+            cleanup: {},
+            reconcile: {}
+        )
+
+        XCTAssertEqual(coordinator.foregroundState, .grantStarted)
+        XCTAssertEqual(outcome, .unchanged)
+        XCTAssertEqual(consumed, 0)
+    }
+
+    func testSuccessfulReloadEnablesMaintenanceAndLaterFailureDisablesIt() {
+        var coordinator = PauseActivationCoordinator(configurationState: .missing)
+        coordinator.configurationBecameKnownGood()
+        XCTAssertEqual(coordinator.configurationState, .knownGood)
+
+        coordinator.configurationLoadFailed()
+        XCTAssertEqual(coordinator.configurationState, .failed)
+
+        var maintenanceCount = 0
+        let outcome: PauseActivationOutcome<String> = coordinator.activate(
+            isAuthorized: true,
+            consumeIntent: { nil as Int? },
+            resolveIntent: { _ in
+                PauseActivationResolution(payload: "pause", performMaintenance: true)
+            },
+            cleanup: { maintenanceCount += 1 },
+            reconcile: { maintenanceCount += 1 }
+        )
+        XCTAssertEqual(outcome, .repair)
+        XCTAssertEqual(maintenanceCount, 0)
     }
 }
