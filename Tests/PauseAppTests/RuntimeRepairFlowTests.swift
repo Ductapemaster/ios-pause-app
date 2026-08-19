@@ -8,7 +8,7 @@ import XCTest
 @MainActor
 final class RuntimeRepairFlowTests: XCTestCase {
     private let selectedRuleID = UUID(uuidString: "2acf6cb8-46e2-4498-8153-a45be2bf282f")!
-    private let otherRuleID = UUID(uuidString: "d7636097-103c-45ad-a6aa-f4f7b85f8681")!
+    private let otherRuleID = UUID(uuidString: "1d636097-103c-45ad-a6aa-f4f7b85f8681")!
     private let untouchedRuleID = UUID(uuidString: "4daec47c-1fed-4354-a604-808e237a99f5")!
     private let now = Date(timeIntervalSince1970: 1_750_000_000)
 
@@ -45,6 +45,43 @@ final class RuntimeRepairFlowTests: XCTestCase {
         XCTAssertEqual(content.applicationToken, harness.selectedToken)
         XCTAssertEqual(content.runtimeResetRuleID, selectedRuleID)
         XCTAssertNil(try repository.load(ruleID: untouchedRuleID)?.openSession)
+    }
+
+    func testSelectedCorruptIntentRepairIsNotReplacedByUnrelatedCorruptRuntimeRepair() throws {
+        let harness = try makeHarness(corruptSelectedRuntime: true)
+        try Data("also-not-json".utf8).write(
+            to: runtimeURL(ruleID: otherRuleID, directory: harness.directory)
+        )
+        try ShieldIntentStore(defaults: harness.defaults).write(
+            ShieldIntent(applicationToken: harness.selectedToken, createdAt: now)
+        )
+
+        harness.model.sceneDidBecomeActive(now: now)
+
+        guard case let .repair(content) = harness.model.entryRoute else {
+            return XCTFail("The repair route for the opened shield intent must remain visible")
+        }
+        XCTAssertEqual(content.applicationToken, harness.selectedToken)
+        XCTAssertEqual(content.runtimeResetRuleID, selectedRuleID)
+    }
+
+    func testUnrelatedCorruptRuntimeOverridesSelectedPauseWithFailBlockedRepair() throws {
+        let harness = try makeHarness(corruptSelectedRuntime: false)
+        let otherToken = try token(for: otherRuleID)
+        try Data("not-json".utf8).write(
+            to: runtimeURL(ruleID: otherRuleID, directory: harness.directory)
+        )
+        try ShieldIntentStore(defaults: harness.defaults).write(
+            ShieldIntent(applicationToken: harness.selectedToken, createdAt: now)
+        )
+
+        harness.model.sceneDidBecomeActive(now: now)
+
+        guard case let .repair(content) = harness.model.entryRoute else {
+            return XCTFail("Unreadable unrelated state must keep the activation fail-blocked")
+        }
+        XCTAssertEqual(content.applicationToken, otherToken)
+        XCTAssertEqual(content.runtimeResetRuleID, otherRuleID)
     }
 
     func testMismatchedIntentKeepsRepairRouteAndRecoversUnrelatedProvisionalSession() throws {
@@ -91,6 +128,50 @@ final class RuntimeRepairFlowTests: XCTestCase {
             return XCTFail("A durably blocked failed grant needs the selected runtime reset action")
         }
         XCTAssertEqual(content.runtimeResetRuleID, otherRuleID)
+    }
+
+    func testSafeActivationPrunesOnlyFailedGrantMarkersOutsideCurrentConfiguration() throws {
+        let harness = try makeHarness(corruptSelectedRuntime: false)
+        let repository = RuntimeRepository(directoryURL: harness.directory)
+        try repository.save(
+            runtime(ruleID: otherRuleID, state: .provisional, expiresIn: 60),
+            ruleID: otherRuleID
+        )
+        let orphanRuleID = UUID(uuidString: "05f629e6-cb5d-4dc3-a693-1bb5d6d80913")!
+        let markers = FailedGrantBlockStore(directoryURL: harness.directory)
+        try markers.add(ruleID: orphanRuleID)
+        try markers.add(ruleID: otherRuleID)
+
+        harness.model.sceneDidBecomeActive(now: now)
+
+        XCTAssertFalse(try markers.contains(ruleID: orphanRuleID))
+        XCTAssertTrue(try markers.contains(ruleID: otherRuleID))
+    }
+
+    func testUnsafeConfigurationDoesNotPruneFailedGrantMarkers() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pause-unsafe-marker-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let markerRuleID = UUID(uuidString: "05f629e6-cb5d-4dc3-a693-1bb5d6d80913")!
+        let markers = FailedGrantBlockStore(directoryURL: directory)
+        try markers.add(ruleID: markerRuleID)
+        try Data("not-json".utf8).write(
+            to: directory.appendingPathComponent("configuration.json")
+        )
+        let defaultsName = "pause-unsafe-marker-defaults-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
+        addTeardownBlock { defaults.removePersistentDomain(forName: defaultsName) }
+        let model = AppModel(
+            shieldIntentStore: ShieldIntentStore(defaults: defaults),
+            storageDirectoryURL: directory,
+            authorizationStatusProvider: { .approved },
+            authorizationRequester: {}
+        )
+
+        model.sceneDidBecomeActive(now: now)
+
+        XCTAssertTrue(try markers.contains(ruleID: markerRuleID))
     }
 
     func testConfirmedRuntimeResetTouchesOnlySelectedFileAndClearsOnlySelectedMarker() throws {
@@ -208,6 +289,10 @@ final class RuntimeRepairFlowTests: XCTestCase {
             ApplicationToken.self,
             from: Data("{\"data\":\"\(encoded)\"}".utf8)
         )
+    }
+
+    private func runtimeURL(ruleID: UUID, directory: URL) -> URL {
+        directory.appendingPathComponent("runtime-\(ruleID.uuidString.lowercased()).json")
     }
 
     private func runtime(

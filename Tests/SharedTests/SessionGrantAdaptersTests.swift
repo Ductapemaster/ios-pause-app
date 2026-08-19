@@ -385,6 +385,62 @@ final class SessionGrantAdaptersTests: XCTestCase {
         XCTAssertEqual(try repository.load(ruleID: ruleID)?.openSession?.state, .provisional)
     }
 
+    func testOldWarningCannotStopReusedActivityBetweenRegistrationAndReservation() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let ruleID = UUID(uuidString: "d8aa967e-10a8-4a9d-a4ab-e49aaf19fa9a")!
+        let token = try token(seed: "selected")
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        let configuration = try ConfigurationDocument(
+            settings: .phaseOneDefault,
+            rules: [AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)],
+            targets: [RuleTarget(ruleID: ruleID, applicationToken: token, launchRoute: nil)]
+        )
+        try ConfigurationStore(directoryURL: directory).save(configuration)
+        let repository = RuntimeRepository(directoryURL: directory)
+        try repository.save(
+            RuleRuntime(logicalDay: CalendarDay(date: now, calendar: .current), sessionsStarted: 0),
+            ruleID: ruleID
+        )
+        let stateLock = AppGroupFileLock(directoryURL: directory)
+        let applications = LockedApplicationTokens([token])
+        let callback = OldWarningCallback(
+            directory: directory,
+            ruleID: ruleID,
+            now: now,
+            applications: applications
+        )
+        let markers = FailedGrantBlockStore(directoryURL: directory)
+        let reconciler = ShieldReconciler(
+            currentApplications: applications.load,
+            applyApplications: applications.save,
+            failedGrantBlockIDs: markers.load,
+            stateLock: stateLock
+        )
+        let coordinator = SessionGrantCoordinator(
+            scheduler: ABAScheduler(callback: callback),
+            runtime: RepositoryRuntimePersistence(repository: repository, now: now),
+            shield: ConfigurationShieldController(
+                configuration: configuration,
+                reconciler: reconciler,
+                failedGrantBlockStore: markers,
+                stateLock: stateLock
+            ),
+            launcher: AdapterManualLauncher(),
+            lock: stateLock
+        )
+
+        _ = try await coordinator.grant(rule: configuration.rules[0], now: now)
+        XCTAssertTrue(callback.waitUntilFinished())
+
+        let runtime = try XCTUnwrap(repository.load(ruleID: ruleID))
+        XCTAssertEqual(runtime.sessionsStarted, 1)
+        XCTAssertEqual(runtime.openSession?.state, .active)
+        XCTAssertEqual(runtime.openSession?.expiresAt, now.addingTimeInterval(5 * 60))
+        XCTAssertEqual(callback.stopCount, 0)
+        XCTAssertFalse(applications.load().contains(token))
+    }
+
     private func twoRuleConfiguration(
         selectedID: UUID,
         selectedToken: ApplicationToken,
@@ -450,6 +506,7 @@ private final class OrderedBlockStore: FailedGrantBlockStoring {
 private enum AdapterTestError: Error, Equatable {
     case persistence
     case rollback
+    case callbackDidNotStart
 }
 
 @MainActor
@@ -488,4 +545,115 @@ private final class AdapterRollbackFailingRuntime: RuntimePersisting {
 private final class AdapterFailingLauncher: TargetLaunching {
     func hasAutomaticRoute(ruleID: UUID) -> Bool { true }
     func open(ruleID: UUID) async -> Bool { false }
+}
+
+@MainActor
+private final class AdapterManualLauncher: TargetLaunching {
+    func hasAutomaticRoute(ruleID: UUID) -> Bool { false }
+    func open(ruleID: UUID) async -> Bool { false }
+}
+
+@MainActor
+private final class ABAScheduler: SessionScheduling {
+    private let callback: OldWarningCallback
+
+    init(callback: OldWarningCallback) {
+        self.callback = callback
+    }
+
+    func register(ruleID: UUID, startsAt: Date, expiresAt: Date) throws -> String {
+        guard callback.startAndConfirmBlockedByPreparation() else {
+            throw AdapterTestError.callbackDidNotStart
+        }
+        return SessionActivityName.sessionActivityName(for: ruleID)
+    }
+
+    func stop(activityName: String) throws {}
+}
+
+private final class OldWarningCallback: @unchecked Sendable {
+    private let directory: URL
+    private let ruleID: UUID
+    private let now: Date
+    private let applications: LockedApplicationTokens
+    private let attempting = DispatchSemaphore(value: 0)
+    private let finished = DispatchSemaphore(value: 0)
+    private let resultLock = NSLock()
+    private var storedStopCount = 0
+
+    init(
+        directory: URL,
+        ruleID: UUID,
+        now: Date,
+        applications: LockedApplicationTokens
+    ) {
+        self.directory = directory
+        self.ruleID = ruleID
+        self.now = now
+        self.applications = applications
+    }
+
+    var stopCount: Int {
+        resultLock.lock()
+        defer { resultLock.unlock() }
+        return storedStopCount
+    }
+
+    func startAndConfirmBlockedByPreparation() -> Bool {
+        DispatchQueue.global().async { [self] in
+            attempting.signal()
+            let stateLock = AppGroupFileLock(directoryURL: directory)
+            let service = SessionReconciliationService(
+                directoryURL: directory,
+                shieldReconciler: ShieldReconciler(
+                    currentApplications: applications.load,
+                    applyApplications: applications.save,
+                    failedGrantBlockIDs: {
+                        try FailedGrantBlockFileStore(directoryURL: self.directory).load()
+                    },
+                    stateLock: stateLock
+                ),
+                stopMonitoring: { [self] _ in
+                    resultLock.lock()
+                    storedStopCount += 1
+                    resultLock.unlock()
+                }
+            )
+            _ = service.reconcile(
+                now: now,
+                trigger: .intervalWillEndWarning(
+                    ruleID: ruleID,
+                    activityName: SessionActivityName.sessionActivityName(for: ruleID)
+                )
+            )
+            finished.signal()
+        }
+        guard attempting.wait(timeout: .now() + 2) == .success else { return false }
+        return finished.wait(timeout: .now() + 0.25) == .timedOut
+    }
+
+    func waitUntilFinished() -> Bool {
+        finished.wait(timeout: .now() + 2) == .success
+    }
+}
+
+private final class LockedApplicationTokens: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: Set<ApplicationToken>
+
+    init(_ storage: Set<ApplicationToken>) {
+        self.storage = storage
+    }
+
+    func load() -> Set<ApplicationToken> {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func save(_ applications: Set<ApplicationToken>) {
+        lock.lock()
+        storage = applications
+        lock.unlock()
+    }
 }

@@ -116,7 +116,7 @@ final class AppModel: ObservableObject {
     private var activationCoordinator = PauseActivationCoordinator(configurationState: .failed)
     private var isSceneActive = false
     private var authorizationStatusAtLastActivation: AuthorizationStatus?
-    private var activationRuntimeRepair: RepairContent?
+    private var activationRuntimeRepairs: [RepairContent] = []
 
     init(
         authorizationCenter: AuthorizationCenter = .shared,
@@ -232,9 +232,16 @@ final class AppModel: ObservableObject {
                 activationCoordinator.countdownDidStart()
             }
         }
-        if let activationRuntimeRepair {
-            entryRoute = .repair(activationRuntimeRepair)
-            self.activationRuntimeRepair = nil
+        if case let .resolved(.repair(selectedRepair)) = outcome {
+            activationRuntimeRepairs.removeAll { pendingRepair in
+                if let selectedRuleID = selectedRepair.runtimeResetRuleID {
+                    return pendingRepair.runtimeResetRuleID == selectedRuleID
+                }
+                guard let selectedToken = selectedRepair.applicationToken else { return false }
+                return pendingRepair.applicationToken == selectedToken
+            }
+        } else if !activationRuntimeRepairs.isEmpty {
+            entryRoute = .repair(activationRuntimeRepairs.removeFirst())
         }
     }
 
@@ -279,7 +286,8 @@ final class AppModel: ObservableObject {
             runtime: sessionRuntimePersistence
                 ?? RepositoryRuntimePersistence(repository: runtimeRepository, now: now),
             shield: shield,
-            launcher: launcher
+            launcher: launcher,
+            lock: stateLock
         )
 
         do {
@@ -313,7 +321,11 @@ final class AppModel: ObservableObject {
         }
         isGrantRequested = false
         activationCoordinator.returnedToConfiguration()
-        entryRoute = .configuration
+        if activationRuntimeRepairs.isEmpty {
+            entryRoute = .configuration
+        } else {
+            entryRoute = .repair(activationRuntimeRepairs.removeFirst())
+        }
     }
 
     func resetRuntime(ruleID: UUID, now: Date = Date()) {
@@ -601,15 +613,22 @@ final class AppModel: ObservableObject {
 
     private func cleanupOrphanedRuntimes() {
         guard activationCoordinator.configurationState == .knownGood,
-              let runtimeRepository else { return }
+              let runtimeRepository,
+              let failedGrantBlockStore else { return }
         if let cleanupOverride {
             cleanupOverride()
             return
         }
         do {
-            try runtimeRepository.deleteOrphanedRuntimes(
-                keeping: Set(configuration.rules.map(\.id))
-            )
+            let configuredRuleIDs = Set(configuration.rules.map(\.id))
+            let cleanup = {
+                try runtimeRepository.deleteOrphanedRuntimes(keeping: configuredRuleIDs)
+                let markerIDs = try failedGrantBlockStore.load()
+                for orphanRuleID in markerIDs.subtracting(configuredRuleIDs) {
+                    try failedGrantBlockStore.clear(ruleID: orphanRuleID)
+                }
+            }
+            try stateLock?.withLock(cleanup) ?? cleanup()
         } catch {
             presentedError = AppError(title: "Couldn't finish app-data cleanup", error: error)
         }
@@ -924,11 +943,9 @@ final class AppModel: ObservableObject {
                 ]
             )
         }
-        if let ruleID = result.repairRuleIDs.sorted(by: {
-            $0.uuidString < $1.uuidString
-        }).first {
-            activationRuntimeRepair = runtimeRepairContent(for: ruleID)
-        }
+        activationRuntimeRepairs = result.repairRuleIDs
+            .sorted { $0.uuidString < $1.uuidString }
+            .compactMap(runtimeRepairContent)
         if !result.issues.isEmpty {
             presentedError = AppError(title: "Pause needs repair", error: result)
         }

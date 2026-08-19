@@ -19,6 +19,82 @@ final class SessionGrantCoordinatorTests: XCTestCase {
         )
     }
 
+    func testPreparationLockCoversRegistrationReservationAndUnshieldButNotExternalLaunch() async throws {
+        let log = OperationLog()
+        let lock = RecordingGrantLock(log: log)
+        let harness = Harness(
+            ruleID: ruleID,
+            automaticRoute: true,
+            launchSucceeds: true,
+            log: log,
+            lock: lock
+        )
+
+        _ = try await harness.coordinator.grant(rule: rule, now: now)
+
+        XCTAssertEqual(
+            log.values,
+            [
+                "lock-enter", "register", "reserve", "unshield", "lock-exit",
+                "has-route", "open", "activate",
+            ]
+        )
+    }
+
+    func testPreparationFailureRepairsRemainInsideThePreparationLock() async {
+        let log = OperationLog()
+        let lock = RecordingGrantLock(log: log)
+        let harness = Harness(ruleID: ruleID, log: log, lock: lock)
+        harness.shield.unshieldError = TestError.unshield
+
+        await XCTAssertThrowsErrorAsync(try await harness.coordinator.grant(rule: rule, now: now))
+
+        XCTAssertEqual(
+            log.values,
+            [
+                "lock-enter", "register", "reserve", "unshield", "rollback", "stop", "shield",
+                "lock-exit",
+            ]
+        )
+    }
+
+    func testPreparationLockFailureReportsUnchargedBlockedStateWithoutStartingPreparation() async {
+        let log = OperationLog()
+        let harness = Harness(
+            ruleID: ruleID,
+            log: log,
+            lock: FailingGrantLock(failOnEntry: 1)
+        )
+
+        do {
+            _ = try await harness.coordinator.grant(rule: rule, now: now)
+            XCTFail("Expected the lock failure")
+        } catch let failure as SessionGrantFailure {
+            XCTAssertEqual(failure.primaryError as? TestError, .lock)
+            XCTAssertEqual(failure.chargeState, .notCharged)
+            XCTAssertEqual(failure.shieldState, .blocked)
+        } catch {
+            XCTFail("Expected SessionGrantFailure, got \(error)")
+        }
+        XCTAssertTrue(log.values.isEmpty)
+    }
+
+    func testRepairLockFailureIsRetainedWithoutClaimingRollbackOrReshield() async {
+        let harness = Harness(
+            ruleID: ruleID,
+            automaticRoute: true,
+            launchSucceeds: false,
+            lock: FailingGrantLock(failOnEntry: 2)
+        )
+
+        let failure = await capturedFailure(from: harness)
+
+        XCTAssertEqual(failure?.repairErrors.map(\.step), [.acquireStateLock])
+        XCTAssertEqual(failure?.repairErrors.first?.underlyingError as? TestError, .lock)
+        XCTAssertEqual(failure?.chargeState, .charged)
+        XCTAssertEqual(failure?.shieldState, .unblocked)
+    }
+
     func testSchedulingFailureLeavesRuntimeAndShieldUntouched() async {
         let harness = Harness(ruleID: ruleID)
         harness.scheduler.registerError = TestError.scheduling
@@ -294,6 +370,7 @@ private enum TestError: Error, Equatable {
     case stop
     case reconcile
     case markerPersistence
+    case lock
 }
 
 @MainActor
@@ -306,6 +383,37 @@ private final class OperationLog {
 
     func append(_ value: String) {
         storage.append(value)
+    }
+}
+
+@MainActor
+private final class RecordingGrantLock: SessionGrantLocking {
+    private let log: OperationLog
+
+    init(log: OperationLog) {
+        self.log = log
+    }
+
+    func withLock<T>(_ operation: () throws -> T) throws -> T {
+        log.append("lock-enter")
+        defer { log.append("lock-exit") }
+        return try operation()
+    }
+}
+
+@MainActor
+private final class FailingGrantLock: SessionGrantLocking {
+    private let failOnEntry: Int
+    private var entryCount = 0
+
+    init(failOnEntry: Int) {
+        self.failOnEntry = failOnEntry
+    }
+
+    func withLock<T>(_ operation: () throws -> T) throws -> T {
+        entryCount += 1
+        if entryCount == failOnEntry { throw TestError.lock }
+        return try operation()
     }
 }
 
@@ -420,14 +528,21 @@ private final class FakeLauncher: TargetLaunching {
 
 @MainActor
 private struct Harness {
-    let log = OperationLog()
+    let log: OperationLog
     let scheduler: FakeScheduler
     let runtime: FakeRuntime
     let shield: FakeShield
     let launcher: FakeLauncher
     let coordinator: SessionGrantCoordinator
 
-    init(ruleID: UUID, automaticRoute: Bool = false, launchSucceeds: Bool = false) {
+    init(
+        ruleID: UUID,
+        automaticRoute: Bool = false,
+        launchSucceeds: Bool = false,
+        log: OperationLog = OperationLog(),
+        lock: (any SessionGrantLocking)? = nil
+    ) {
+        self.log = log
         scheduler = FakeScheduler(log: log)
         runtime = FakeRuntime(log: log)
         shield = FakeShield(log: log)
@@ -440,7 +555,8 @@ private struct Harness {
             scheduler: scheduler,
             runtime: runtime,
             shield: shield,
-            launcher: launcher
+            launcher: launcher,
+            lock: lock
         )
     }
 }

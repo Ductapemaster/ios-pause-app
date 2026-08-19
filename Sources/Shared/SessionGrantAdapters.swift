@@ -1,6 +1,8 @@
 import Foundation
 import PauseCore
 
+extension AppGroupFileLock: SessionGrantLocking {}
+
 @MainActor
 public final class RepositoryRuntimePersistence: RuntimePersisting {
     private let repository: RuntimeRepository

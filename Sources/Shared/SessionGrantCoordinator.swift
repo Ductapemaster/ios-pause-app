@@ -27,6 +27,11 @@ public protocol TargetLaunching {
     func open(ruleID: UUID) async -> Bool
 }
 
+@MainActor
+public protocol SessionGrantLocking {
+    func withLock<T>(_ operation: () throws -> T) throws -> T
+}
+
 public enum GrantResult: Equatable {
     case openedAutomatically(expiresAt: Date)
     case readyForManualReturn(expiresAt: Date)
@@ -72,6 +77,7 @@ public enum ForceShieldOutcome {
 }
 
 public enum SessionGrantRepairStep: String, Equatable, Sendable {
+    case acquireStateLock
     case rollBackRuntime
     case stopMonitoring
     case persistFailedGrantBlock
@@ -79,6 +85,7 @@ public enum SessionGrantRepairStep: String, Equatable, Sendable {
 
     fileprivate var description: String {
         switch self {
+        case .acquireStateLock: "lock shared app state"
         case .rollBackRuntime: "roll back session state"
         case .stopMonitoring: "stop expiry monitoring"
         case .persistFailedGrantBlock: "save the failed-session block"
@@ -152,17 +159,20 @@ public struct SessionGrantCoordinator {
     private let runtime: any RuntimePersisting
     private let shield: any ShieldControlling
     private let launcher: any TargetLaunching
+    private let lock: (any SessionGrantLocking)?
 
     public init(
         scheduler: any SessionScheduling,
         runtime: any RuntimePersisting,
         shield: any ShieldControlling,
-        launcher: any TargetLaunching
+        launcher: any TargetLaunching,
+        lock: (any SessionGrantLocking)? = nil
     ) {
         self.scheduler = scheduler
         self.runtime = runtime
         self.shield = shield
         self.launcher = launcher
+        self.lock = lock
     }
 
     public func grant(rule: AppRule, now: Date) async throws -> GrantResult {
@@ -171,38 +181,59 @@ public struct SessionGrantCoordinator {
             timeIntervalSinceReferenceDate: ceil(rawExpiry.timeIntervalSinceReferenceDate)
         )
         let activityName: String
-
         do {
-            activityName = try scheduler.register(ruleID: rule.id, startsAt: now, expiresAt: expiresAt)
-        } catch {
-            throw SessionGrantFailure(
-                primaryError: error,
-                chargeState: .notCharged,
-                shieldState: .blocked
-            )
-        }
+            activityName = try withPreparationLock {
+                let activityName: String
+                do {
+                    activityName = try scheduler.register(
+                        ruleID: rule.id,
+                        startsAt: now,
+                        expiresAt: expiresAt
+                    )
+                } catch {
+                    throw SessionGrantFailure(
+                        primaryError: error,
+                        chargeState: .notCharged,
+                        shieldState: .blocked
+                    )
+                }
 
-        do {
-            try runtime.reserve(ruleID: rule.id, activityName: activityName, expiresAt: expiresAt)
-        } catch {
-            let repairErrors = collectRepairFailure(step: .stopMonitoring) {
-                try scheduler.stop(activityName: activityName)
+                do {
+                    try runtime.reserve(
+                        ruleID: rule.id,
+                        activityName: activityName,
+                        expiresAt: expiresAt
+                    )
+                } catch {
+                    let repairErrors = collectRepairFailure(step: .stopMonitoring) {
+                        try scheduler.stop(activityName: activityName)
+                    }
+                    throw SessionGrantFailure(
+                        primaryError: error,
+                        repairErrors: repairErrors,
+                        chargeState: .notCharged,
+                        shieldState: .blocked
+                    )
+                }
+
+                do {
+                    try shield.unshield(ruleID: rule.id)
+                } catch {
+                    throw repairedFailureUnlocked(
+                        primaryError: error,
+                        ruleID: rule.id,
+                        activityName: activityName
+                    )
+                }
+                return activityName
             }
+        } catch let failure as SessionGrantFailure {
+            throw failure
+        } catch {
             throw SessionGrantFailure(
                 primaryError: error,
-                repairErrors: repairErrors,
                 chargeState: .notCharged,
                 shieldState: .blocked
-            )
-        }
-
-        do {
-            try shield.unshield(ruleID: rule.id)
-        } catch {
-            throw repairedFailure(
-                primaryError: error,
-                ruleID: rule.id,
-                activityName: activityName
             )
         }
 
@@ -240,6 +271,34 @@ public struct SessionGrantCoordinator {
     }
 
     private func repairedFailure(
+        primaryError: any Error,
+        ruleID: UUID,
+        activityName: String
+    ) -> SessionGrantFailure {
+        do {
+            return try withPreparationLock {
+                repairedFailureUnlocked(
+                    primaryError: primaryError,
+                    ruleID: ruleID,
+                    activityName: activityName
+                )
+            }
+        } catch {
+            return SessionGrantFailure(
+                primaryError: primaryError,
+                repairErrors: [
+                    SessionGrantRepairFailure(
+                        step: .acquireStateLock,
+                        underlyingError: error
+                    )
+                ],
+                chargeState: .charged,
+                shieldState: .unblocked
+            )
+        }
+    }
+
+    private func repairedFailureUnlocked(
         primaryError: any Error,
         ruleID: UUID,
         activityName: String
@@ -292,6 +351,13 @@ public struct SessionGrantCoordinator {
                 shieldState: shieldState
             )
         }
+    }
+
+    private func withPreparationLock<T>(_ operation: () throws -> T) throws -> T {
+        if let lock {
+            return try lock.withLock(operation)
+        }
+        return try operation()
     }
 
     private func collectRepairFailure(
