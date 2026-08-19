@@ -113,6 +113,8 @@ Every app and extension process coordinates shared state through one App Group l
 
 A compound operation holds the lock from its initial read through its final runtime, marker, monitoring, and shield decision. Session preparation includes activity registration, provisional runtime reservation, selected-app unshielding, and any synchronous rollback or stop repair; the lock is released before an external app launch. Monitor callbacks use the same lock, so a callback observes either the state before preparation or the stored new expiry, never the gap between registration and reservation. Framework calls that synchronously reenter on the same thread can take the recursive lock; cross-thread callback behavior during `startMonitoring` and `stopMonitoring` remains part of the signed-device gate.
 
+Lock acquisition and transaction-body failures remain visible to the caller. Once the body has completed, unlock and file-descriptor close are best-effort cleanup: reporting a release failure as a failed transaction would invite a retry or rollback after shared state had already committed. The implementation still attempts both operations, and closing the descriptor releases the kernel lock if explicit unlock failed.
+
 JSON files still use atomic replacement inside the transaction so a process interruption cannot leave a partial document. Product state does not use `UserDefaults` except for the narrow shield intent whose action-extension write was measured on device in the old spike.
 
 ## Core Entry Flow

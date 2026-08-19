@@ -4,9 +4,13 @@ import Foundation
 public final class AppGroupFileLock: @unchecked Sendable {
     private let state: AppGroupFileLockState
 
-    public init(directoryURL: URL) {
+    public convenience init(directoryURL: URL) {
+        self.init(directoryURL: directoryURL, systemCalls: .live)
+    }
+
+    init(directoryURL: URL, systemCalls: AppGroupFileLockSystemCalls) {
         let lockURL = directoryURL.appendingPathComponent(SharedIdentifiers.stateLockFilename)
-        state = AppGroupFileLockRegistry.shared.state(for: lockURL)
+        state = AppGroupFileLockRegistry.shared.state(for: lockURL, systemCalls: systemCalls)
     }
 
     public func withLock<T>(_ body: () throws -> T) throws -> T {
@@ -14,14 +18,28 @@ public final class AppGroupFileLock: @unchecked Sendable {
     }
 }
 
+struct AppGroupFileLockSystemCalls: Sendable {
+    let openFile: @Sendable (String, Int32, mode_t) -> Int32
+    let flockFile: @Sendable (Int32, Int32) -> Int32
+    let closeFile: @Sendable (Int32) -> Int32
+
+    static let live = AppGroupFileLockSystemCalls(
+        openFile: { path, flags, mode in Darwin.open(path, flags, mode) },
+        flockFile: { descriptor, operation in flock(descriptor, operation) },
+        closeFile: { descriptor in Darwin.close(descriptor) }
+    )
+}
+
 private final class AppGroupFileLockState {
     private let url: URL
+    private let systemCalls: AppGroupFileLockSystemCalls
     private let processLock = NSRecursiveLock()
     private var depth = 0
     private var fileDescriptor: Int32 = -1
 
-    init(url: URL) {
+    init(url: URL, systemCalls: AppGroupFileLockSystemCalls) {
         self.url = url
+        self.systemCalls = systemCalls
     }
 
     func withLock<T>(_ body: () throws -> T) throws -> T {
@@ -38,48 +56,44 @@ private final class AppGroupFileLockState {
 
         let bodyResult = Result { try body() }
         depth -= 1
-        var releaseError: Error?
         if depth == 0 {
-            do {
-                try releaseFileLock()
-            } catch {
-                releaseError = error
-            }
+            releaseFileLock()
         }
         processLock.unlock()
 
-        switch bodyResult {
-        case let .success(value):
-            if let releaseError { throw releaseError }
-            return value
-        case let .failure(error):
-            throw error
-        }
+        return try bodyResult.get()
     }
 
     private func acquireFileLock() throws {
-        let descriptor = open(url.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        let descriptor = systemCalls.openFile(
+            url.path,
+            O_CREAT | O_RDWR | O_CLOEXEC,
+            S_IRUSR | S_IWUSR
+        )
         guard descriptor >= 0 else { throw posixError() }
-        while flock(descriptor, LOCK_EX) != 0 {
+        while systemCalls.flockFile(descriptor, LOCK_EX) != 0 {
             if errno == EINTR { continue }
             let error = posixError()
-            close(descriptor)
+            _ = systemCalls.closeFile(descriptor)
             throw error
         }
         fileDescriptor = descriptor
     }
 
-    private func releaseFileLock() throws {
+    private func releaseFileLock() {
         let descriptor = fileDescriptor
         fileDescriptor = -1
         var unlockResult: Int32
         repeat {
-            unlockResult = flock(descriptor, LOCK_UN)
+            unlockResult = systemCalls.flockFile(descriptor, LOCK_UN)
         } while unlockResult != 0 && errno == EINTR
-        let unlockError = unlockResult == 0 ? nil : posixError()
-        let closeResult = close(descriptor)
-        if let unlockError { throw unlockError }
-        guard closeResult == 0 else { throw posixError() }
+
+        // The body has already committed shared state. Unlock and close are
+        // therefore best-effort cleanup: reporting either failure as a failed
+        // transaction would invite callers to retry or roll back committed work.
+        // close(2) releases a held flock even when explicit unlock failed. Do
+        // not retry an interrupted close because the descriptor may be closed.
+        _ = systemCalls.closeFile(descriptor)
     }
 
     private func posixError() -> POSIXError {
@@ -93,12 +107,15 @@ private final class AppGroupFileLockRegistry: @unchecked Sendable {
     private let lock = NSLock()
     private var states: [String: AppGroupFileLockState] = [:]
 
-    func state(for url: URL) -> AppGroupFileLockState {
+    func state(
+        for url: URL,
+        systemCalls: AppGroupFileLockSystemCalls
+    ) -> AppGroupFileLockState {
         let key = url.standardizedFileURL.path
         lock.lock()
         defer { lock.unlock() }
         if let existing = states[key] { return existing }
-        let created = AppGroupFileLockState(url: url)
+        let created = AppGroupFileLockState(url: url, systemCalls: systemCalls)
         states[key] = created
         return created
     }

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 @main
@@ -17,61 +18,84 @@ private enum AppGroupFileLockProcessTest {
     }
 
     private static func runParent(in directory: URL) throws {
-        let startedURL = directory.appendingPathComponent("child-started")
-        let acquiredURL = directory.appendingPathComponent("child-acquired")
+        let resultURL = directory.appendingPathComponent("child-result")
         let child = Process()
         child.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
         child.arguments = [directory.path, "child"]
 
-        try AppGroupFileLock(directoryURL: directory).withLock {
+        let contentionResult = try AppGroupFileLock(directoryURL: directory).withLock {
             try child.run()
-            guard waitForFile(startedURL, timeout: 2) else {
-                throw ProcessTestError.childDidNotStart
+            guard let result = waitForResult(resultURL, timeout: 2) else {
+                throw ProcessTestError.childDidNotReportContention
             }
-            guard !FileManager.default.fileExists(atPath: acquiredURL.path) else {
-                throw ProcessTestError.childEnteredHeldLock
-            }
+            return result
         }
 
         child.waitUntilExit()
+        guard contentionResult == "contended" else {
+            throw ProcessTestError.childEnteredHeldLock(contentionResult)
+        }
         guard child.terminationStatus == 0 else {
             throw ProcessTestError.childFailed(child.terminationStatus)
         }
-        guard FileManager.default.fileExists(atPath: acquiredURL.path) else {
+        guard try String(contentsOf: resultURL, encoding: .utf8) == "acquired" else {
             throw ProcessTestError.childNeverAcquiredLock
         }
         print("cross-process AppGroupFileLock serialization passed")
     }
 
     private static func runChild(in directory: URL) throws {
-        try Data().write(to: directory.appendingPathComponent("child-started"))
+        let lockURL = directory.appendingPathComponent(SharedIdentifiers.stateLockFilename)
+        let resultURL = directory.appendingPathComponent("child-result")
+        let descriptor = Darwin.open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw POSIXError(.EIO) }
+        let nonblockingResult = flock(descriptor, LOCK_EX | LOCK_NB)
+        if nonblockingResult == 0 {
+            try "unexpected-acquire".write(to: resultURL, atomically: true, encoding: .utf8)
+            _ = flock(descriptor, LOCK_UN)
+            _ = Darwin.close(descriptor)
+            return
+        }
+        let contentionError = errno
+        _ = Darwin.close(descriptor)
+        guard contentionError == EWOULDBLOCK || contentionError == EAGAIN else {
+            throw POSIXError(POSIXErrorCode(rawValue: contentionError) ?? .EIO)
+        }
+        try "contended".write(to: resultURL, atomically: true, encoding: .utf8)
+
         try AppGroupFileLock(directoryURL: directory).withLock {
-            try Data().write(to: directory.appendingPathComponent("child-acquired"))
+            try "acquired".write(to: resultURL, atomically: true, encoding: .utf8)
         }
     }
 
-    private static func waitForFile(_ url: URL, timeout: TimeInterval) -> Bool {
+    private static func waitForResult(_ url: URL, timeout: TimeInterval) -> String? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if FileManager.default.fileExists(atPath: url.path) { return true }
+            if let result = try? String(contentsOf: url, encoding: .utf8) {
+                if ["contended", "unexpected-acquire", "acquired"].contains(result) {
+                    return result
+                }
+            }
             Thread.sleep(forTimeInterval: 0.01)
         }
-        return false
+        return nil
     }
 }
 
 private enum ProcessTestError: LocalizedError {
     case missingDirectory
-    case childDidNotStart
-    case childEnteredHeldLock
+    case childDidNotReportContention
+    case childEnteredHeldLock(String)
     case childFailed(Int32)
     case childNeverAcquiredLock
 
     var errorDescription: String? {
         switch self {
         case .missingDirectory: "The test directory argument is missing."
-        case .childDidNotStart: "The child process did not start."
-        case .childEnteredHeldLock: "The child entered while the parent held the lock."
+        case .childDidNotReportContention:
+            "The child process did not report its nonblocking lock attempt."
+        case let .childEnteredHeldLock(result):
+            "The child entered while the parent held the lock (reported \(result))."
         case let .childFailed(status): "The child process exited with status \(status)."
         case .childNeverAcquiredLock: "The child never acquired the released lock."
         }

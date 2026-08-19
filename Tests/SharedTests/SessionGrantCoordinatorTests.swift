@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import PauseCore
 import XCTest
@@ -93,6 +94,54 @@ final class SessionGrantCoordinatorTests: XCTestCase {
         XCTAssertEqual(failure?.repairErrors.first?.underlyingError as? TestError, .lock)
         XCTAssertEqual(failure?.chargeState, .charged)
         XCTAssertEqual(failure?.shieldState, .unblocked)
+    }
+
+    func testReleaseFailureAfterSuccessfulPreparationDoesNotBecomeAnUnchargedFailure() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let systemCalls = ReleaseFailingSystemCalls()
+        let harness = Harness(
+            ruleID: ruleID,
+            automaticRoute: false,
+            lock: AppGroupFileLock(
+                directoryURL: directory,
+                systemCalls: systemCalls.dependencies
+            )
+        )
+
+        let result = try await harness.coordinator.grant(rule: rule, now: now)
+
+        XCTAssertEqual(result, .readyForManualReturn(expiresAt: expiresAt))
+        XCTAssertEqual(systemCalls.unlockAttempts, 1)
+        XCTAssertEqual(systemCalls.closeAttempts, 1)
+    }
+
+    func testReleaseFailureAfterSuccessfulRepairDoesNotUndoTheRepairedStateReport() async {
+        let directory: URL
+        do {
+            directory = try temporaryDirectory()
+        } catch {
+            return XCTFail("Could not create lock directory: \(error)")
+        }
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let systemCalls = ReleaseFailingSystemCalls()
+        let harness = Harness(
+            ruleID: ruleID,
+            automaticRoute: true,
+            launchSucceeds: false,
+            lock: AppGroupFileLock(
+                directoryURL: directory,
+                systemCalls: systemCalls.dependencies
+            )
+        )
+
+        let failure = await capturedFailure(from: harness)
+
+        XCTAssertEqual(failure?.repairErrors.map(\.step), [])
+        XCTAssertEqual(failure?.chargeState, .notCharged)
+        XCTAssertEqual(failure?.shieldState, .blocked)
+        XCTAssertEqual(systemCalls.unlockAttempts, 2)
+        XCTAssertEqual(systemCalls.closeAttempts, 2)
     }
 
     func testSchedulingFailureLeavesRuntimeAndShieldUntouched() async {
@@ -347,6 +396,13 @@ final class SessionGrantCoordinatorTests: XCTestCase {
         now.addingTimeInterval(5 * 60)
     }
 
+    private func temporaryDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pause-grant-lock-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        return directory
+    }
+
     private func capturedFailure(from harness: Harness) async -> SessionGrantFailure? {
         do {
             _ = try await harness.coordinator.grant(rule: rule, now: now)
@@ -414,6 +470,38 @@ private final class FailingGrantLock: SessionGrantLocking {
         entryCount += 1
         if entryCount == failOnEntry { throw TestError.lock }
         return try operation()
+    }
+}
+
+private final class ReleaseFailingSystemCalls: @unchecked Sendable {
+    private let counterLock = NSLock()
+    private var storedUnlockAttempts = 0
+    private var storedCloseAttempts = 0
+
+    var unlockAttempts: Int {
+        counterLock.withLock { storedUnlockAttempts }
+    }
+
+    var closeAttempts: Int {
+        counterLock.withLock { storedCloseAttempts }
+    }
+
+    var dependencies: AppGroupFileLockSystemCalls {
+        AppGroupFileLockSystemCalls(
+            openFile: { path, flags, mode in Darwin.open(path, flags, mode) },
+            flockFile: { [self] descriptor, operation in
+                if operation == LOCK_UN {
+                    counterLock.withLock { storedUnlockAttempts += 1 }
+                    errno = EIO
+                    return -1
+                }
+                return flock(descriptor, operation)
+            },
+            closeFile: { [self] descriptor in
+                counterLock.withLock { storedCloseAttempts += 1 }
+                return Darwin.close(descriptor)
+            }
+        )
     }
 }
 
