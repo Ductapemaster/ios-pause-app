@@ -12,4 +12,4 @@
 - [ ] Implement the temporary Debug-only controls listed in the acceptance record, use them for the signed failure and timing rows, then remove the temporary expiry display and control code after recording the evidence. None of these controls may ship in Release.
 - [ ] Run the full signed matrix on the iPhone 16, including three- and sixteen-minute expiry restoration no more than five seconds after stored `expiresAt`, Instagram automatic return, another app's manual return, foreground interruptions, and every failure path.
 
-**Next step:** Start at [`docs/testing/phase-1-device-acceptance.md`](testing/phase-1-device-acceptance.md) and run its automated commands and signed-device matrix. After Phase 1 acceptance, the next roadmap item is Phase 2 time-based rules; history remains a later question.
+**Next step:** Start at [`docs/testing/phase-1-device-acceptance.md`](testing/phase-1-device-acceptance.md), implement its temporary Debug-only prerequisites, then rerun the automated checks and execute the signed-device matrix. After Phase 1 acceptance, the next roadmap item is Phase 2 time-based rules; history remains a later question.
