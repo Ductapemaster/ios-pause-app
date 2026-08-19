@@ -2,7 +2,7 @@
 
 Pause is a personal iOS app that interrupts reflexive entry into selected apps with a deliberate pause and a daily session allowance.
 
-**Target:** iPhone 16 running iOS 26.5 or later. iOS 27 qualification is intended after the release and matching Xcode toolchain are available; support has not been tested or promised.
+**Target:** The deployment minimum is iOS 26.5. Qualification is pending on the iPhone 16 running its exact installed iOS 26.x version. iOS 27 will require a separate future qualification after its release and matching Xcode toolchain are available; support is not yet promised.
 
 **Setup:** Copy `Local.xcconfig.example` to `Local.xcconfig`, set `DEVELOPMENT_TEAM`, run `xcodegen generate`, and open `Pause.xcodeproj`.
 
