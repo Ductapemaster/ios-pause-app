@@ -56,7 +56,7 @@ final class RuleLookupTests: XCTestCase {
         XCTAssertEqual(evaluation.decision, .refused(.sessionAlreadyOpen(until: expiry)))
     }
 
-    func testAllowedPresentationShowsTheProspectiveSessionCount() throws {
+    func testAllowedPresentationCountsTheSessionsStillAvailable() throws {
         let rule = try AppRule(sessionsPerDay: 4, sessionLengthMinutes: 5)
 
         let presentation = ShieldPresentation(
@@ -64,8 +64,20 @@ final class RuleLookupTests: XCTestCase {
             decision: .allowed(sessionNumber: 2, lengthMinutes: 5)
         )
 
-        XCTAssertEqual(presentation.subtitle, "Next session: 2 of 4")
-        XCTAssertEqual(presentation.primaryButtonTitle, "Pause to open")
+        XCTAssertEqual(presentation.subtitle, "3 sessions left today")
+        XCTAssertEqual(presentation.primaryButtonTitle, "Take a breath")
+    }
+
+    func testAllowedPresentationSaysSessionOnceOneRemains() throws {
+        let rule = try AppRule(sessionsPerDay: 4, sessionLengthMinutes: 5)
+
+        let presentation = ShieldPresentation(
+            rule: rule,
+            decision: .allowed(sessionNumber: 4, lengthMinutes: 5)
+        )
+
+        XCTAssertEqual(presentation.subtitle, "1 session left today")
+        XCTAssertEqual(presentation.primaryButtonTitle, "Take a breath")
     }
 
     func testExhaustedPresentationShowsTheRefusalCopy() throws {
@@ -76,7 +88,7 @@ final class RuleLookupTests: XCTestCase {
             decision: .refused(.dailyAllowanceExhausted(limit: 4))
         )
 
-        XCTAssertEqual(presentation.subtitle, "No sessions left today")
+        XCTAssertEqual(presentation.subtitle, "That's all for today.")
         XCTAssertEqual(presentation.primaryButtonTitle, "Done for today")
     }
 

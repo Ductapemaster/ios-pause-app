@@ -93,10 +93,13 @@ public struct ShieldPresentation: Equatable, Sendable {
     public init(rule: AppRule, decision: SessionDecision) {
         switch decision {
         case let .allowed(sessionNumber, _):
-            subtitle = "Next session: \(sessionNumber) of \(rule.sessionsPerDay)"
-            primaryButtonTitle = "Pause to open"
+            // Counts this session and every one after it, so the number only
+            // falls once a session is actually spent.
+            let remaining = rule.sessionsPerDay - sessionNumber + 1
+            subtitle = "\(remaining) session\(remaining == 1 ? "" : "s") left today"
+            primaryButtonTitle = "Take a breath"
         case .refused(.dailyAllowanceExhausted):
-            subtitle = "No sessions left today"
+            subtitle = "That's all for today."
             primaryButtonTitle = "Done for today"
         case .refused(.sessionAlreadyOpen):
             subtitle = "A session is already open"
