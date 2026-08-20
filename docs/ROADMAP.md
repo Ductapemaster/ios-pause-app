@@ -1,15 +1,30 @@
 # Roadmap
 
-Prioritized work not currently in flight. Phase 2 time-based rules remain the next planned phase; the items below are deferred defects that do not block Phase 1 acceptance.
+Prioritized work not currently in flight. Phase 2 time-based rules remain the next planned phase; Phase 1 acceptance comes first.
+
+## Product feedback awaiting work
+
+Raised from device use, none blocked by the open shield investigation:
+
+- The shield offers one button. It needs a second that dismisses without starting a session — the label and destination are Dan's call.
+- The pause countdown has no cancel. Leaving by Home already abandons the attempt without charging a session, so a cancel button makes an existing exit visible; nothing is reserved, scheduled, or shielded during the countdown, so it needs no rollback.
+- The shield's button label is hard to read. The code sets white on `systemIndigo` (`ShieldConfigExtension.swift:56-60`), so either iOS overrides the label colour or the observation belongs to the repair variant; recheck once the shield renders normally.
+- A notification banner or a Control Center swipe abandons a pause, because scene handling treats `.inactive` the same as backgrounding (`PauseApp.swift:32-38`). Deliberate under the design, arguably too aggressive in use.
 
 ## Deferred
 
-**Setup freezes the UI while applying a picker selection.** Adding an app blocks the interface for several seconds before the rules screen updates. The work completes and the selection persists, so this costs responsiveness rather than correctness, and it sits on the configuration path rather than the shield-pause-use loop a normal day exercises. No acceptance row covers it.
+**Applying a picker selection blocks the main thread.** Adding an app holds the interface while each added app takes a file-lock cycle plus a JSON encode and atomic write, `configurationStore.save` takes another, and `ShieldReconciler.reconcile` holds a lock while re-reading every configured target's runtime and finishes with a `ManagedSettingsStore` write. Two `@Published` writes land in one run-loop turn, each rebuilding a `Label(ApplicationToken)` per rule. `AppModel` is `@MainActor` and no actor, `Task`, or dispatch hop exists on the path. Which part dominates is unmeasured; the ManagedSettings and FamilyControls costs are not visible from source.
 
-The whole commit path runs synchronously on the main actor — `AppModel` is `@MainActor` and no actor, `Task`, or dispatch hop exists anywhere on it. Each added app takes a full App Group file-lock cycle plus a JSON encode and atomic write; `configurationStore.save` takes another; `ShieldReconciler.reconcile` then holds a lock while re-reading every configured target's runtime file and finishes with a `ManagedSettingsStore` write. Two separate `@Published` writes land in one run-loop turn, each rebuilding a `Label(ApplicationToken)` per rule. Which of these dominates is unmeasured: the cost of the ManagedSettings and FamilyControls calls is not visible from the source.
+Moving the work off the main actor would rework the locking design and the unit tests encode these calls as synchronous throughout (why: deferred on that basis — the daily cost is low because the path is configuration, not the shield-pause-use loop).
 
-Moving this work off the main actor would rework the locking design that `fc96549`, `d4e6ce3`, and `aff5c21` settled, and the unit tests encode these calls as synchronous throughout (why: deferred on that basis, not on difficulty — the fix is well understood and the daily cost is close to zero).
+**File locks wait without a deadline.** `AppGroupFileLock` asks for `flock(LOCK_EX)` and waits indefinitely (`AppGroupFileLock.swift:74`). Any contention on the main thread that crosses ten seconds is a scene-update watchdog kill, which is how the self-deadlock in `9c63da8` presented. That specific cause is fixed, but the shape survives: the shield or monitor extension holding the lock mid-write while the app asks for it reaches the same end. Asking without blocking, retrying briefly, and failing with a real error after a second or two turns every remaining variant from a crash into a message (why: the highest safety return available for a change confined to one file).
 
-**Selection feedback needs a picker we own.** While Apple's picker is open it shows no running count of what the user has chosen, and nothing can be added to it: `familyActivityPicker` accepts `title`, `headerText`, and `footerText` as plain strings, reads them once at presentation, and ignores every later change. Measured on an iPhone 16 Pro running iOS 26.6 — all three surfaces held their entry values while apps were tapped. The same interface offers no way to hide the Categories or Web Domains sections, so a selection the app will discard looks exactly like one it will keep.
+**Selection feedback needs a picker we own.** Apple's picker shows no running count and nothing can be added to it: `familyActivityPicker` takes `title`, `headerText`, and `footerText` as plain strings, reads them once at presentation, and ignores later changes. Measured on an iPhone 16 Pro running iOS 26.6 — all three surfaces held their entry values while apps were tapped. The same interface offers no way to hide the Categories or Web Domains sections, so a selection the app will discard looks exactly like one it will keep.
 
 Both limits lift the same way: `FamilyActivityData.installedApplications` (iOS 26.4) supplies the installed-app list for a selection UI built here, which would carry a live count, show apps alone, and support grouping the app defines rather than iOS. It requires the `com.apple.developer.family-controls.app-and-website-usage` entitlement, which Apple grants on request, so the approval comes before the work is worth starting.
+
+## Open decision
+
+**Whether shared state should move to SQLite.** SQLite ships with iOS, locks correctly across processes, carries a built-in bounded wait, and gives transactions across several values — which the current design imitates by wrapping multiple file writes in one lock. Adopting it would delete `AppGroupFileLock` and its tests. Against that: a schema and migrations to carry, and SQLite's write-ahead journal uses cross-process shared memory that interacts badly with iOS file protection while the device is locked, which is exactly the extensions' situation.
+
+Sequencing, not merit, is the argument for waiting: the shield investigation is open, and replacing the storage layer underneath an unexplained symptom removes the ability to attribute any change in behaviour.
