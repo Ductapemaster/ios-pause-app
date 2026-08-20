@@ -1,12 +1,12 @@
 ## Status — resume here (2026-08-20)
 
-**State:** Phase 1 is implemented through Task 8 and 188 tests pass. A signed build runs on an iPhone 16 Pro (iOS 26.6) installed clean, and the core loop works: shield, pause countdown, session grant, automatic return to Instagram. Two device defects are open. Adding an app deadlocked the file lock and the watchdog killed the app; that is fixed and the app now configures without crashing. The shield still renders its repair variant instead of the session count, cause not yet established. The device matrix is otherwise unrun.
+**State:** Phase 1 is implemented through Task 8 and 188 tests pass. A signed build runs on an iPhone 16 Pro (iOS 26.6) installed clean, and the core loop works: shield, pause countdown, session grant, automatic return to Instagram. Adding an app deadlocked the file lock and the watchdog killed the app; that is fixed and the app now configures without crashing. The shield renders its repair variant instead of the session count because `ShieldConfigExtension` runs under a sandbox profile that denies app group file I/O, so it has never computed a count. Reaching a real shield needs a redesign, not a patch. The device matrix is otherwise unrun.
 
-**Next step:** Open Instagram on the device, then read `shield-diagnostic-v1` per the command in `docs/research/shield-repair-variant.md`.
+**Next step:** Settle the three open questions under "Consequence for the design" in `docs/research/shield-repair-variant.md`: what that sandbox profile permits, and which channel can hand the extension precomputed display text.
 
-**Blockers:** The shield defect blocks the matrix rows covering shield identity, session count, and intent handoff.
+**Blockers:** Until that redesign is settled, the matrix rows covering shield identity, session count, and intent handoff cannot run.
 
-**Read first:** Before any shield work, `docs/research/shield-repair-variant.md`.
+**Read first:** Before any shield work, `docs/research/shield-repair-variant.md` — the sandbox constraint and what it forces.
 
 ## Evidence
 
