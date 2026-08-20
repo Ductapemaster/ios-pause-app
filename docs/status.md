@@ -1,5 +1,11 @@
-## Status — resume here (2026-08-18)
+## Status — resume here
 
-**State:** The product scope and phased architecture are defined in `docs/product-requirements.md` and `docs/design/pause-app.md`. The executable Phase 1 plan is in `docs/plans/phase-1-core-action-loop.md`. The old repo was used only as evidence: reusable mechanisms are named in the design and plan, but no implementation was migrated. Implementation has not started.
-**Next step:** Review the Phase 1 plan, then execute it task by task beginning with the app and extension scaffold.
-**Read first:** `docs/plans/phase-1-core-action-loop.md`
+**State:** The Phase 1 implementation lives on branch `feat/phase-1-core-action-loop`, checked out as a worktree at `.worktrees/phase-1-core-action-loop`. Its `docs/status.md` is the live status block — progress, evidence, and blockers are recorded there, not here.
+
+This branch, `design/phased-project-plan`, holds the planning documents:
+
+- `docs/product-requirements.md` — the product source of truth.
+- `docs/design/pause-app.md` — the phased architecture.
+- `docs/plans/phase-1-core-action-loop.md` — the executable Phase 1 plan.
+
+**Next step:** Work in `.worktrees/phase-1-core-action-loop` and read its `docs/status.md` first.
