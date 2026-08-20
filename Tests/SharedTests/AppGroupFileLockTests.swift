@@ -1,9 +1,52 @@
+import Darwin
 import Foundation
 import ManagedSettings
 import PauseCore
 import XCTest
 
 final class AppGroupFileLockTests: XCTestCase {
+    /// `standardizedFileURL` drops a leading `/private` from a path only once that
+    /// path exists, so the lock file has one spelling before it is created and
+    /// another afterwards. A lock built before the first acquisition and a lock
+    /// built after it must still reach the same state: two states over one file
+    /// means the second `flock(LOCK_EX)` waits on a lock this process already
+    /// holds, which no one will ever release.
+    ///
+    /// `flock` is faked here so a regression reports two acquisitions instead of
+    /// blocking the suite forever, but `open` is real so the lock file genuinely
+    /// appears on disk between the two constructions.
+    func testLockBuiltAfterTheLockFileExistsSharesStateWithOneBuiltBefore() throws {
+        let directory = try privateRootedTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let lockURL = directory.appendingPathComponent(SharedIdentifiers.stateLockFilename)
+        let systemCalls = NonBlockingSystemCalls()
+
+        let early = AppGroupFileLock(
+            directoryURL: directory,
+            systemCalls: systemCalls.dependencies
+        )
+        let spellingBeforeCreation = lockURL.standardizedFileURL.path
+        try early.withLock {}
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: lockURL.path))
+        XCTAssertNotEqual(
+            spellingBeforeCreation,
+            lockURL.standardizedFileURL.path,
+            "This directory no longer reproduces the path spelling change the test exists to cover."
+        )
+
+        let late = AppGroupFileLock(
+            directoryURL: directory,
+            systemCalls: systemCalls.dependencies
+        )
+        systemCalls.resetExclusiveAcquisitions()
+        try late.withLock {
+            try early.withLock {}
+        }
+
+        XCTAssertEqual(systemCalls.exclusiveAcquisitions, 1)
+    }
+
     func testIndependentInstancesSerializeAndNestedAccessDoesNotDeadlock() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -197,6 +240,15 @@ final class AppGroupFileLockTests: XCTestCase {
         XCTAssertEqual(final.openSession?.activityName, "session.after-expiry")
     }
 
+    /// A directory under `/private`, which the process temporary directory is not.
+    /// Only a `/private`-rooted path changes spelling once its contents exist.
+    private func privateRootedTemporaryDirectory() throws -> URL {
+        let url = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+            .appendingPathComponent("pause-file-lock-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("pause-file-lock-\(UUID().uuidString)", isDirectory: true)
@@ -209,6 +261,34 @@ final class AppGroupFileLockTests: XCTestCase {
         return try JSONDecoder().decode(
             ApplicationToken.self,
             from: Data("{\"data\":\"\(encoded)\"}".utf8)
+        )
+    }
+}
+
+/// Real `open` and `close` so the lock file appears on disk, with `flock` counted
+/// and stubbed out so a test that would otherwise deadlock reports instead of hanging.
+private final class NonBlockingSystemCalls: @unchecked Sendable {
+    private let counterLock = NSLock()
+    private var storedExclusiveAcquisitions = 0
+
+    var exclusiveAcquisitions: Int {
+        counterLock.withLock { storedExclusiveAcquisitions }
+    }
+
+    func resetExclusiveAcquisitions() {
+        counterLock.withLock { storedExclusiveAcquisitions = 0 }
+    }
+
+    var dependencies: AppGroupFileLockSystemCalls {
+        AppGroupFileLockSystemCalls(
+            openFile: { path, flags, mode in Darwin.open(path, flags, mode) },
+            flockFile: { [self] _, operation in
+                if operation == LOCK_EX {
+                    counterLock.withLock { storedExclusiveAcquisitions += 1 }
+                }
+                return 0
+            },
+            closeFile: { descriptor in Darwin.close(descriptor) }
         )
     }
 }

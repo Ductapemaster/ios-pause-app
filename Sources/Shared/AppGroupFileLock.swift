@@ -111,12 +111,31 @@ private final class AppGroupFileLockRegistry: @unchecked Sendable {
         for url: URL,
         systemCalls: AppGroupFileLockSystemCalls
     ) -> AppGroupFileLockState {
-        let key = url.standardizedFileURL.path
+        let key = Self.key(for: url)
         lock.lock()
         defer { lock.unlock() }
         if let existing = states[key] { return existing }
         let created = AppGroupFileLockState(url: url, systemCalls: systemCalls)
         states[key] = created
         return created
+    }
+
+    /// One key per lock file, whenever it is asked for.
+    ///
+    /// `standardizedFileURL` and `resolvingSymlinksInPath` both drop a leading
+    /// `/private` only for a path that already exists, so the lock file has one
+    /// spelling before it is created and another afterwards. Keying on either one
+    /// therefore hands out a second state to any lock built after the first
+    /// acquisition, and the two states then contend for the same file: the second
+    /// `flock(LOCK_EX)` waits on a lock this process already holds and never
+    /// returns. The containing directory exists whenever a lock is usable, so
+    /// resolving that instead gives the same key at every call.
+    private static func key(for url: URL) -> String {
+        let directoryPath = url.deletingLastPathComponent().path
+        guard let resolved = realpath(directoryPath, nil) else {
+            return url.standardizedFileURL.path
+        }
+        defer { free(resolved) }
+        return String(cString: resolved) + "/" + url.lastPathComponent
     }
 }
