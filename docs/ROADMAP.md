@@ -8,7 +8,6 @@ Raised from device use, none blocked by the open shield investigation:
 
 - The shield offers one button. It needs a second that dismisses without starting a session — the label and destination are Dan's call.
 - The pause countdown has no cancel. Leaving by Home already abandons the attempt without charging a session, so a cancel button makes an existing exit visible; nothing is reserved, scheduled, or shielded during the countdown, so it needs no rollback.
-- The shield's button label is hard to read. The code sets white on `systemIndigo` (`ShieldConfigExtension.swift:56-60`), so either iOS overrides the label colour or the observation belongs to the repair variant; recheck once the shield renders normally.
 - A notification banner or a Control Center swipe abandons a pause, because scene handling treats `.inactive` the same as backgrounding (`PauseApp.swift:32-38`). Deliberate under the design, arguably too aggressive in use.
 
 ## Deferred

@@ -47,11 +47,17 @@ final class ShieldConfigExtension: ShieldConfigurationDataSource {
             icon: nil,
             title: ShieldConfiguration.Label(text: applicationName, color: .label),
             subtitle: ShieldConfiguration.Label(text: presentation.subtitle, color: .secondaryLabel),
+            // iOS does not reliably honour the primary button's label colour, so
+            // the button cannot depend on one: white text was rendered in a
+            // system colour close to the indigo behind it and disappeared. A
+            // light button reads against the system's own dark label whether our
+            // colour is applied or ignored. Both values are fixed rather than
+            // dynamic, so the pair cannot invert in dark mode.
             primaryButtonLabel: ShieldConfiguration.Label(
                 text: presentation.primaryButtonTitle,
-                color: .white
+                color: UIColor(white: 0.1, alpha: 1)
             ),
-            primaryButtonBackgroundColor: .systemIndigo,
+            primaryButtonBackgroundColor: UIColor(white: 0.97, alpha: 1),
             secondaryButtonLabel: nil
         )
     }
