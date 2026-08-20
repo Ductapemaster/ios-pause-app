@@ -1,39 +1,73 @@
-# The shield renders its repair variant
+# The shield configuration extension cannot read the app group
 
-Instagram's shield reads "Open Pause to repair this app" instead of "Next session: 1 of 3", carries the repair variant's inert "Done for today" button label, and shows no session count. All three symptoms are one fact: `ShieldConfigExtension` produced `ShieldPresentation.repair` rather than the allowed variant.
+Instagram's shield reads "Open Pause to repair this app" instead of "Next session: 1 of 3" because `ShieldConfigExtension` cannot open files in the app group container. Every file operation it attempts returns `EPERM`, so `RuleLookup.resolve` never runs and the extension falls through to `ShieldPresentation.repair`. The inert "Done for today" button label and the missing session count are the same failure seen from two other angles.
+
+The denial comes from the sandbox profile iOS assigns to the shield configuration extension point, not from anything in the bundle's entitlements or signature.
 
 ## What the shield is supposed to show
 
 `ShieldPresentation` (`Sources/Shared/RuleLookup.swift:89-116`) has four variants, all rendered through one `ShieldConfiguration` (`Sources/ShieldConfigExtension/ShieldConfigExtension.swift:51-63`). The allowed variant reads `"Next session: <n> of <limit>"` with a `"Pause to open"` button. Repair reads `"Open Pause to repair this app"` with a `"Done for today"` button, and is reached from an untyped `catch` covering eleven distinct failures — a nil application token, an absent or unreadable configuration, a lock failure, a token that matches no target, a missing runtime file, and others.
 
-## Established
+## The cause
 
-- **The tap path works while the render path does not.** The action extension opens Pause and starts the countdown, which it only does after `RuleLookup.resolve` succeeds and returns `.allowed` (`Sources/ShieldActionExtension/ShieldActionExtension.swift:19-41`). The stored configuration is therefore readable and correct.
-- **The two extensions differ in one step.** The action extension receives an `ApplicationToken` directly; the config extension receives an `Application` and must unwrap `application.token`, which is the first thing that can throw (`ShieldConfigExtension.swift:25-29`).
-- **Neither extension crashes.** No crash report exists for any Pause extension.
-- **All three extension points are registered correctly**, verified in the built `Info.plist`s: `com.apple.ManagedSettingsUI.shield-configuration-service`, `com.apple.ManagedSettings.shield-action-service`, `com.apple.deviceactivity.monitor-extension`.
-- **Writes from the app reach shared preferences and can be read from a connected Mac.** `app-diagnostic-v1` was written at 2026-08-20T17:30:19Z and retrieved with `devicectl device copy from --domain-type appGroupDataContainer`.
-- **The shield's own diagnostic entry was absent at that point.** Whether the extension never ran, or ran and lost its write before exiting, is not yet distinguished — the write is now flushed explicitly to remove that ambiguity, and the next device run settles it.
+The extension runs on every shield render and fails identically each time. From the unified log in `sysdiagnose_2026.08.20_14-17-19-0700`:
+
+```
+13:19:28.383  E  ShieldConfigExtension[42536:87182e] [com.koubalabs.pause.shieldconfig:shield]
+                 Shield fell back to repair: Error Domain=NSPOSIXErrorDomain Code=1 "Operation not permitted"
+```
+
+Eight such entries span 12:36:22 to 13:43:46. The archive contains no `Shield resolved` entry at any point, so the extension has never completed a lookup.
+
+`EPERM` is what `acquireFileLock` throws when `open(O_CREAT|O_RDWR|O_CLOEXEC)` on the lock file is denied (`Sources/Shared/AppGroupFileLock.swift:67-73`); `POSIXError(.EPERM)` bridges to exactly the observed `NSPOSIXErrorDomain Code=1`. Every logged entry carries the bridged `NSError` description rather than one of the extension's own `failedStage` strings, which rules out the two guarded paths — a nil application token and a missing configuration file.
+
+Whether the denial lands on the lock file's `open` or on a read inside `withLock` is not distinguished; both surface as the same error. `AppGroupContainer().directoryURL()` succeeds, so `containerURL(forSecurityApplicationGroupIdentifier:)` resolves the path and the app group is visible to the process. Only the file operations inside it are refused.
+
+### The sandbox profile is the discriminator
+
+`ShieldActionExtension` runs the same sequence against the same container — `AppGroupFileLock`, `ConfigurationStore.load()`, `RuleLookup.resolve`, `RuntimeRepository` — and resolves normally, opening Pause and starting the countdown. The two extensions differ in the sandbox profile RunningBoard assigns them:
+
+| Extension | Sandbox profile | App group file I/O |
+|---|---|---|
+| `ShieldActionExtension` | `plugin` | permitted |
+| `ShieldConfigExtension` | `managed-settings-shield-configuration` | `EPERM` |
+
+Both profiles appear in `runningboardd` extension-overlay entries in the same log. Identical code, identical entitlements, identical container: the extension point determines the profile, and the profile determines whether the file operations are allowed.
+
+## Why the extension recorded nothing
+
+`recordShieldDiagnostic` writes to `UserDefaults(suiteName: SharedIdentifiers.appGroup)` and returns silently when that suite is unavailable (`Sources/ShieldConfigExtension/ShieldConfigExtension.swift:15-21`). The same denial that forces the repair variant also blocks that write, so the shield's diagnostic key never appeared in shared preferences no matter how many times the shield fired.
+
+The instrument was coupled to the failure it measured. Reading `shield-diagnostic-v1` could only ever report a failure that had not occurred. The `os_log` path shares nothing with the app group and carried the answer on the first read.
 
 ## Ruled out
 
-- **Leftover state from the other variant.** The app group container was shared with `ios-pause-app-claude` and held its keys (`spikeLog`, `expectedEnd.interval16`, `shieldTapCount`, `targetScheme`). Deleting Pause destroyed the container; the symptom survived a clean install and re-add.
-- **A second Pause installed.** Only `com.koubalabs.pause` is present.
-- **Missing state files.** `devicectl` exposes only standard subdirectories, never the container root, so its listing is silent about `configuration.json` and the runtime files either way. Absence there is not evidence.
+- Cached shield configuration. The extension is invoked on every render, with a distinct log entry each time.
+- A stale extension binary predating the diagnostic code. The running process emits the current log strings, and `ShieldConfigExtension.debug.dylib` in the installed build contains all of them.
+- A missing App Group entitlement. `codesign -d --entitlements` on the embedded `Pause.app/PlugIns/ShieldConfigExtension.appex` shows `com.apple.security.application-groups` holding `group.com.koubalabs.pause` alongside `com.apple.developer.family-controls`, signed against team `<team-id>`.
+- Leftover state from the other variant. The app group container was shared with `ios-pause-app-claude` and held its keys (`spikeLog`, `expectedEnd.interval16`, `shieldTapCount`, `targetScheme`). Deleting Pause destroyed the container; the symptom survived a clean install and re-add.
+- A second Pause installed. Only `com.koubalabs.pause` is present.
 
-## Next
+## Consequence for the design
 
-Read `shield-diagnostic-v1` from shared preferences after a device run:
+Phase 1 has the shield configuration extension compute what to display by taking a file lock and reading the configuration and runtime state from the app group. That is not permissible in this extension's sandbox, so the session count cannot be derived where it is currently derived. Whatever the shield displays has to be computed elsewhere and delivered through a channel the profile permits.
 
-```bash
-xcrun devicectl device copy from --device <udid> \
-  --domain-type appGroupDataContainer --domain-identifier group.com.koubalabs.pause \
-  --source Library/Preferences/group.com.koubalabs.pause.plist --destination ./g.plist
-plutil -extract "shield-diagnostic-v1" raw -o - g.plist
-```
+Open questions for that redesign:
 
-An entry names the failing stage. A second absence, now that the write is flushed, means the extension is not being invoked, and the question becomes why iOS is not asking it — cached configuration being the first candidate.
+- [ ] Whether the profile denies reads as well as writes, or writes only.
+- [ ] Whether `UserDefaults` reads from the app group survive where its writes do not.
+- [ ] Which channel the profile does permit for handing precomputed text to the extension.
 
 ## Method note
 
-Three conclusions were drawn and withdrawn during this investigation: that the repair variant's button was inert, that the state files were missing, and that the extension had never run. Each came from treating a tool's output as fact without first establishing what that tool reports. `log collect` needs USB and root; `devicectl` hides container-root files; shared preferences do not flush on process exit. Establish what an instrument measures before reading meaning into its silence.
+Each instrument reports something narrower than the question being asked of it, and the gap is silent. Establish what an instrument measures before reading meaning into its silence.
+
+The instances met here:
+
+- `log collect` needs USB and root.
+- `devicectl` exposes only standard subdirectories of a container, never the root, so its listing is silent about `configuration.json` and the runtime files either way.
+- Shared preferences do not flush on process exit, and the suite is unavailable to a process denied the app group — so an absent key confounds "never ran," "lost the write," and "could not write at all."
+- `strings` without `-a` skips the sections holding Swift literals, and in a debug-dylib build the `.appex` binary is a launcher stub whose literals live in a sibling `.debug.dylib`. Scanning the stub returns nothing for strings that are certainly present.
+- A shell pipeline reports the exit status of its last command, so `devicectl … | tail` exits 0 after `devicectl` aborts on timeout.
+
+A positive control catches all of these: run the instrument against something already known to be true, and treat a null result there as evidence about the instrument rather than the subject.
