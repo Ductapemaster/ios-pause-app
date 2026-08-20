@@ -192,6 +192,12 @@ final class AppModel: ObservableObject {
     }
 
     func sceneDidBecomeActive(now: Date = Date()) {
+        if let defaults = UserDefaults(suiteName: SharedIdentifiers.appGroup) {
+            defaults.set(
+                "\(ISO8601DateFormatter().string(from: now)) app became active",
+                forKey: "app-diagnostic-v1"
+            )
+        }
         isSceneActive = true
         refreshAuthorizationStatus()
 

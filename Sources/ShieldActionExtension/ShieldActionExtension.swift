@@ -1,6 +1,9 @@
 import FamilyControls
 import Foundation
 import ManagedSettings
+import OSLog
+
+private let logger = Logger(subsystem: "com.koubalabs.pause.shieldaction", category: "shield")
 
 final class ShieldActionExtension: ShieldActionDelegate {
     override func handle(
@@ -36,8 +39,10 @@ final class ShieldActionExtension: ShieldActionDelegate {
                 )
                 return true
             }
+            logger.info("Shield action resolved: canOpen=\(canOpen, privacy: .public)")
             completionHandler(canOpen ? .openParentalControlsApp : .none)
         } catch {
+            logger.error("Shield action failed: \(String(describing: error), privacy: .public)")
             completionHandler(.none)
         }
     }
