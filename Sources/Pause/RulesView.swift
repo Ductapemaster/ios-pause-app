@@ -16,7 +16,7 @@ struct RulesView: View {
         }
         .navigationTitle("Pause")
         .familyActivityPicker(
-            title: PickerTitle.text(forSelectedAppCount: model.pickerSelection.applicationTokens.count),
+            title: "Choose apps",
             footerText: pickerExplanation,
             isPresented: $isPickerPresented,
             selection: $model.pickerSelection
