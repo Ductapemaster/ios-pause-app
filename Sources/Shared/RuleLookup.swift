@@ -37,7 +37,7 @@ public enum RuleLookup {
     public static func resolve(
         applicationToken: ApplicationToken,
         configuration: ConfigurationDocument,
-        runtimeRepository: RuntimeRepository,
+        runtimeRepository: any RuntimeReading,
         now: Date,
         calendar: Calendar = .current
     ) throws -> ResolvedRule {

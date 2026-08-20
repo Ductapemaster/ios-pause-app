@@ -5,7 +5,7 @@ public struct ConfigurationStore {
     private let stateLock: AppGroupFileLock
 
     public init(directoryURL: URL) {
-        file = AtomicJSONFile(url: directoryURL.appendingPathComponent("configuration.json"))
+        file = AtomicJSONFile(url: directoryURL.appendingPathComponent(SharedIdentifiers.configurationFilename))
         stateLock = AppGroupFileLock(directoryURL: directoryURL)
     }
 
@@ -21,6 +21,15 @@ public struct ConfigurationStore {
             try document.validate()
             return document
         }
+    }
+
+    /// Reads without taking the state lock. See `RuntimeRepository.loadWithoutLocking`.
+    public func loadWithoutLocking() throws -> ConfigurationDocument? {
+        guard let document = try file.load() else {
+            return nil
+        }
+        try document.validate()
+        return document
     }
 
     public func save(_ document: ConfigurationDocument) throws {

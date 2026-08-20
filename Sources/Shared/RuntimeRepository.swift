@@ -1,7 +1,14 @@
 import Foundation
 import PauseCore
 
-public final class RuntimeRepository: @unchecked Sendable {
+/// Reads one rule's runtime. `RuntimeRepository` serialises the read behind the
+/// state lock; the shield configuration extension cannot take that lock, so it
+/// supplies a reader that goes straight to the file.
+public protocol RuntimeReading {
+    func load(ruleID: UUID) throws -> RuleRuntime?
+}
+
+public final class RuntimeRepository: RuntimeReading, @unchecked Sendable {
     private let directoryURL: URL
     private let stateLock: AppGroupFileLock
 
@@ -12,6 +19,14 @@ public final class RuntimeRepository: @unchecked Sendable {
 
     public func load(ruleID: UUID) throws -> RuleRuntime? {
         try stateLock.withLock { try loadUnlocked(ruleID: ruleID) }
+    }
+
+    /// Reads without taking the state lock. Safe for readers because every write
+    /// goes through `AtomicJSONFile`, which replaces the file atomically, so a
+    /// reader sees either the whole previous file or the whole next one. Callers
+    /// that also write must use `load(ruleID:)`.
+    public func loadWithoutLocking(ruleID: UUID) throws -> RuleRuntime? {
+        try loadUnlocked(ruleID: ruleID)
     }
 
     public func save(_ runtime: RuleRuntime, ruleID: UUID) throws {
