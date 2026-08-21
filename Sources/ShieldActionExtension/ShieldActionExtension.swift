@@ -2,6 +2,7 @@ import FamilyControls
 import Foundation
 import ManagedSettings
 import OSLog
+import PauseCore
 
 private let logger = Logger(subsystem: "com.koubalabs.pause.shieldaction", category: "shield")
 
@@ -21,9 +22,10 @@ final class ShieldActionExtension: ShieldActionDelegate {
             let directoryURL = try AppGroupContainer().directoryURL()
             let stateLock = AppGroupFileLock(directoryURL: directoryURL)
             let canOpen = try stateLock.withLock {
-                guard let configuration = try ConfigurationStore(directoryURL: directoryURL).load() else {
+                guard let file = try ConfigurationStore(directoryURL: directoryURL).loadFile() else {
                     return false
                 }
+                let configuration = file.inForce(on: LogicalDay.containing(now))
                 let resolvedRule = try RuleLookup.resolve(
                     applicationToken: application,
                     configuration: configuration,
