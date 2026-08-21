@@ -396,7 +396,9 @@ final class SessionGrantAdaptersTests: XCTestCase {
             rules: [AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)],
             targets: [RuleTarget(ruleID: ruleID, applicationToken: token, launchRoute: nil)]
         )
-        try ConfigurationStore(directoryURL: directory).save(configuration)
+        try ConfigurationStore(directoryURL: directory).save(
+            file: ConfigurationFile(effective: configuration, pending: nil)
+        )
         let repository = RuntimeRepository(directoryURL: directory)
         try repository.save(
             RuleRuntime(logicalDay: CalendarDay(date: now, calendar: .current), sessionsStarted: 0),

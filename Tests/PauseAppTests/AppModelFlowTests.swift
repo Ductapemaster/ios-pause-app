@@ -65,7 +65,7 @@ final class AppModelFlowTests: XCTestCase {
         try model.applyPickerSelection()
 
         XCTAssertEqual(model.configurationLoadState, .knownGood)
-        XCTAssertNotNil(try ConfigurationStore(directoryURL: directory).load())
+        XCTAssertNotNil(try ConfigurationStore(directoryURL: directory).loadFile())
     }
 
     func testFailedFreshPickerSavePreservesMissingStateAndPartialRuntime() throws {
@@ -93,7 +93,14 @@ final class AppModelFlowTests: XCTestCase {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try ConfigurationStore(directoryURL: directory).save(
-            ConfigurationDocument(settings: .phaseOneDefault, rules: [], targets: [])
+            file: ConfigurationFile(
+                effective: try ConfigurationDocument(
+                    settings: .phaseOneDefault,
+                    rules: [],
+                    targets: []
+                ),
+                pending: nil
+            )
         )
         let probe = FlowProbe(status: .approved)
         let model = makeModel(directory: directory, probe: probe, hasProtectedState: false)
@@ -102,7 +109,7 @@ final class AppModelFlowTests: XCTestCase {
 
         XCTAssertEqual(model.configuration.settings.pauseSeconds, 17)
         XCTAssertEqual(
-            try ConfigurationStore(directoryURL: directory).load()?.settings.pauseSeconds,
+            try ConfigurationStore(directoryURL: directory).loadFile()?.effective.settings.pauseSeconds,
             17
         )
     }
@@ -372,22 +379,25 @@ final class AppModelFlowTests: XCTestCase {
 
     private func seedOneRule(in directory: URL, sessionsPerDay: Int) throws {
         try ConfigurationStore(directoryURL: directory).save(
-            ConfigurationDocument(
-                settings: .phaseOneDefault,
-                rules: [
-                    AppRule(
-                        id: ruleID,
-                        sessionsPerDay: sessionsPerDay,
-                        sessionLengthMinutes: 5
-                    )
-                ],
-                targets: [
-                    RuleTarget(
-                        ruleID: ruleID,
-                        applicationToken: try token(seed: "instagram"),
-                        launchRoute: nil
-                    )
-                ]
+            file: ConfigurationFile(
+                effective: try ConfigurationDocument(
+                    settings: .phaseOneDefault,
+                    rules: [
+                        AppRule(
+                            id: ruleID,
+                            sessionsPerDay: sessionsPerDay,
+                            sessionLengthMinutes: 5
+                        )
+                    ],
+                    targets: [
+                        RuleTarget(
+                            ruleID: ruleID,
+                            applicationToken: try token(seed: "instagram"),
+                            launchRoute: nil
+                        )
+                    ]
+                ),
+                pending: nil
             )
         )
         try RuntimeRepository(directoryURL: directory).save(
@@ -406,7 +416,14 @@ final class AppModelFlowTests: XCTestCase {
 
     private func writeEmptyConfiguration(to directory: URL) throws {
         try ConfigurationStore(directoryURL: directory).save(
-            ConfigurationDocument(settings: .phaseOneDefault, rules: [], targets: [])
+            file: ConfigurationFile(
+                effective: try ConfigurationDocument(
+                    settings: .phaseOneDefault,
+                    rules: [],
+                    targets: []
+                ),
+                pending: nil
+            )
         )
     }
 }

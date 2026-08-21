@@ -179,10 +179,13 @@ final class AppGroupFileLockTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_750_000_000)
         let token = try applicationToken(for: ruleID)
         try ConfigurationStore(directoryURL: directory).save(
-            ConfigurationDocument(
-                settings: .phaseOneDefault,
-                rules: [try AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)],
-                targets: [RuleTarget(ruleID: ruleID, applicationToken: token, launchRoute: nil)]
+            file: ConfigurationFile(
+                effective: try ConfigurationDocument(
+                    settings: .phaseOneDefault,
+                    rules: [try AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)],
+                    targets: [RuleTarget(ruleID: ruleID, applicationToken: token, launchRoute: nil)]
+                ),
+                pending: nil
             )
         )
         let repository = RuntimeRepository(directoryURL: directory)

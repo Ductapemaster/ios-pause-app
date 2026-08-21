@@ -76,10 +76,11 @@ final class AtomicJSONFileTests: XCTestCase {
             targets: []
         )
 
-        XCTAssertThrowsError(try store.save(document)) { error in
+        let file = ConfigurationFile(effective: document, pending: nil)
+        XCTAssertThrowsError(try store.save(file: file)) { error in
             XCTAssertEqual(error as? ConfigurationError, .missingTarget(ruleID))
         }
-        XCTAssertNil(try store.load())
+        XCTAssertNil(try store.loadFile())
     }
 
     func testLoadRejectsMismatchedConfigurationWithoutChangingItsJSON() throws {
@@ -94,7 +95,7 @@ final class AtomicJSONFileTests: XCTestCase {
         let originalData = try JSONEncoder().encode(document)
         try originalData.write(to: configurationURL)
 
-        XCTAssertThrowsError(try store.load()) { error in
+        XCTAssertThrowsError(try store.loadFile()) { error in
             XCTAssertEqual(error as? ConfigurationError, .missingTarget(ruleID))
         }
         XCTAssertEqual(try Data(contentsOf: configurationURL), originalData)

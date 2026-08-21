@@ -33,19 +33,6 @@ public struct ConfigurationStore {
         }
     }
 
-    public func load() throws -> ConfigurationDocument? {
-        try loadFile()?.effective
-    }
-
-    public func loadWithoutLocking() throws -> ConfigurationDocument? {
-        try loadFileWithoutLocking()?.effective
-    }
-
-    public func save(_ document: ConfigurationDocument) throws {
-        let existing = try loadFile()
-        try save(file: ConfigurationFile(effective: document, pending: existing?.pending))
-    }
-
     private func loadFileUnlocked() throws -> ConfigurationFile? {
         guard try carriesTheWrapper() else {
             guard let legacy = try legacyFile.load() else { return nil }

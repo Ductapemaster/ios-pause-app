@@ -235,14 +235,17 @@ final class RuntimeRepairFlowTests: XCTestCase {
             try AppRule(id: untouchedRuleID, sessionsPerDay: 3, sessionLengthMinutes: 5),
         ]
         try ConfigurationStore(directoryURL: directory).save(
-            ConfigurationDocument(
-                settings: .phaseOneDefault,
-                rules: rules,
-                targets: [
-                    RuleTarget(ruleID: selectedRuleID, applicationToken: selectedToken, launchRoute: nil),
-                    RuleTarget(ruleID: otherRuleID, applicationToken: otherToken, launchRoute: nil),
-                    RuleTarget(ruleID: untouchedRuleID, applicationToken: untouchedToken, launchRoute: nil),
-                ]
+            file: ConfigurationFile(
+                effective: try ConfigurationDocument(
+                    settings: .phaseOneDefault,
+                    rules: rules,
+                    targets: [
+                        RuleTarget(ruleID: selectedRuleID, applicationToken: selectedToken, launchRoute: nil),
+                        RuleTarget(ruleID: otherRuleID, applicationToken: otherToken, launchRoute: nil),
+                        RuleTarget(ruleID: untouchedRuleID, applicationToken: untouchedToken, launchRoute: nil),
+                    ]
+                ),
+                pending: nil
             )
         )
         let repository = RuntimeRepository(directoryURL: directory)

@@ -188,10 +188,15 @@ final class SessionGrantFlowTests: XCTestCase {
         )
         let rule = try AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)
         try ConfigurationStore(directoryURL: directory).save(
-            ConfigurationDocument(
-                settings: try GlobalSettings(pauseSeconds: 1),
-                rules: [rule],
-                targets: [RuleTarget(ruleID: ruleID, applicationToken: token, launchRoute: route)]
+            file: ConfigurationFile(
+                effective: try ConfigurationDocument(
+                    settings: try GlobalSettings(pauseSeconds: 1),
+                    rules: [rule],
+                    targets: [
+                        RuleTarget(ruleID: ruleID, applicationToken: token, launchRoute: route)
+                    ]
+                ),
+                pending: nil
             )
         )
         try RuntimeRepository(directoryURL: directory).save(
