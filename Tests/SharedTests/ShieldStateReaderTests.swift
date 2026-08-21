@@ -72,6 +72,49 @@ final class ShieldStateReaderTests: XCTestCase {
         }
     }
 
+    func testThePendingConfigurationAppliesOnceItsStartDayArrives() throws {
+        let now = date(year: 2026, month: 8, day: 21, hour: 9)
+        let ruleID = UUID()
+        let token = try token(seed: "instagram")
+        let directoryURL = try temporaryDirectory()
+
+        let effective = try ConfigurationDocument(
+            settings: .phaseOneDefault,
+            rules: [AppRule(id: ruleID, sessionsPerDay: 2, sessionLengthMinutes: 5)],
+            targets: [RuleTarget(ruleID: ruleID, applicationToken: token, launchRoute: nil)]
+        )
+        let scheduled = try ConfigurationDocument(
+            settings: .phaseOneDefault,
+            rules: [AppRule(id: ruleID, sessionsPerDay: 6, sessionLengthMinutes: 5)],
+            targets: [RuleTarget(ruleID: ruleID, applicationToken: token, launchRoute: nil)]
+        )
+        try AtomicJSONFile<ConfigurationFile>(
+            url: directoryURL.appendingPathComponent(SharedIdentifiers.configurationFilename)
+        ).save(
+            ConfigurationFile(
+                effective: effective,
+                pending: PendingConfiguration(
+                    document: scheduled,
+                    startDay: LogicalDay.containing(now, calendar: calendar)
+                )
+            )
+        )
+        try AtomicJSONFile<RuleRuntime>(
+            url: directoryURL.appendingPathComponent("runtime-\(ruleID.uuidString.lowercased()).json")
+        ).save(
+            RuleRuntime(
+                logicalDay: LogicalDay.containing(now, calendar: calendar),
+                sessionsStarted: 1,
+                openSession: nil
+            )
+        )
+
+        let presentation = try ShieldStateReader(directoryURL: directoryURL)
+            .presentation(for: token, now: now, calendar: calendar)
+
+        XCTAssertEqual(presentation.subtitle, "5 sessions left today")
+    }
+
     // MARK: - Helpers
 
     /// Writes the files the app would have written, without taking the lock, so
