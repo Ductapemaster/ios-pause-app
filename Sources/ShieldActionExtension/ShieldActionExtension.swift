@@ -17,6 +17,11 @@ final class ShieldActionExtension: ShieldActionDelegate {
             return
         }
 
+        // The control reading for the monitor extension's probe: this extension
+        // is known to do app group file I/O successfully, so a refusal logged
+        // here would be evidence about the probe rather than about a sandbox.
+        logger.notice("Shield action sandbox probe: \(AppGroupSandboxProbe.run().summary, privacy: .public)")
+
         do {
             let now = Date()
             let directoryURL = try AppGroupContainer().directoryURL()
@@ -41,7 +46,7 @@ final class ShieldActionExtension: ShieldActionDelegate {
                 )
                 return true
             }
-            logger.info("Shield action resolved: canOpen=\(canOpen, privacy: .public)")
+            logger.notice("Shield action resolved: canOpen=\(canOpen, privacy: .public)")
             completionHandler(canOpen ? .openParentalControlsApp : .none)
         } catch {
             logger.error("Shield action failed: \(String(describing: error), privacy: .public)")
