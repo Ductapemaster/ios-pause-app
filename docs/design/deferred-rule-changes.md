@@ -37,7 +37,7 @@ Adding a rule and its target together is neutral: an app that was not covered be
 
 ## The model
 
-`configuration.json` currently holds a bare `ConfigurationDocument`. It gains a wrapper:
+`configuration.json` holds a wrapper around the document:
 
 ```
 ConfigurationFile
@@ -66,27 +66,30 @@ The property to hold onto: the file describes what applies on any given day, not
 
 ### Every read site
 
-All five configuration readers take the in-force document. A reader left on `effective` would apply a scheduled change to what the person sees but not to what they get, or the reverse:
+Four places read `configuration.json`, and each takes the in-force document. A reader left on `effective` would apply a scheduled change to what the person sees but not to what they get, or the reverse:
 
 - `AppModel` — the rules screens, and the basis for every edit.
 - `ShieldStateReader` — what the shield displays.
 - `ShieldActionExtension` — whether a tap grants a session.
-- `ShieldReconciler` — which applications carry a shield.
 - `SessionReconciliationService` — the monitor extension's view during reconciliation.
+
+`ShieldReconciler`, which decides which applications carry a shield, is not a fifth reader: it is handed a document by whichever of those callers is reconciling, so it inherits their answer.
 
 ## The reset event
 
-Nothing in the app currently runs when a logical day turns over. Session counts roll over lazily, the next time something happens to evaluate them. A deferred change would land the same way: correct in every calculation, but invisible until an unrelated event woke the app.
+Session counts roll over lazily, the next time something happens to evaluate them, and a deferred change lands the same way on its own: correct in every calculation, but invisible until an unrelated event woke the app.
 
 That is not good enough once a scheduled change can remove an app. `ManagedSettingsStore` would keep shielding an application that no longer has a rule, and the shield would resolve against a document with no target for it — showing damage where the truth is release.
 
-Pause therefore registers one repeating daily activity whose interval begins at the reset time. `MonitorExtension.intervalDidStart` is empty today and becomes the entry point: it runs the same reconciliation every other callback already triggers.
+Pause therefore registers one repeating daily activity, `daily-reset`, whose interval begins at the reset time. `MonitorExtension.intervalDidStart` is the entry point.
 
-The callback has to be read by name. A session's own activity begins at the instant the session is granted, and a schedule whose interval is already under way fires `intervalDidStart` immediately, so this callback arrives on every grant as well as at the reset. `SessionMonitorCallbackHandler` parses activity names as `session.<uuid>`; the reset branch acts only on a name that is not one, and discards the rest. Treating the arrival as the signal would hand a grant the reset's whole-configuration pass, which is the one pass that promotes a provisional session — spending a session on a launch that has not been confirmed.
+The callback has to be read by name. A session's own activity begins at the instant the session is granted, and a schedule whose interval is already under way fires `intervalDidStart` immediately, so this callback arrives on every grant as well as at the reset. `SessionMonitorCallbackHandler` parses activity names as `session.<uuid>`; a name that parses is a grant and is discarded, and any other name is the reset.
 
-The reset activity repeats daily and is registered whenever Pause opens, so it too fires on registration. The reconciliation is therefore idempotent and reads nothing into the callback beyond "reconcile now": it resolves what applies from the moment it runs, which is right whether a day turned over or not.
+The reset reconciles under a trigger of its own, `.dailyReset`, rather than reusing app activation. `.appActivation` is the only trigger that promotes a provisional session to active, and a provisional session is one whose launch handoff has not been confirmed — a reset pass reusing that trigger would spend a session on a launch that may never have happened. Device state is legible only through `sysdiagnose` and the unified log besides, so a trigger that said "app activated" when the reset fired would corrupt the one debugging signal there is.
 
-At the reset the monitor applies the pending configuration's consequences: the shield set matches the rules now in force, a removed application is released, and the session counter is reset where it can be seen. It costs one registration and one branch.
+What `.dailyReset` shares with an activation is the shield pass: both are whole-configuration passes, unlike the per-rule expiry callbacks, so both sweep every rule the in-force document names and then apply shields. That pass is the point of the event. A landed removal is already in force — the pending document was selected the moment the day turned over — and the pass is what lets the shields catch up, releasing an application that is no longer a target. Nothing is promoted and nothing is written back to `configuration.json`. Session allowances still roll over lazily, on the next read of a runtime.
+
+The reset activity repeats daily and is registered whenever Pause opens, so it fires on registration too. The reconciliation is therefore idempotent and reads nothing into the callback beyond "reconcile now": it resolves what applies from the moment it runs, which is right whether a day turned over or not.
 
 Missed callbacks are already the architecture's assumption. A phone that is off at the reset misses it, and the reconciliation on app launch repairs the state the next time Pause opens. That fallback is what makes a released-but-still-shielded window rare rather than impossible; it is not a reason to skip the event.
 
@@ -96,27 +99,29 @@ Missed callbacks are already the architecture's assumption. A phone that is off 
 
 `AppModel` writes configuration at four points — the picker save, the rule editor save, the countdown setting, and rule removal. The countdown belongs on that list because `settings.pauseSeconds` is the one field a shorter value loosens, and nothing else can change it. Each takes the same path:
 
-1. Build the candidate document as it does today.
-2. Validate it, exactly as a direct save validates today. A pending document is held to the same rules as an effective one, so an invalid document cannot wait in storage and take effect unwatched.
+1. Build the candidate document.
+2. Validate it. A pending document is held to the same rules as an effective one, so an invalid document cannot wait in storage and take effect unwatched.
 3. Compare it against the in-force document.
 4. If nothing loosens, write it to `effective` and clear any pending document, because an immediate tightening supersedes a scheduled change.
 5. If anything loosens, leave `effective` alone and write the candidate to `pending`, with the logical day after the current one as its start day.
 
-Step 4 matters: tightening always wins, so a scheduled loosening cannot survive a later decision to be stricter. Cancelling a pending change is the same operation — it writes the in-force document back over `effective` and clears `pending`, and it applies at once because it leaves the stricter rule standing.
+Step 4 matters: tightening always wins, so a scheduled loosening cannot survive a later decision to be stricter. Cancelling a pending change reaches the same end without the comparison: it writes the in-force document back over `effective` and clears `pending`, and it applies at once because it leaves the stricter rule standing.
 
 A saved pending configuration replaces any earlier one rather than queueing behind it. One scheduled change at a time is enough, and a queue would let several edits compound into a change nobody chose.
 
 ### Removal defers its cleanup too
 
-Removing an app today runs `RuleRemovalCoordinator`, which stages the rule's runtime file and deletes it. A deferred removal must not do that: the rule is still in force, still counting sessions, and still shielding. Deleting its runtime would leave an app that is shielded with no session data, which resolves as damage.
+A removal is a loosening like any other, so it writes the pending document and touches nothing else. Until the reset the rule is still in force: still counting sessions, still shielding, still monitored, still selected in the picker. Deleting its runtime at the moment of the edit would leave an app that is shielded with no session data, which resolves as damage.
 
-So a deferred removal writes only the pending document and touches nothing else. The reset releases the application, and the runtime file is deleted by the orphan cleanup that already runs when Pause opens, which keeps only the rules the in-force document names. A runtime outliving its rule by that much costs nothing: the shield set is built from the document's targets, so a runtime with no target is never read.
+The reset releases the application, and the runtime file goes with the orphan cleanup that runs when Pause opens, which keeps only the rules the in-force document names. A runtime outliving its rule by that much costs nothing: the shield set is built from the document's targets, so a runtime with no target is never read.
 
 ## What the app shows
 
 Saving a deferred edit shows a notice that a change is scheduled and when it takes effect, with a button to cancel it. It does not restate what changed. The friction is the wait and the fact of having scheduled something, not a recitation of the fields.
 
-The rules list carries the same notice against the rule it affects, so a pending edit cannot be forgotten before it lands.
+The notice sits at the top of the rules list and at the top of the rule editor, so a scheduled change cannot be forgotten before it lands. A deferred save leaves the editor open under the notice, where the wait is visible at the place it was chosen; a save that applied at once closes it.
+
+A removed app keeps its row in the rules list until the removal lands. The row is faded, marked with the day the app goes, and carries its own cancel action. It is not a link to the editor: the editor saves a document built from the rules in force, which would write over the scheduled removal and cancel it silently. Once the removal lands the in-force document no longer names the rule, so the row goes with no flag to clear.
 
 ## Testing
 
@@ -127,17 +132,23 @@ The two pieces carrying the behaviour are pure functions over value types, testa
 
 Above those: the save paths leave `effective` untouched for a loosening edit and clear `pending` for a tightening one; a deferred removal leaves the runtime file in place; and the reset-event reconciliation releases the application once the removal is in force.
 
-`SessionMonitorCallbackHandler` gains tests that the reset activity reconciles and a session activity starting does not.
+`SessionMonitorCallbackHandler` is tested on both halves of the name check: the reset activity reconciles, and a session activity starting does not.
 
 ## Migration
 
-An installed build has a bare `ConfigurationDocument` in `configuration.json`. `ConfigurationStore` decodes the wrapper first and falls back to decoding the bare document, treating it as `effective` with no pending change. The next write persists the new shape. No data is lost and no version field is needed, because the two shapes are distinguishable by decoding.
+An installed build from before deferred changes has a bare `ConfigurationDocument` in `configuration.json`. `ConfigurationStore` reads the file's top-level keys and picks the shape from them: a file carrying `effective` is a wrapper, and anything else is a bare document, read as `effective` with no pending change. The next write persists the wrapper. No data is lost and no version field is needed, because the key tells the two shapes apart.
+
+The choice is made on the key rather than on a failed decode. Falling back whenever the wrapper failed to decode would hand a damaged wrapper to a legacy read of the same bytes, and what surfaced would be whatever the older shape made of them; a file carrying `effective` is read as one, and its damage is reported as its own.
 
 ## Known limits and non-goals
 
 **Device time is taken as given.** The logical day is computed from the device clock and calendar. Moving the clock forward, or crossing time zones, moves the boundary with it and can bring a pending change forward. Not defended against, deliberately: tracking real elapsed time is not worth its cost for a case that arises in travel rather than in use.
 
 **Deleting Pause defeats all of this.** Reinstalling gives a clean slate with no rules and no pending changes. Nothing in this design prevents it, and nothing can.
+
+**A second save replaces a scheduled change rather than stacking onto it.** There is one pending slot, and every candidate document is built from the rules in force rather than from the pending one, so a save made while a change is scheduled writes over it. Cancelling is the only way back to the rules in force, and there is no way to hold two changes for the same reset.
+
+**A picker save that both adds and drops apps waits as a whole.** The edit is judged whole, so an app added in the same trip through the picker as one dropped starts being covered at the reset rather than at once. Slated to change, with each app in a picker save judged on its own.
 
 **The countdown setting is the one field a late edit reaches.** Every per-day rule is safe from timing: a loosening lands at the reset, the same instant the used-session count returns to zero, so an edit made late in the day grants nothing that day. `settings.pauseSeconds` is not per-day and has no reset to ride in on, so shortening it late does take effect that much sooner. Accepted: the exposure is a few seconds of delay before a session starts, and a second timing rule for one field costs more than it protects.
 
