@@ -9,13 +9,6 @@ public struct RuleRemovalFailure: LocalizedError {
         self.repairErrors = repairErrors
     }
 
-    public func addingRepairErrors(_ additionalErrors: [Error]) -> RuleRemovalFailure {
-        RuleRemovalFailure(
-            primaryError: primaryError,
-            repairErrors: repairErrors + additionalErrors
-        )
-    }
-
     public var errorDescription: String? {
         let primary = "The app removal failed (\(primaryError.localizedDescription))."
         guard !repairErrors.isEmpty else { return primary }

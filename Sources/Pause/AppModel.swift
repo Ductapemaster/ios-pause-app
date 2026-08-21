@@ -470,9 +470,6 @@ final class AppModel: ObservableObject {
                 }
             }
 
-            if let removalFailure = changeError as? RuleRemovalFailure {
-                throw removalFailure.addingRepairErrors(repairErrors)
-            }
             if !repairErrors.isEmpty {
                 throw RuleRemovalFailure(
                     primaryError: changeError,
