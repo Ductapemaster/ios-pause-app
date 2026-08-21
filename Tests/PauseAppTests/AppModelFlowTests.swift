@@ -1,11 +1,15 @@
 import FamilyControls
 import Foundation
+import ManagedSettings
 import PauseCore
 import XCTest
 @testable import Pause
 
 @MainActor
 final class AppModelFlowTests: XCTestCase {
+    private let ruleID = UUID(uuidString: "3f7c1d20-6b8a-4f19-8e42-0a5c9d1b7e63")!
+    private let now = Date(timeIntervalSince1970: 1_750_000_000)
+
     func testUnsafeRootPrecedesAuthorizationAndCannotDismissIntoConfiguration() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -193,6 +197,86 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(probe.startedCountdown?.remainingSeconds(at: activeAt), 10)
     }
 
+    func testRaisingAnAllowanceLeavesTodaysRuleInPlace() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updateRule(
+            id: ruleID,
+            sessionsPerDay: 5,
+            sessionLengthMinutes: 5,
+            now: now
+        )
+
+        XCTAssertEqual(model.configuration.rules[0].sessionsPerDay, 3)
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+    }
+
+    func testLoweringAnAllowanceAppliesAtOnceAndClearsASchedule() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updateRule(id: ruleID, sessionsPerDay: 5, sessionLengthMinutes: 5, now: now)
+        try model.updateRule(id: ruleID, sessionsPerDay: 2, sessionLengthMinutes: 5, now: now)
+
+        XCTAssertEqual(model.configuration.rules[0].sessionsPerDay, 2)
+        XCTAssertNil(model.pendingChangeStartDay)
+    }
+
+    func testCancellingAScheduledChangeLeavesTodaysRuleInForce() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updateRule(id: ruleID, sessionsPerDay: 5, sessionLengthMinutes: 5, now: now)
+        model.cancelScheduledChange(now: now)
+
+        XCTAssertEqual(model.configuration.rules[0].sessionsPerDay, 3)
+        XCTAssertNil(model.pendingChangeStartDay)
+        XCTAssertEqual(
+            try ConfigurationStore(directoryURL: directory).loadFile()?.pending,
+            nil
+        )
+    }
+
+    func testShorteningThePauseWaitsWhileLengtheningItAppliesAtOnce() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updatePauseSeconds(5, now: now)
+
+        XCTAssertEqual(model.configuration.settings.pauseSeconds, 10)
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+
+        try model.updatePauseSeconds(20, now: now)
+
+        XCTAssertEqual(model.configuration.settings.pauseSeconds, 20)
+        XCTAssertNil(model.pendingChangeStartDay)
+    }
+
     private func makeModel(
         directory: URL,
         probe: FlowProbe,
@@ -225,6 +309,40 @@ final class AppModelFlowTests: XCTestCase {
             .appendingPathComponent("pause-app-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private func seedOneRule(in directory: URL, sessionsPerDay: Int) throws {
+        try ConfigurationStore(directoryURL: directory).save(
+            ConfigurationDocument(
+                settings: .phaseOneDefault,
+                rules: [
+                    AppRule(
+                        id: ruleID,
+                        sessionsPerDay: sessionsPerDay,
+                        sessionLengthMinutes: 5
+                    )
+                ],
+                targets: [
+                    RuleTarget(
+                        ruleID: ruleID,
+                        applicationToken: try token(seed: "instagram"),
+                        launchRoute: nil
+                    )
+                ]
+            )
+        )
+        try RuntimeRepository(directoryURL: directory).save(
+            RuleRuntime(logicalDay: LogicalDay.containing(now), sessionsStarted: 0),
+            ruleID: ruleID
+        )
+    }
+
+    private func token(seed: String) throws -> ApplicationToken {
+        let data = Data(seed.utf8).base64EncodedString()
+        return try JSONDecoder().decode(
+            ApplicationToken.self,
+            from: Data("{\"data\":\"\(data)\"}".utf8)
+        )
     }
 
     private func writeEmptyConfiguration(to directory: URL) throws {

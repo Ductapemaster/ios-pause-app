@@ -205,11 +205,15 @@ final class RuntimeRepairFlowTests: XCTestCase {
         try markers.add(ruleID: selectedRuleID)
         try markers.add(ruleID: otherRuleID)
 
-        try harness.model.removeRule(id: selectedRuleID)
+        try harness.model.removeRule(id: selectedRuleID, now: now)
 
         XCTAssertFalse(try markers.contains(ruleID: selectedRuleID))
         XCTAssertTrue(try markers.contains(ruleID: otherRuleID))
-        let saved = try XCTUnwrap(ConfigurationStore(directoryURL: harness.directory).load())
+        // Removing an app loosens the rules, so it is scheduled for the next
+        // reset rather than applied to the document in force today.
+        let file = try XCTUnwrap(ConfigurationStore(directoryURL: harness.directory).loadFile())
+        XCTAssertTrue(file.effective.rules.contains(where: { $0.id == selectedRuleID }))
+        let saved = try XCTUnwrap(file.pending?.document)
         XCTAssertFalse(saved.rules.contains(where: { $0.id == selectedRuleID }))
         XCTAssertTrue(saved.rules.contains(where: { $0.id == otherRuleID }))
     }

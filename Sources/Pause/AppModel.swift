@@ -91,6 +91,7 @@ enum AppModelError: LocalizedError {
 final class AppModel: ObservableObject {
     @Published private(set) var authorizationStatus: AuthorizationStatus
     @Published private(set) var configuration: ConfigurationDocument
+    @Published private(set) var pendingChangeStartDay: CalendarDay?
     @Published var pickerSelection: FamilyActivitySelection
     @Published var presentedError: AppError?
     @Published private(set) var entryRoute: AppEntryRoute = .configuration
@@ -179,6 +180,7 @@ final class AppModel: ObservableObject {
                 let savedConfiguration = savedFile.inForce(on: LogicalDay.containing(Date()))
                 configurationFile = savedFile
                 configuration = savedConfiguration
+                pendingChangeStartDay = savedFile.pending?.startDay
                 pickerSelection.applicationTokens = Set(savedConfiguration.targets.map(\.applicationToken))
                 activationCoordinator.configurationBecameKnownGood()
             } else {
@@ -393,7 +395,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func applyPickerSelection() throws {
+    func applyPickerSelection(now: Date = Date()) throws {
         guard let configurationStore, let runtimeRepository else {
             throw AppModelError.storageUnavailable
         }
@@ -433,7 +435,7 @@ final class AppModel: ObservableObject {
             )
         }
 
-        let today = CalendarDay(date: Date(), calendar: .current)
+        let today = LogicalDay.containing(now)
         do {
             for token in addedTokens {
                 let rule = try AppRule(sessionsPerDay: 3, sessionLengthMinutes: 5)
@@ -454,16 +456,16 @@ final class AppModel: ObservableObject {
                 targets: nextTargets
             )
             if removedRuleIDs.isEmpty {
-                try configurationStore.save(nextConfiguration)
+                try persist(nextConfiguration, now: now)
             } else {
                 removalOutcome = try commitRuleRemoval(
                     ruleIDs: removedRuleIDs,
                     nextConfiguration: nextConfiguration,
                     configurationStore: configurationStore,
-                    runtimeRepository: runtimeRepository
+                    runtimeRepository: runtimeRepository,
+                    now: now
                 )
             }
-            configuration = nextConfiguration
             activationCoordinator.configurationSaveCompleted(successfully: true)
         } catch let changeError {
             activationCoordinator.configurationSaveCompleted(successfully: false)
@@ -497,7 +499,12 @@ final class AppModel: ObservableObject {
         presentRemovalCleanupErrors(removalOutcome.cleanupErrors)
     }
 
-    func updateRule(id: UUID, sessionsPerDay: Int, sessionLengthMinutes: Int) throws {
+    func updateRule(
+        id: UUID,
+        sessionsPerDay: Int,
+        sessionLengthMinutes: Int,
+        now: Date = Date()
+    ) throws {
         try requireConfigurationMutation(.ruleEdit)
         guard (1...20).contains(sessionsPerDay) else {
             throw AppModelError.invalidSessionsPerDay
@@ -519,16 +526,15 @@ final class AppModel: ObservableObject {
             sessionLengthMinutes: sessionLengthMinutes
         )
         do {
-            try configurationStore.save(nextConfiguration)
+            try persist(nextConfiguration, now: now)
         } catch {
             activationCoordinator.configurationSaveCompleted(successfully: false)
             throw error
         }
-        configuration = nextConfiguration
         reconcileShieldsIfAuthorized(title: "Rule saved, but shields need repair")
     }
 
-    func updatePauseSeconds(_ seconds: Int) throws {
+    func updatePauseSeconds(_ seconds: Int, now: Date = Date()) throws {
         try requireConfigurationMutation(.globalSettingsEdit)
         guard (1...120).contains(seconds) else {
             throw AppModelError.invalidPauseDuration
@@ -540,15 +546,33 @@ final class AppModel: ObservableObject {
         var nextConfiguration = configuration
         nextConfiguration.settings = try GlobalSettings(pauseSeconds: seconds)
         do {
-            try configurationStore.save(nextConfiguration)
+            try persist(nextConfiguration, now: now)
         } catch {
             activationCoordinator.configurationSaveCompleted(successfully: false)
             throw error
         }
-        configuration = nextConfiguration
     }
 
-    func removeRule(id: UUID) throws {
+    /// Drops a scheduled change, leaving the rules in force today standing.
+    func cancelScheduledChange(now: Date = Date()) {
+        guard let configurationStore,
+              let file = configurationFile,
+              file.pending != nil else { return }
+        // Cancelling a loosening leaves the stricter rule standing, which is a
+        // tightening, so it applies at once.
+        let kept = file.inForce(on: LogicalDay.containing(now))
+        do {
+            let cleared = ConfigurationFile(effective: kept, pending: nil)
+            try configurationStore.save(file: cleared)
+            configurationFile = cleared
+            configuration = kept
+            pendingChangeStartDay = nil
+        } catch {
+            presentedError = AppError(title: "Couldn't cancel the change", error: error)
+        }
+    }
+
+    func removeRule(id: UUID, now: Date = Date()) throws {
         try requireConfigurationMutation(.ruleRemoval)
         guard let configurationStore, let runtimeRepository else {
             throw AppModelError.storageUnavailable
@@ -568,14 +592,14 @@ final class AppModel: ObservableObject {
                 ruleIDs: [id],
                 nextConfiguration: nextConfiguration,
                 configurationStore: configurationStore,
-                runtimeRepository: runtimeRepository
+                runtimeRepository: runtimeRepository,
+                now: now
             )
         } catch {
             activationCoordinator.configurationSaveCompleted(successfully: false)
             throw error
         }
 
-        configuration = nextConfiguration
         pickerSelection.applicationTokens.remove(target.applicationToken)
         reconcileShieldsIfAuthorized(title: "App removed, but shields need repair")
         presentRemovalCleanupErrors(removalOutcome.cleanupErrors)
@@ -815,11 +839,29 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Writes an edited document through the router, so a loosening edit is
+    /// scheduled rather than applied.
+    private func persist(_ candidate: ConfigurationDocument, now: Date = Date()) throws {
+        guard let configurationStore else { throw AppModelError.storageUnavailable }
+        let existing = try configurationStore.loadFile()
+            ?? ConfigurationFile(effective: candidate, pending: nil)
+        let routed = ConfigurationSaveRouter.route(
+            candidate: candidate,
+            into: existing,
+            now: now
+        )
+        try configurationStore.save(file: routed)
+        configurationFile = routed
+        configuration = routed.inForce(on: LogicalDay.containing(now))
+        pendingChangeStartDay = routed.pending?.startDay
+    }
+
     private func commitRuleRemoval(
         ruleIDs: [UUID],
         nextConfiguration: ConfigurationDocument,
         configurationStore: ConfigurationStore,
-        runtimeRepository: RuntimeRepository
+        runtimeRepository: RuntimeRepository,
+        now: Date
     ) throws -> RuleRemovalOutcome {
         guard let failedGrantBlockStore else {
             throw AppModelError.storageUnavailable
@@ -849,12 +891,12 @@ final class AppModel: ObservableObject {
                     try shieldReconciler.reconcile(
                         configuration: previousConfiguration,
                         runtimeRepository: runtimeRepository,
-                        now: Date(),
+                        now: now,
                         forceShieldedRuleIDs: failedRuntimeRestores
                     )
                 },
-                commitConfiguration: {
-                    try configurationStore.save(nextConfiguration)
+                commitConfiguration: { [self] in
+                    try persist(nextConfiguration, now: now)
                 },
                 clearFailedGrantBlock: failedGrantBlockStore.clear,
                 stopMonitoring: { ruleIDs in
