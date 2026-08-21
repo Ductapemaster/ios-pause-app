@@ -142,7 +142,7 @@ public final class SessionReconciliationService {
         )
         return coordinator.resetRuntime(
             ruleID: ruleID,
-            logicalDay: CalendarDay(date: now, calendar: calendar),
+            logicalDay: LogicalDay.containing(now, calendar: calendar),
             saveRuntime: runtimeRepository.save,
             clearFailedGrantBlock: failedGrantBlockStore.clear,
             applyShields: { [shieldReconciler, runtimeRepository] in

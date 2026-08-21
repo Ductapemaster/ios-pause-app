@@ -33,6 +33,30 @@ final class SessionReconciliationServiceTests: XCTestCase {
         XCTAssertEqual(applied, [try token(seed: "instagram")])
     }
 
+    func testTheResetReleasesAnApplicationWhoseRemovalHasLanded() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedRemovalPending(in: directory, startDay: LogicalDay.containing(now, calendar: calendar))
+        var applied: Set<ApplicationToken>?
+
+        _ = makeService(directory: directory, applyApplications: { applied = $0 })
+            .reconcile(now: now, trigger: .dailyReset)
+
+        XCTAssertEqual(applied, [])
+    }
+
+    func testTheResetKeepsShieldingAnApplicationWhoseRemovalHasNotLanded() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedRemovalPending(in: directory, startDay: LogicalDay.next(after: now, calendar: calendar))
+        var applied: Set<ApplicationToken>?
+
+        _ = makeService(directory: directory, applyApplications: { applied = $0 })
+            .reconcile(now: now, trigger: .dailyReset)
+
+        XCTAssertEqual(applied, [try token(seed: "instagram")])
+    }
+
     // MARK: - Helpers
 
     /// One rule in force, and a pending document that removes it.

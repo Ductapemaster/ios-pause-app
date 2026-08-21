@@ -219,6 +219,7 @@ public struct SessionReconciliationCoordinator {
         }
 
         let shouldApplyShields = trigger == .appActivation
+            || trigger == .dailyReset
             || selectedCallbackCanStop
             || !result.issues.isEmpty
         var shieldsApplied = false
