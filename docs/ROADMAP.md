@@ -4,7 +4,7 @@ Prioritized work not currently in flight. Phase 2 time-based rules remain the ne
 
 ## Product feedback awaiting work
 
-Raised from device use, none blocked by the open shield investigation:
+Raised from device use:
 
 - The shield offers one button. It needs a second that dismisses without starting a session — the label and destination are Dan's call.
 - The pause countdown has no cancel. Leaving by Home already abandons the attempt without charging a session, so a cancel button makes an existing exit visible; nothing is reserved, scheduled, or shielded during the countdown, so it needs no rollback.
@@ -26,4 +26,6 @@ Both limits lift the same way: `FamilyActivityData.installedApplications` (iOS 2
 
 **Whether shared state should move to SQLite.** SQLite ships with iOS, locks correctly across processes, carries a built-in bounded wait, and gives transactions across several values — which the current design imitates by wrapping multiple file writes in one lock. Adopting it would delete `AppGroupFileLock` and its tests. Against that: a schema and migrations to carry, and SQLite's write-ahead journal uses cross-process shared memory that interacts badly with iOS file protection while the device is locked, which is exactly the extensions' situation.
 
-Sequencing, not merit, is the argument for waiting: the shield investigation is open, and replacing the storage layer underneath an unexplained symptom removes the ability to attribute any change in behaviour.
+**The argument for waiting has lapsed.** It was sequencing rather than merit: replacing the storage layer underneath an unexplained symptom would have removed the ability to attribute any change in behaviour. That symptom is explained — the shield configuration extension's sandbox refuses writes and permits reads, and the shield resolves once nothing on its path takes the lock ([the note](research/shield-repair-variant.md)). The decision now stands on its own merits.
+
+Decide it before bounding the lock waits above, not after: that change lives entirely in `AppGroupFileLock`, which adopting SQLite deletes.
