@@ -20,6 +20,12 @@ struct RuleEditorView: View {
 
     var body: some View {
         Form {
+            if let startDay = model.pendingChangeStartDay {
+                Section {
+                    ScheduledChangeNotice(model: model, startDay: startDay)
+                }
+            }
+
             Section {
                 AppTokenLabel(applicationToken: applicationToken)
             }
@@ -68,7 +74,11 @@ struct RuleEditorView: View {
                 sessionsPerDay: sessionsPerDay,
                 sessionLengthMinutes: sessionLengthMinutes
             )
-            dismiss()
+            // A save that waits stays on screen under its notice, so the wait is
+            // visible where it was chosen. One that applied at once is done.
+            if model.pendingChangeStartDay == nil {
+                dismiss()
+            }
         } catch {
             model.present(error)
         }

@@ -51,21 +51,31 @@ struct RulesView: View {
 
     private var configuredView: some View {
         Form {
+            if let startDay = model.pendingChangeStartDay {
+                Section {
+                    ScheduledChangeNotice(model: model, startDay: startDay)
+                }
+            }
+
             Section("Apps") {
                 ForEach(model.configuration.rules) { rule in
                     if let target = model.configuration.targets.first(where: { $0.ruleID == rule.id }) {
-                        NavigationLink {
-                            RuleEditorView(
-                                model: model,
-                                rule: rule,
-                                applicationToken: target.applicationToken
-                            )
-                        } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                AppTokenLabel(applicationToken: target.applicationToken)
-                                Text("\(rule.sessionsPerDay) × \(rule.sessionLengthMinutes) min")
-                                    .font(.system(.subheadline, design: .rounded).monospacedDigit())
-                                    .foregroundStyle(.secondary)
+                        if model.ruleIDsPendingRemoval.contains(rule.id) {
+                            pendingRemovalRow(rule: rule, target: target)
+                        } else {
+                            NavigationLink {
+                                RuleEditorView(
+                                    model: model,
+                                    rule: rule,
+                                    applicationToken: target.applicationToken
+                                )
+                            } label: {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    AppTokenLabel(applicationToken: target.applicationToken)
+                                    Text("\(rule.sessionsPerDay) × \(rule.sessionLengthMinutes) min")
+                                        .font(.system(.subheadline, design: .rounded).monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
@@ -91,6 +101,36 @@ struct RulesView: View {
                 Text(pickerExplanation)
             }
         }
+    }
+
+    /// A rule on its way out: still in force, still shielding, so it keeps its
+    /// row. It is drawn faded and marked with the day it goes, and it is not a
+    /// link — the editor saves a document built from the rules in force, which
+    /// would write over the scheduled removal and quietly cancel it.
+    private func pendingRemovalRow(rule: AppRule, target: RuleTarget) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            AppTokenLabel(applicationToken: target.applicationToken)
+                .opacity(0.5)
+
+            Text("\(rule.sessionsPerDay) × \(rule.sessionLengthMinutes) min")
+                .font(.system(.subheadline, design: .rounded).monospacedDigit())
+                .foregroundStyle(.tertiary)
+
+            Text("Removing \(removalPhrase)")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            Button("Cancel removal") {
+                model.cancelScheduledChange()
+            }
+            .buttonStyle(.borderless)
+            .font(.footnote)
+        }
+    }
+
+    private var removalPhrase: String {
+        guard let startDay = model.pendingChangeStartDay else { return "at the next reset" }
+        return ScheduledChangeWording.phrase(for: startDay)
     }
 
     private var pauseSeconds: Binding<Int> {

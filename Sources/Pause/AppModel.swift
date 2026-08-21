@@ -178,10 +178,11 @@ final class AppModel: ObservableObject {
             stateLock = AppGroupFileLock(directoryURL: directoryURL)
 
             if let savedFile = try configurationStore.loadFile() {
-                let savedConfiguration = savedFile.inForce(on: LogicalDay.containing(Date()))
+                let openedAt = Date()
+                let savedConfiguration = savedFile.inForce(on: LogicalDay.containing(openedAt))
                 configurationFile = savedFile
                 configuration = savedConfiguration
-                pendingChangeStartDay = savedFile.pending?.startDay
+                pendingChangeStartDay = Self.scheduledStartDay(in: savedFile, now: openedAt)
                 pickerSelection.applicationTokens = Set(savedConfiguration.targets.map(\.applicationToken))
                 activationCoordinator.configurationBecameKnownGood()
             } else {
@@ -203,6 +204,7 @@ final class AppModel: ObservableObject {
     func sceneDidBecomeActive(now: Date = Date()) {
         isSceneActive = true
         refreshAuthorizationStatus()
+        refreshInForceConfiguration(now: now)
         registerDailyReset()
 
         var coordinator = activationCoordinator
@@ -458,14 +460,6 @@ final class AppModel: ObservableObject {
             )
             try persist(nextConfiguration, now: now)
             activationCoordinator.configurationSaveCompleted(successfully: true)
-            if !removedRuleIDs.isEmpty {
-                // Dropping an app always loosens the rules, so the edit is
-                // scheduled for the next reset and only the pending document is
-                // written. Every rule in the save is still in force until then,
-                // so their runtimes, shields, monitoring and picker state all
-                // stay as they are.
-                return
-            }
         } catch let changeError {
             activationCoordinator.configurationSaveCompleted(successfully: false)
             var repairErrors: [Error] = []
@@ -491,9 +485,20 @@ final class AppModel: ObservableObject {
             throw changeError
         }
 
-        var normalizedSelection = FamilyActivitySelection()
-        normalizedSelection.applicationTokens = selectedTokens
-        pickerSelection = normalizedSelection
+        // The picker mirrors the document in force today rather than the raw
+        // tap: an app whose removal is scheduled is still shielded, so it is
+        // still selected.
+        var inForceSelection = FamilyActivitySelection()
+        inForceSelection.applicationTokens = Set(configuration.targets.map(\.applicationToken))
+        pickerSelection = inForceSelection
+
+        guard removedRuleIDs.isEmpty else {
+            // Dropping an app always loosens the rules, so the edit is
+            // scheduled for the next reset and only the pending document is
+            // written. Every rule in the save is still in force until then, so
+            // their runtimes, shields and monitoring stay as they are.
+            return
+        }
         reconcileShieldsIfAuthorized(title: "Apps updated, but shields need repair")
     }
 
@@ -606,6 +611,16 @@ final class AppModel: ObservableObject {
 
     var configurationLoadState: ConfigurationLoadState {
         activationCoordinator.configurationState
+    }
+
+    /// Rules the in-force document still covers that a scheduled change drops.
+    ///
+    /// Once the change lands, `configuration` is the pending document, so this
+    /// is empty and the rows stop being marked without a flag to clear.
+    var ruleIDsPendingRemoval: Set<UUID> {
+        guard let pending = configurationFile?.pending else { return [] }
+        let pendingRuleIDs = Set(pending.document.rules.map(\.id))
+        return Set(configuration.rules.map(\.id)).subtracting(pendingRuleIDs)
     }
 
     var rootRoute: AppRootRoute {
@@ -844,7 +859,28 @@ final class AppModel: ObservableObject {
         try configurationStore.save(file: routed)
         configurationFile = routed
         configuration = routed.inForce(on: LogicalDay.containing(now))
-        pendingChangeStartDay = routed.pending?.startDay
+        pendingChangeStartDay = Self.scheduledStartDay(in: routed, now: now)
+    }
+
+    /// The start day of a change that has not arrived yet. A pending document is
+    /// selected at read time rather than promoted, so the file still names one
+    /// after its start day arrives; a start day that has arrived is in force,
+    /// not scheduled.
+    private static func scheduledStartDay(in file: ConfigurationFile, now: Date) -> CalendarDay? {
+        guard let startDay = file.pending?.startDay,
+              startDay > LogicalDay.containing(now) else { return nil }
+        return startDay
+    }
+
+    /// Re-selects the document in force for the day Pause is being opened on, so
+    /// a change that reached its start day while the app was away takes hold
+    /// without a relaunch. The file in hand holds both documents, so this reads
+    /// nothing from disk.
+    private func refreshInForceConfiguration(now: Date) {
+        guard let configurationFile else { return }
+        configuration = configurationFile.inForce(on: LogicalDay.containing(now))
+        pendingChangeStartDay = Self.scheduledStartDay(in: configurationFile, now: now)
+        pickerSelection.applicationTokens = Set(configuration.targets.map(\.applicationToken))
     }
 
     private func commitRuleRemoval(
