@@ -57,10 +57,10 @@ public final class SessionReconciliationService {
     ) -> SessionReconciliationResult {
         let configuration: ConfigurationDocument
         do {
-            guard let loaded = try configurationStore.load() else {
+            guard let file = try configurationStore.loadFile() else {
                 throw SessionReconciliationServiceError.configurationMissing
             }
-            configuration = loaded
+            configuration = file.inForce(on: LogicalDay.containing(now))
         } catch {
             return SessionReconciliationResult(
                 repairRuleIDs: trigger.selectedRuleID.map { [$0] } ?? [],
@@ -116,13 +116,14 @@ public final class SessionReconciliationService {
     ) -> SessionReconciliationResult {
         let configuration: ConfigurationDocument
         do {
-            guard let loaded = try configurationStore.load() else {
+            guard let file = try configurationStore.loadFile() else {
                 throw SessionReconciliationServiceError.configurationMissing
             }
-            guard loaded.rules.contains(where: { $0.id == ruleID }) else {
+            let inForce = file.inForce(on: LogicalDay.containing(now, calendar: calendar))
+            guard inForce.rules.contains(where: { $0.id == ruleID }) else {
                 throw RuleLookupError.ruleNotFound(ruleID)
             }
-            configuration = loaded
+            configuration = inForce
         } catch {
             return SessionReconciliationResult(
                 repairRuleIDs: [ruleID],

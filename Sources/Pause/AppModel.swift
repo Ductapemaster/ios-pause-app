@@ -110,6 +110,10 @@ final class AppModel: ObservableObject {
     private let sessionShieldController: (any ShieldControlling)?
     private let targetLauncher: (any TargetLaunching)?
     private var configurationStore: ConfigurationStore?
+    /// The whole saved file, kept beside the published `configuration` so a
+    /// scheduled change is still reachable once the in-force document has been
+    /// selected out of it.
+    private var configurationFile: ConfigurationFile?
     private var runtimeRepository: RuntimeRepository?
     private var failedGrantBlockStore: FailedGrantBlockStore?
     private var stateLock: AppGroupFileLock?
@@ -171,7 +175,9 @@ final class AppModel: ObservableObject {
             failedGrantBlockStore = FailedGrantBlockStore(directoryURL: directoryURL)
             stateLock = AppGroupFileLock(directoryURL: directoryURL)
 
-            if let savedConfiguration = try configurationStore.load() {
+            if let savedFile = try configurationStore.loadFile() {
+                let savedConfiguration = savedFile.inForce(on: LogicalDay.containing(Date()))
+                configurationFile = savedFile
                 configuration = savedConfiguration
                 pickerSelection.applicationTokens = Set(savedConfiguration.targets.map(\.applicationToken))
                 activationCoordinator.configurationBecameKnownGood()
