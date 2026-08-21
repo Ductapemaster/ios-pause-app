@@ -14,7 +14,7 @@ A rule cannot be relaxed while it is being enforced. Raising a session count, le
 
 ## What defers and what does not
 
-An edit is judged whole. If any part of it loosens, the entire edit waits for the start of the next logical day. Splitting one edit so that half applies now and half applies tomorrow would mean storing a difference rather than a document, and the added machinery is not worth the precision.
+An edit is judged whole. If any part of it loosens, the entire edit waits for the start of the next logical day. Splitting one edit so that half applies now and half applies tomorrow would mean storing a difference rather than a document, and the added machinery is not worth the precision. [Per-app rule changes](per-app-rule-changes.md) supersedes this: a split by app produces two whole documents rather than a difference, so the objection does not hold and each app is judged on its own.
 
 Rules are paired between the two documents by `AppRule.id`, and targets by `RuleTarget.ruleID`. A rule present in one document and absent from the other is not a field change; it is a rule added or removed, judged as below.
 
@@ -150,9 +150,9 @@ The choice is made on the key rather than on a failed decode. Falling back whene
 
 **Deleting Pause defeats all of this.** Reinstalling gives a clean slate with no rules and no pending changes. Nothing in this design prevents it, and nothing can.
 
-**A second save replaces a scheduled change rather than stacking onto it.** There is one pending slot, and every candidate document is built from the rules in force rather than from the pending one, so a save made while a change is scheduled writes over it. Cancelling is the only way back to the rules in force, and there is no way to hold two changes for the same reset.
+**A second save replaces a scheduled change rather than stacking onto it.** There is one pending slot, and every candidate document is built from the rules in force rather than from the pending one, so a save made while a change is scheduled writes over it. Cancelling is the only way back to the rules in force, and there is no way to hold two changes for the same reset. [Per-app rule changes](per-app-rule-changes.md) narrows this to the app a save states an opinion about.
 
-**A picker save that both adds and drops apps waits as a whole.** The edit is judged whole, so an app added in the same trip through the picker as one dropped starts being covered at the reset rather than at once. Slated to change, with each app in a picker save judged on its own.
+**A picker save that both adds and drops apps waits as a whole.** The edit is judged whole, so an app added in the same trip through the picker as one dropped starts being covered at the reset rather than at once. [Per-app rule changes](per-app-rule-changes.md) replaces the whole-document rule with one judgment per app.
 
 **The countdown setting is the one field a late edit reaches.** Every per-day rule is safe from timing: a loosening lands at the reset, the same instant the used-session count returns to zero, so an edit made late in the day grants nothing that day. `settings.pauseSeconds` is not per-day and has no reset to ride in on, so shortening it late does take effect that much sooner. Accepted: the exposure is a few seconds of delay before a session starts, and a second timing rule for one field costs more than it protects.
 
