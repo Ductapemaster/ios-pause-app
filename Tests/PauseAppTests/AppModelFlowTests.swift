@@ -343,6 +343,76 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertNil(model.pendingChangeStartDay)
     }
 
+    func testAPickerSaveThatAddsAndDropsCoversTheAddedAppToday() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        // One trip through the picker: Instagram dropped, Threads added.
+        model.pickerSelection.applicationTokens = [try token(seed: "threads")]
+
+        try model.applyPickerSelection(now: now)
+
+        XCTAssertEqual(
+            Set(model.configuration.targets.map(\.applicationToken)),
+            [try token(seed: "instagram"), try token(seed: "threads")]
+        )
+        XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertTrue(model.lastSaveDeferredPart)
+    }
+
+    func testTheAddedAppSurvivesTheDropWhenItLands() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        model.pickerSelection.applicationTokens = [try token(seed: "threads")]
+        try model.applyPickerSelection(now: now)
+
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: now)!
+        model.sceneDidBecomeActive(now: tomorrow)
+
+        XCTAssertEqual(
+            model.configuration.targets.map(\.applicationToken),
+            [try token(seed: "threads")]
+        )
+        XCTAssertEqual(model.ruleIDsPendingRemoval, [])
+        XCTAssertNil(model.pendingChangeStartDay)
+    }
+
+    func testATighteningSaveDefersNothingOfItsOwnWhileAChangeIsScheduled() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        // Schedule Instagram's removal, then lengthen the pause — a tightening
+        // that says nothing about Instagram.
+        model.pickerSelection.applicationTokens = []
+        try model.applyPickerSelection(now: now)
+        XCTAssertTrue(model.lastSaveDeferredPart)
+
+        try model.updatePauseSeconds(20, now: now)
+
+        XCTAssertEqual(model.configuration.settings.pauseSeconds, 20)
+        XCTAssertFalse(model.lastSaveDeferredPart)
+        // The removal is still scheduled; only this save deferred nothing.
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
+    }
+
     private func makeModel(
         directory: URL,
         probe: FlowProbe,

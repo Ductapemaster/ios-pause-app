@@ -93,6 +93,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var authorizationStatus: AuthorizationStatus
     @Published private(set) var configuration: ConfigurationDocument
     @Published private(set) var pendingChangeStartDay: CalendarDay?
+    /// Whether the last save deferred part of itself, as opposed to leaving a
+    /// change scheduled that it never touched. The rule editor stays open only
+    /// for the former: the wait it shows should be the one just chosen.
+    @Published private(set) var lastSaveDeferredPart = false
     @Published var pickerSelection: FamilyActivitySelection
     @Published var presentedError: AppError?
     @Published private(set) var entryRoute: AppEntryRoute = .configuration
@@ -564,6 +568,7 @@ final class AppModel: ObservableObject {
             configurationFile = cleared
             configuration = kept
             pendingChangeStartDay = nil
+            lastSaveDeferredPart = false
         } catch {
             presentedError = AppError(title: "Couldn't cancel the change", error: error)
         }
@@ -862,6 +867,7 @@ final class AppModel: ObservableObject {
         configurationFile = routed
         configuration = routed.inForce(on: LogicalDay.containing(now))
         pendingChangeStartDay = Self.scheduledStartDay(in: routed, now: now)
+        lastSaveDeferredPart = routed.effective != candidate
     }
 
     /// The start day of a change that has not arrived yet. A pending document is

@@ -76,7 +76,7 @@ struct RuleEditorView: View {
             )
             // A save that waits stays on screen under its notice, so the wait is
             // visible where it was chosen. One that applied at once is done.
-            if model.pendingChangeStartDay == nil {
+            if !model.lastSaveDeferredPart {
                 dismiss()
             }
         } catch {
