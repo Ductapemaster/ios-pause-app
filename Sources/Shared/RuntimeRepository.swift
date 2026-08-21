@@ -37,69 +37,6 @@ public final class RuntimeRepository: RuntimeReading, @unchecked Sendable {
         try stateLock.withLock { try file(for: ruleID).delete() }
     }
 
-    public func stageRemoval(ruleID: UUID) throws -> StagedRuntimeRemoval {
-        try stateLock.withLock {
-            let originalURL = fileURL(for: ruleID)
-            let stagedURL = stagedFileURL(for: ruleID)
-            let fileManager = FileManager.default
-            let originalExists = fileManager.fileExists(atPath: originalURL.path)
-            let stagedExists = fileManager.fileExists(atPath: stagedURL.path)
-
-            if stagedExists {
-                guard try isRegularFile(at: stagedURL) else {
-                    throw PersistenceError.invalidStagedRuntimeFile(ruleID)
-                }
-                if !originalExists {
-                    return StagedRuntimeRemoval(ruleID: ruleID, wasPresent: true)
-                }
-            }
-            guard originalExists else {
-                return StagedRuntimeRemoval(ruleID: ruleID, wasPresent: false)
-            }
-            guard try isRegularFile(at: originalURL) else {
-                throw PersistenceError.invalidRuntimeFile(ruleID)
-            }
-
-            if stagedExists {
-                try fileManager.removeItem(at: stagedURL)
-            }
-            try fileManager.moveItem(at: originalURL, to: stagedURL)
-            return StagedRuntimeRemoval(ruleID: ruleID, wasPresent: true)
-        }
-    }
-
-    public func restoreRemoval(_ stage: StagedRuntimeRemoval) throws {
-        guard stage.wasPresent else { return }
-        try stateLock.withLock {
-            let originalURL = fileURL(for: stage.ruleID)
-            let stagedURL = stagedFileURL(for: stage.ruleID)
-            guard FileManager.default.fileExists(atPath: stagedURL.path) else {
-                throw PersistenceError.missingStagedRuntime(stage.ruleID)
-            }
-            guard try isRegularFile(at: stagedURL) else {
-                throw PersistenceError.invalidStagedRuntimeFile(stage.ruleID)
-            }
-            guard !FileManager.default.fileExists(atPath: originalURL.path) else {
-                throw PersistenceError.runtimeRestoreDestinationExists(stage.ruleID)
-            }
-            try FileManager.default.moveItem(at: stagedURL, to: originalURL)
-        }
-    }
-
-    public func finalizeRemoval(_ stage: StagedRuntimeRemoval) throws {
-        guard stage.wasPresent else { return }
-        try stateLock.withLock {
-            let stagedURL = stagedFileURL(for: stage.ruleID)
-            guard FileManager.default.fileExists(atPath: stagedURL.path) else {
-                throw PersistenceError.missingStagedRuntime(stage.ruleID)
-            }
-            guard try isRegularFile(at: stagedURL) else {
-                throw PersistenceError.invalidStagedRuntimeFile(stage.ruleID)
-            }
-            try FileManager.default.removeItem(at: stagedURL)
-        }
-    }
-
     public func deleteOrphanedRuntimes(keeping ruleIDs: Set<UUID>) throws {
         try stateLock.withLock {
             let fileURLs = try FileManager.default.contentsOfDirectory(
@@ -145,16 +82,6 @@ public final class RuntimeRepository: RuntimeReading, @unchecked Sendable {
 
     private func fileURL(for ruleID: UUID) -> URL {
         directoryURL.appendingPathComponent("runtime-\(ruleID.uuidString.lowercased()).json")
-    }
-
-    private func stagedFileURL(for ruleID: UUID) -> URL {
-        directoryURL.appendingPathComponent(
-            "runtime-\(ruleID.uuidString.lowercased()).json.removal-stage"
-        )
-    }
-
-    private func isRegularFile(at url: URL) throws -> Bool {
-        try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true
     }
 
     private func ruleID(for fileURL: URL) -> UUID? {

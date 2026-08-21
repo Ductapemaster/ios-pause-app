@@ -101,7 +101,6 @@ final class AppModel: ObservableObject {
     private let authorizationStatusProvider: () -> AuthorizationStatus
     private let authorizationRequester: () async throws -> Void
     private let activityCenter: DeviceActivityCenter
-    private let ruleRemovalCoordinator: RuleRemovalCoordinator
     private let shieldReconciler: ShieldReconciler
     private let shieldIntentStore: ShieldIntentStore
     private let entryActivationProvider: ((Date) throws -> PauseActivationResolution<AppEntryRoute>?)?
@@ -128,7 +127,6 @@ final class AppModel: ObservableObject {
         authorizationCenter: AuthorizationCenter = .shared,
         appGroupContainer: AppGroupContainer = AppGroupContainer(),
         activityCenter: DeviceActivityCenter = DeviceActivityCenter(),
-        ruleRemovalCoordinator: RuleRemovalCoordinator = RuleRemovalCoordinator(),
         shieldReconciler: ShieldReconciler = ShieldReconciler(),
         shieldIntentStore: ShieldIntentStore = ShieldIntentStore(),
         storageDirectoryURL: URL? = nil,
@@ -149,7 +147,6 @@ final class AppModel: ObservableObject {
         self.authorizationRequester = authorizationRequester
             ?? { try await authorizationCenter.requestAuthorization(for: .individual) }
         self.activityCenter = activityCenter
-        self.ruleRemovalCoordinator = ruleRemovalCoordinator
         self.shieldReconciler = shieldReconciler
         self.shieldIntentStore = shieldIntentStore
         self.entryActivationProvider = entryActivationProvider
@@ -400,7 +397,7 @@ final class AppModel: ObservableObject {
     }
 
     func applyPickerSelection(now: Date = Date()) throws {
-        guard let configurationStore, let runtimeRepository else {
+        guard configurationStore != nil, let runtimeRepository else {
             throw AppModelError.storageUnavailable
         }
         try requireConfigurationMutation(.pickerSelection)
@@ -515,7 +512,7 @@ final class AppModel: ObservableObject {
         guard (1...120).contains(sessionLengthMinutes) else {
             throw AppModelError.invalidSessionLength
         }
-        guard let configurationStore else {
+        guard configurationStore != nil else {
             throw AppModelError.storageUnavailable
         }
         guard let index = configuration.rules.firstIndex(where: { $0.id == id }) else {
@@ -542,7 +539,7 @@ final class AppModel: ObservableObject {
         guard (1...120).contains(seconds) else {
             throw AppModelError.invalidPauseDuration
         }
-        guard let configurationStore else {
+        guard configurationStore != nil else {
             throw AppModelError.storageUnavailable
         }
 
@@ -881,74 +878,6 @@ final class AppModel: ObservableObject {
         configuration = configurationFile.inForce(on: LogicalDay.containing(now))
         pendingChangeStartDay = Self.scheduledStartDay(in: configurationFile, now: now)
         pickerSelection.applicationTokens = Set(configuration.targets.map(\.applicationToken))
-    }
-
-    private func commitRuleRemoval(
-        ruleIDs: [UUID],
-        nextConfiguration: ConfigurationDocument,
-        configurationStore: ConfigurationStore,
-        runtimeRepository: RuntimeRepository,
-        now: Date
-    ) throws -> RuleRemovalOutcome {
-        guard let failedGrantBlockStore else {
-            throw AppModelError.storageUnavailable
-        }
-        let previousConfiguration = configuration
-        let removal = { [self] in
-            try ruleRemovalCoordinator.remove(
-                ruleIDs: ruleIDs,
-                stageRuntime: { ruleID in
-                    try runtimeRepository.stageRemoval(ruleID: ruleID)
-                },
-                restoreRuntime: { stage in
-                    try runtimeRepository.restoreRemoval(stage)
-                },
-                finalizeRuntime: { stage in
-                    try runtimeRepository.finalizeRemoval(stage)
-                },
-                unshield: { ruleID in
-                    guard canApplyManagedSettings else { return }
-                    try shieldReconciler.unshield(
-                        ruleID: ruleID,
-                        configuration: previousConfiguration
-                    )
-                },
-                restoreShields: { failedRuntimeRestores in
-                    guard canApplyManagedSettings else { return }
-                    try shieldReconciler.reconcile(
-                        configuration: previousConfiguration,
-                        runtimeRepository: runtimeRepository,
-                        now: now,
-                        forceShieldedRuleIDs: failedRuntimeRestores
-                    )
-                },
-                commitConfiguration: { [self] in
-                    try persist(nextConfiguration, now: now)
-                },
-                clearFailedGrantBlock: failedGrantBlockStore.clear,
-                stopMonitoring: { ruleIDs in
-                    activityCenter.stopMonitoring(
-                        ruleIDs.map { ruleID in
-                            DeviceActivityName(
-                                SessionActivityName.sessionActivityName(for: ruleID)
-                            )
-                        }
-                    )
-                }
-            )
-        }
-        if let stateLock {
-            return try stateLock.withLock(removal)
-        }
-        return try removal()
-    }
-
-    private func presentRemovalCleanupErrors(_ errors: [Error]) {
-        guard !errors.isEmpty else { return }
-        presentedError = AppError(
-            title: "App removed, but cleanup failed",
-            error: RuleRemovalCleanupError(errors: errors)
-        )
     }
 
     private func reconcileShieldsIfAuthorized(
