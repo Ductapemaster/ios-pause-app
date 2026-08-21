@@ -374,7 +374,7 @@ Replace the file's existing `document(sessionsPerDay:)` helper with these, and u
         pauseSeconds: Int = 10
     ) throws -> ConfigurationDocument {
         try ConfigurationDocument(
-            settings: try GlobalSettings(pauseSeconds: pauseSeconds),
+            settings: GlobalSettings(pauseSeconds: pauseSeconds),
             rules: try seeds.map { seed in
                 try AppRule(
                     id: ruleIDs[seed]!,
@@ -401,6 +401,7 @@ Replace the file's existing `document(sessionsPerDay:)` helper with these, and u
     private func sessionsPerDay(of document: ConfigurationDocument?, seed: String) -> Int? {
         document?.rules.first { $0.id == ruleIDs[seed] }?.sessionsPerDay
     }
+```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 

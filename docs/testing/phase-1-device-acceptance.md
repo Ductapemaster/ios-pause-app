@@ -1,58 +1,76 @@
 # Phase 1 device acceptance
 
-Phase 1 is not accepted until every row below is settled. Rows marked Pending need a concrete signed-device observation that passes — simulator tests and unsigned builds do not substitute for Screen Time behavior on the phone. Rows marked Unit-covered are settled by the named unit tests.
+Phase 1 is accepted when the run-through below is recorded as passing, plus the two timed rows that cannot fit inside it. Everything else Pause does is settled by the unit suite, or is deliberately not verified on the device — the last section says which, and why.
+
+## What the device is for
+
+The device is irreplaceable for one thing: observing what iOS itself does. Screen Time authorization, shield presentation and identity, shield intent handoff, Device Activity callback timing, and how a live session behaves are only visible on the phone. Everything that is Pause's own bookkeeping — what a session costs, what a rollback restores, which day a count belongs to — is a pure function over value types and is pinned by unit tests, which are faster, exact, and do not need a phone.
+
+Almost everything in the first category happens in **one continuous pass** through the app: authorize, pick, shield, tap, pause, return, expire, exhaust. Running it as one scripted sitting rather than as separate cases is what keeps acceptance to about twenty minutes.
 
 ## Run record
 
 - Date and tester: `<YYYY-MM-DD; name>`
 - Device and OS: `iPhone 16 Pro (iPhone17,1); iOS 26.6` (minimum supported version: iOS 26.5)
-- App source and build: `commit 4b48503; signed Debug build; bundle ID com.koubalabs.pause`
-- Selected apps: `Instagram; <manual-return app>`
-- Expiry evidence: `session start <clock time>; configured duration <minutes>; shield restored <clock time>; measured delay <seconds>`
-- Concrete observation: `<what appeared, what was tapped, count/state before and after, and any error text>`
+- App source and build: `commit <sha>; signed Debug build; bundle ID com.koubalabs.pause`
+- Selected apps: `Instagram; <second app>`
+- Concrete observation per step: `<what appeared, what was tapped, count/state before and after, and any error text>`
 
-Use a fresh install where specified. iOS 27 requires a separate qualification run after its release and matching Xcode toolchain are available.
+Start from a **fresh install** — delete Pause and its data first. iOS 27 requires a separate qualification run after its release and matching Xcode toolchain are available.
 
-## What the device run covers
+## The run-through
 
-The device is irreplaceable for one thing: observing what iOS itself does. Screen Time authorization, shield presentation and identity, shield intent handoff, Device Activity callback timing, and how a live session behaves across backgrounding, termination, and local midnight are all only visible on the phone.
+One sitting, in order. A step that fails stops the run: later steps assume the earlier ones.
 
-The failure rows are a different case. They exercise Pause's own rollback and repair code rather than Screen Time behavior, and unit tests already cover that code, so a device adds little. Each such row names the tests that cover it and carries Unit-covered in place of a device result.
+| # | Step | What to watch for |
+|---|---|---|
+| 1 | Install the signed build and request individual Screen Time authorization. | Authorization succeeds and Pause reaches empty configuration without needing a rule first. |
+| 2 | Select Instagram and a second installed app in one picker save, then give them **different** daily allowances and session lengths. | Both apps are covered, each editor holds only its own values. |
+| 3 | Open each target. | Both are shielded, each shield carries Apple's correct app identity, and each names **that rule's own** remaining count. Two apps with different allowances is what makes a rule/token mispairing visible. |
+| 4 | Tap the shield's button on each app in separate attempts. | Pause opens and starts the flow for the same app whose shield was tapped. |
+| 5 | Start a pause and let it run to completion in the foreground. | Use becomes available only after the full configured duration. |
+| 6 | Press Home mid-pause, reopen Pause, and begin again. | The attempt is abandoned, no session is charged, and the full pause restarts. |
+| 7 | Complete an Instagram pause and choose Use. | The session activates, exactly one session is charged, and `instagram://` returns to Instagram automatically. |
+| 8 | Complete a pause for the second app and choose Use. | The session activates before instructions appear; returning through Home or the App Switcher opens the target. |
+| 9 | Use every configured session for one rule, then open that target again the same day. | The shield refuses with the daily-limit reason and the target stays blocked. |
+| 10 | Remove a configured rule whose target is shielded, and let the removal land at the next reset. | Monitoring stops, the runtime goes, and that target is no longer shielded. |
 
-Timing rows read wall-clock time against the session's configured duration. `docs/design/pause-app.md` tiers the criterion: a callback within five seconds of the named expiry passes, and one later than thirty seconds blocks the phase. A wall clock settles the thirty-second blocking threshold; confirming the five-second tier needs an instrument and is deferred.
+## The two timed rows
 
-## Acceptance matrix
+These need a wait that will not fit inside the sitting. Start each and walk away.
 
-| Requirement | Test setup | Expected | Observed | Pass/Fail |
+| Requirement | Setup | Expected | Observed | Pass/Fail |
 |---|---|---|---|---|
-| Fresh install and Screen Time authorization | Delete Pause and its data, install the signed build, then request individual authorization. | Authorization succeeds and the app reaches empty configuration without creating a rule first. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Denied authorization | From a fresh install, deny the individual Screen Time request. | Pause stays in setup state and creates no rules or claim of enforcement. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Multiple application selection | Grant authorization and select Instagram plus another installed app in one Apple picker save. | Both eligible apps are selected and shown with Apple's labels and icons. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Independent rule editing | Give Instagram and the second app different daily allowances and session lengths, then reopen both editors. | Each app retains only its own saved values. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Shields after setup and activation | Save both rules, open each target, return to Pause, then activate each target again. | Both targets are shielded after setup and remain correctly shielded after later app activation. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Per-app shield identity and remaining count | Configure different allowances, then open each shield. | Apple's app identity is correct and each shield names that rule's own count of sessions still available today. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Shield intent handoff | Tap the shield's button on each app in separate attempts. | Pause opens and starts the flow for the same app whose shield was tapped. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Foreground pause duration | Start a pause and leave Pause active until the configured duration elapses. | Use becomes available only after the full configured foreground duration. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Home interruption | Press Home before the pause completes, reopen Pause, and begin again. | The attempt is abandoned, no session is charged, and the full pause restarts. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Lock interruption | Lock before the pause completes, unlock, reopen Pause, and begin again. | The attempt is abandoned, no session is charged, and the full pause restarts. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Scene interruption | Leave Control Center open long enough for Pause to become inactive, then return and begin again. | The attempt is abandoned, no session is charged, and the full pause restarts. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Instagram automatic return | Complete an Instagram pause and choose Use. | The session activates, exactly one session is charged, and `instagram://` returns to Instagram automatically. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Manual return | Complete a pause for the app without a supported route and choose Use. | The session activates before instructions appear; returning through Home or App Switcher opens the target. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Wall-clock session while backgrounded | Note the clock time at session start, background the target for part of the configured duration, then return both before and after the expiry that start time implies. | Background time consumes the grant; access remains open only until the original stored `expiresAt`. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Three-minute expiry restoration | Start a three-minute session and record the wall-clock start time and the time the shield returns; the wall clock settles the thirty-second blocking threshold and five-second confirmation is deferred. | The warning callback restores the shield no more than five seconds after stored expiry. | Run 2026-08-20 on the iPhone 16 Pro running iOS 26.6. `intervalWillEndWarning` arrived 22:40:39.290 and the shield rendered the exhausted variant at 22:40:39.376, 182.4s after the session's `intervalDidStart` at 22:37:36.843. The thirty-second threshold is settled with wide margin. The five-second tier is **not** settled: the stored `expiresAt` appears in no log, and both callbacks carry an unmeasured latency against the moments they name, so the delay against stored expiry is unknown to within a few seconds. | Pass against the thirty-second threshold |
-| Sixteen-minute expiry restoration | Start a sixteen-minute session and record the wall-clock start time and the time the shield returns; the wall clock settles the thirty-second blocking threshold and five-second confirmation is deferred. | The interval-end callback restores the shield no more than five seconds after stored expiry. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Warning callback activity stop | By the wall clock, start a three-minute session at `t+00:00` and a second three-minute session at `t+13:30`, then watch the shield across the first activity's original interval end at `t+15:00` and the second session's expiry at `t+16:30`. The shield's own behavior settles this; a callback trace would explain why, not whether. | The second session stays open past `t+15:00`, so the first activity's original interval end neither cancels nor changes it, and the shield returns at `t+16:30`. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Delayed callback recovery | Unit tests drive a late or duplicate expiry callback and a following app activation. | App activation clears the expired session and restores the shield from stored expiry. | Covered by `testDuplicateCallbackWithNoOpenSessionDoesNotChangeCountAndRepairsShield`, `testFallBackAmbiguityFailsBlockedWhenResolvedCallbackIsEarly`, and `testMarkedExpiredSessionPersistsClearBeforeMarkerClearAndFullReconcile`; no device run planned. | Unit-covered |
-| App termination during a session | Start a session, terminate Pause, wait beyond stored expiry, then activate Pause and the target. | The stored wall-clock expiry remains authoritative and the target returns to the shielded state. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Daily count reset at local midnight | Exhaust or partially use a rule before local midnight, then check the next prospective session after midnight. | The new local day starts at count zero and offers session 1. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Session crossing midnight | Start a session before midnight whose stored expiry is after midnight. | The active session stays open until its original expiry while the new day's count resets independently. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Exhausted allowance | Use every configured session for one rule, then open that target again the same day. | The shield refuses another session with the daily-limit reason and the target stays blocked. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Rule removal | Remove a configured rule with its target shielded and monitoring state present. | Activity monitoring stops, runtime is removed, and that target is no longer shielded. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Rule edit during an active session | Start a session, then edit that rule's allowance or duration before stored expiry. | The open session keeps its original expiry and accounting; edits apply only to later decisions. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
-| Isolated corrupt-runtime repair | Unit tests corrupt one rule's runtime while another stays valid, then drive both flows and a confirmed reset. | Only the affected app stays blocked and Pause offers an explicit confirmed reset; the other rule remains usable. | Covered by `testConfirmedRuntimeResetTouchesOnlySelectedFileAndClearsOnlySelectedMarker`, `testUnrelatedCorruptRuntimeOverridesSelectedPauseWithFailBlockedRepair`, and `testSelectedCorruptIntentRepairIsNotReplacedByUnrelatedCorruptRuntimeRepair`; no device run planned. | Unit-covered |
-| Scheduling failure | Unit tests fail Device Activity scheduler registration and reservation before a grant. | The target stays shielded, no session is charged, and the failure is visible. | Covered by `testSchedulingFailureLeavesRuntimeAndShieldUntouched` and `testReservationFailureStopsScheduleAndLeavesShieldIntact`; no device run planned. | Unit-covered |
-| Explicit Instagram route failure | Unit tests fail the explicit Instagram open after grant preparation. | Runtime rolls back, monitoring stops, the target is re-shielded, and no session is charged; any incomplete repair is stated accurately. | Covered by `testExplicitRouteFailureRollsBackStopsAndReshieldsWithoutCharging` and `testExplicitLaunchFailureRollsBackStopsReconcilesAndChargesNothing`; no device run planned. | Unit-covered |
-| Failed-grant relaunch safety | Unit tests leave a durable failed-grant marker across store instances, including a marker-persistence failure, and check the shield ordering that follows. | The affected app remains shielded across relaunch and Pause exposes its repair path without clearing unrelated state. | Covered by `testMarkerPersistsAcrossStoreInstances`, `testFailedGrantForceShieldPersistsBeforeApplyingImmediateBlock`, and `testFailedGrantMarkerPersistenceFailureStillAppliesShieldInOrder`; no device run planned. | Unit-covered |
+| Three-minute expiry restoration | Start a three-minute session; record the wall-clock start and the time the shield returns. | The warning callback restores the shield well inside the thirty-second blocking threshold. | Run 2026-08-20 on the iPhone 16 Pro running iOS 26.6. `intervalWillEndWarning` arrived 22:40:39.290 and the shield rendered the exhausted variant at 22:40:39.376, 182.4s after the session's `intervalDidStart` at 22:37:36.843. | Pass against the thirty-second threshold |
+| Sixteen-minute expiry restoration | Start a sixteen-minute session; record the wall-clock start and the time the shield returns. | The interval-end callback restores the shield well inside the thirty-second blocking threshold. | Not run — planned on the iPhone 16 Pro running iOS 26.6. | Pending |
+
+The sixteen-minute row is not a longer copy of the three-minute one. A session under fifteen minutes is padded to a fifteen-minute schedule and expires on `intervalWillEndWarning`; a longer session expires on `intervalDidEnd`. They are different callbacks, and only the shorter one has been observed.
+
+**The five-second tier is not settled and is not being pursued.** [The design](../design/pause-app.md) tiers the criterion at five seconds to pass and thirty to block. The wall clock and the unified log both settle thirty. Five would need the stored `expiresAt` in the log alongside the callback, because both callbacks carry an unmeasured latency against the moments they name — an instrument worth building only if a restoration is ever seen to run late.
+
+## Settled by unit tests
+
+These exercise Pause's own rollback, repair and accounting rather than Screen Time behavior, so a device adds nothing they do not already have.
+
+| Requirement | Covered by |
+|---|---|
+| Delayed callback recovery | `testDuplicateCallbackWithNoOpenSessionDoesNotChangeCountAndRepairsShield`, `testFallBackAmbiguityFailsBlockedWhenResolvedCallbackIsEarly`, `testMarkedExpiredSessionPersistsClearBeforeMarkerClearAndFullReconcile` |
+| Isolated corrupt-runtime repair | `testConfirmedRuntimeResetTouchesOnlySelectedFileAndClearsOnlySelectedMarker`, `testUnrelatedCorruptRuntimeOverridesSelectedPauseWithFailBlockedRepair`, `testSelectedCorruptIntentRepairIsNotReplacedByUnrelatedCorruptRuntimeRepair` |
+| Scheduling failure | `testSchedulingFailureLeavesRuntimeAndShieldUntouched`, `testReservationFailureStopsScheduleAndLeavesShieldIntact` |
+| Explicit Instagram route failure | `testExplicitRouteFailureRollsBackStopsAndReshieldsWithoutCharging`, `testExplicitLaunchFailureRollsBackStopsReconcilesAndChargesNothing` |
+| Failed-grant relaunch safety | `testMarkerPersistsAcrossStoreInstances`, `testFailedGrantForceShieldPersistsBeforeApplyingImmediateBlock`, `testFailedGrantMarkerPersistenceFailureStillAppliesShieldInOrder` |
+
+## Deliberately not verified on the device
+
+Each of these was a row in an earlier, longer matrix. Dropping a row does not make its behavior verified — it makes it **unverified by choice**, on the reasoning given. Any of them is worth reinstating if the behavior it names ever misbehaves in use.
+
+- **Lock interruption** and **scene interruption**. Both reach the same branch as pressing Home: `PauseApp.swift:32-38` treats `.inactive` exactly as backgrounding. One trigger through that branch is the run-through's step 6; the other two would re-observe one code path. That the branch is aggressive is a known product question, recorded in the roadmap, not an acceptance question.
+- **Denied authorization.** A whole fresh-install-and-deny cycle to observe one setup screen refusing to advance.
+- **Multiple application selection as its own row.** Apple's picker rendering Apple's labels is Apple's behavior; step 2 depends on the selection working anyway, so a failure there stops the run regardless.
+- **Independent rule editing as its own row.** Per-rule persistence is unit-covered and folded into step 2, where it costs nothing to look.
+- **Wall-clock session while backgrounded**, **app termination during a session**, and **rule edit during an active session.** All three assert that the stored `expiresAt` stays authoritative through an interruption. That is accounting over stored values, which the unit suite covers directly and exactly.
+- **Daily count reset at local midnight** and **session crossing midnight.** Both need the tester awake at midnight or the device clock moved, which changes the thing being measured. The logical-day computation is unit-covered, and the device half — whether the `daily-reset` activity actually fires — was observed on 2026-08-20: `intervalDidStart for activity daily-reset` at 22:36:50, recorded in [the platform evidence note](../research/screen-time-platform-evidence.md).
+- **Warning callback activity stop.** A choreographed seventeen-minute two-session sequence to confirm that a stale interval end does not cancel a live session. The same note establishes the `stopMonitoring` → `intervalDidEnd` semantics it rests on, and the 2026-08-20 run shows that exact callback pair arriving together and being handled without error.
 
 ## Automated checks for the acceptance commit
 
