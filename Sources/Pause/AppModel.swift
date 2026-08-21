@@ -853,7 +853,7 @@ final class AppModel: ObservableObject {
         guard let configurationStore else { throw AppModelError.storageUnavailable }
         let existing = try configurationStore.loadFile()
             ?? ConfigurationFile(effective: candidate, pending: nil)
-        let routed = ConfigurationSaveRouter.route(
+        let routed = try ConfigurationSaveRouter.route(
             candidate: candidate,
             into: existing,
             now: now
