@@ -1435,7 +1435,7 @@ Run the test command. Expected: FAIL — the runtime file has been deleted.
 
 - [ ] **Step 3: Write the implementation**
 
-In both removal paths, build the candidate document with the target and rule removed, then call `persist(_:now:)` and return. Do not call `ruleRemovalCoordinator.remove(...)`, do not stage or delete runtimes, do not unshield, do not stop monitoring, and leave `pickerSelection.applicationTokens` alone: the rule is still in force until the reset, so all of that state — including the app showing as selected — must stay.
+In both removal paths, build the candidate document with the target and rule removed, then call `persist(_:now:)` and return. Do not call `ruleRemovalCoordinator.remove(...)`, do not stage or delete runtimes, do not unshield, and do not stop monitoring: the rule is still in force until the reset, so all of that state must stay. The picker selection follows the in-force document, which still names the app, so the app stays selected too — Task 13 makes that the rule for every path.
 
 The reset reconciliation releases the application once the removal is in force (Task 12), and the orphan cleanup that already runs on app activation deletes the runtime file the next time Pause opens.
 
@@ -1673,35 +1673,211 @@ git commit -m "feat: release an app when its removal takes effect"
 ### Task 13: Showing a scheduled change
 
 **Files:**
+- Modify: `Sources/Pause/AppModel.swift` — the initializer's pending read, `sceneDidBecomeActive(now:)`, `applyPickerSelection(now:)`, `persist(_:now:)`
+- Create: `Sources/Pause/ScheduledChangeNotice.swift`
 - Modify: `Sources/Pause/RulesView.swift`
 - Modify: `Sources/Pause/RuleEditorView.swift`
+- Test: `Tests/PauseAppTests/AppModelFlowTests.swift` (extend)
 
 **Interfaces:**
-- Consumes: `AppModel.pendingChangeStartDay`, `AppModel.cancelScheduledChange()`.
+- Produces: `AppModel.ruleIDsPendingRemoval`, `ScheduledChangeNotice`, `ScheduledChangeWording.phrase(for:now:)`.
+- Consumes: `AppModel.pendingChangeStartDay`, `AppModel.cancelScheduledChange()`, `ConfigurationFile.inForce(on:)`.
+
+**Terms:** *in force* — the document `ConfigurationFile.inForce(on:)` returns for a given day, which is what every rule reader already works from. *Lands* — a scheduled change's start day arrives and it becomes the in-force document.
+
+A scheduled change is invisible until something renders it, and for a removal the rendering is the app itself: an app that has vanished from the list has taken effect, whatever a notice says alongside it. So a removal takes no visible effect until it lands. The rule keeps its row in the rules list, rendered de-emphasised and labelled as removing at the next reset, with the action that cancels it; the app stays selected in the picker. Both readings are true — the app is still shielded and still counting sessions against the same allowance.
 
 The notice says a change is scheduled and when it takes effect. It does not restate what changed: the friction is the wait and the fact of having scheduled something, not a recitation of the fields.
 
-- [ ] **Step 1: Add the notice to the rules list**
+`.familyActivityPicker` is Apple's system UI. Nothing can be drawn as half-removed inside it — an app is selected there or it is not — so the pending-removal presentation lives only in Pause's own list, and the picker's whole part in this is keeping the app selected.
 
-In `RulesView`, when `model.pendingChangeStartDay` is not nil, show a row above the list reading "A change to your rules starts tomorrow." with a "Cancel change" button calling `model.cancelScheduledChange()`. Render the day with `DateFormatter` in the device locale where the start day is not tomorrow, which happens if the app was not opened for a day.
+- [ ] **Step 1: Keep the picker selection on the in-force document**
 
-- [ ] **Step 2: Add the confirmation to the editor**
+The removal branch of `applyPickerSelection(now:)` returns before the selection is normalised, so an app dropped in the picker reads as deselected while its rule is still in force. Replace that early return and the trailing normalisation with one assignment built from `configuration.targets` — the document in force after the save — keeping the deferred path's skip of shield reconciliation:
 
-In `RuleEditorView`, after a save that leaves `model.pendingChangeStartDay` non-nil, show the same sentence with the same cancel action, so the outcome is visible at the moment of saving rather than only on the list.
+```swift
+        // The picker mirrors the document in force today rather than the raw
+        // tap: an app whose removal is scheduled is still shielded, so it is
+        // still selected.
+        var inForceSelection = FamilyActivitySelection()
+        inForceSelection.applicationTokens = Set(configuration.targets.map(\.applicationToken))
+        pickerSelection = inForceSelection
 
-- [ ] **Step 3: Build and run the app**
+        guard removedRuleIDs.isEmpty else {
+            // Dropping an app always loosens the rules, so the edit is
+            // scheduled for the next reset and only the pending document is
+            // written. Every rule in the save is still in force until then, so
+            // their runtimes, shields and monitoring stay as they are.
+            return
+        }
+        reconcileShieldsIfAuthorized(title: "Apps updated, but shields need repair")
+```
+
+An edit that adds one app and drops another is a loosening taken whole, so it defers whole: the added app is not in force today either, and the selection says so by leaving it out until the change lands.
+
+- [ ] **Step 2: Name the rules a scheduled change removes**
+
+`RulesView` iterates the in-force document, so a rule pending removal is already in the list. What it needs is to know which rows those are:
+
+```swift
+    /// Rules the in-force document still covers that a scheduled change drops.
+    var ruleIDsPendingRemoval: Set<UUID> {
+        guard let pending = configurationFile?.pending else { return [] }
+        let pendingRuleIDs = Set(pending.document.rules.map(\.id))
+        return Set(configuration.rules.map(\.id)).subtracting(pendingRuleIDs)
+    }
+```
+
+Once the change lands, `configuration` is the pending document, so this is empty and the marking stops without a flag to clear.
+
+- [ ] **Step 3: Stop calling a landed change scheduled**
+
+A pending document is selected at read time rather than promoted, so the file still names one after its start day has arrived. `pendingChangeStartDay` therefore has to mean *not arrived yet*, or the notice outlives the wait it describes:
+
+```swift
+    /// The start day of a change that has not arrived yet. A start day that has
+    /// arrived is in force, not scheduled.
+    private static func scheduledStartDay(in file: ConfigurationFile, now: Date) -> CalendarDay? {
+        guard let startDay = file.pending?.startDay,
+              startDay > LogicalDay.containing(now) else { return nil }
+        return startDay
+    }
+```
+
+Use it in the initializer and in `persist(_:now:)` in place of reading `pending?.startDay` directly.
+
+- [ ] **Step 4: Re-select the in-force document on activation**
+
+`configuration` is selected once, at init. Pause left open across a reset keeps yesterday's document, so a landed removal stays on screen and the orphan cleanup running in that same activation still sees the rule. Re-select first thing in `sceneDidBecomeActive(now:)`:
+
+```swift
+    /// Re-selects the document in force for the day Pause is being opened on, so
+    /// a change that reached its start day while the app was away takes hold
+    /// without a relaunch. The file in hand holds both documents, so this reads
+    /// nothing from disk.
+    private func refreshInForceConfiguration(now: Date) {
+        guard let configurationFile else { return }
+        configuration = configurationFile.inForce(on: LogicalDay.containing(now))
+        pendingChangeStartDay = Self.scheduledStartDay(in: configurationFile, now: now)
+        pickerSelection.applicationTokens = Set(configuration.targets.map(\.applicationToken))
+    }
+```
+
+- [ ] **Step 5: The notice and its wording**
+
+Create `Sources/Pause/ScheduledChangeNotice.swift`, holding the sentence, the cancel action, and the phrase both surfaces need:
+
+```swift
+/// When a scheduled change starts, in the words the two surfaces share.
+enum ScheduledChangeWording {
+    static func phrase(for day: CalendarDay, now: Date = Date()) -> String {
+        if day == LogicalDay.next(after: now) { return "tomorrow" }
+        guard let date = day.date(in: .current) else { return "at the next reset" }
+        return "on \(date.formatted(.dateTime.month(.abbreviated).day()))"
+    }
+}
+```
+
+`CalendarDay` holds era, year, month and day, so the file also carries a small `date(in:)` extension that rebuilds a `Date` through `DateComponents`. The date branch covers Pause not being opened for a day, which leaves a start day that is neither tomorrow nor arrived; it formats through `Date.formatted`, so the device locale decides the order of the fields.
+
+The notice itself is the sentence and the button:
+
+```swift
+struct ScheduledChangeNotice: View {
+    @ObservedObject var model: AppModel
+    let startDay: CalendarDay
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("A change to your rules starts \(ScheduledChangeWording.phrase(for: startDay)).")
+            Button("Cancel change") { model.cancelScheduledChange() }
+        }
+    }
+}
+```
+
+- [ ] **Step 6: The rules list**
+
+In `RulesView`, show the notice in a section above the app list whenever `model.pendingChangeStartDay` is not nil.
+
+Then split the `ForEach` body: a rule in `model.ruleIDsPendingRemoval` renders as a plain row instead of a `NavigationLink` — the app label, its allowance, "Removing tomorrow" in the shared wording, and a "Cancel removal" button calling `model.cancelScheduledChange()` — with the label and allowance de-emphasised so the row reads as on its way out. The row is deliberately not navigable: the editor saves a document built from the rules in force, which would write over the scheduled removal and quietly cancel it.
+
+- [ ] **Step 7: The editor confirmation**
+
+In `RuleEditorView`, show the same notice in a section at the top of the form whenever `model.pendingChangeStartDay` is not nil, and have `save()` dismiss only when the save applied at once. A deferred save leaves the editor standing with the notice under the title, so the outcome is visible at the moment of saving rather than only on the list.
+
+`removeRule()` still dismisses: the rules list is where a pending removal shows itself.
+
+- [ ] **Step 8: Write the model tests**
+
+```swift
+    func testDroppingAnAppFromThePickerKeepsItSelectedUntilTheRemovalLands() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        model.pickerSelection.applicationTokens = []
+
+        try model.applyPickerSelection(now: now)
+
+        XCTAssertEqual(model.pickerSelection.applicationTokens, [try token(seed: "instagram")])
+        XCTAssertEqual(model.configuration.rules.map(\.id), [ruleID])
+        XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+    }
+
+    func testTheRemovalTakesTheAppAndItsSelectionWhenItLands() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        model.pickerSelection.applicationTokens = []
+        try model.applyPickerSelection(now: now)
+
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: now)!
+        model.sceneDidBecomeActive(now: tomorrow)
+
+        XCTAssertTrue(model.configuration.rules.isEmpty)
+        XCTAssertTrue(model.pickerSelection.applicationTokens.isEmpty)
+        XCTAssertEqual(model.ruleIDsPendingRemoval, [])
+        XCTAssertNil(model.pendingChangeStartDay)
+    }
+```
+
+The second test drives the reset through activation because the initializer reads `Date()` and takes no injected clock, which leaves activation the only path a test can hand tomorrow to.
+
+- [ ] **Step 9: Build, test, and run**
 
 ```bash
 xcodegen generate
-xcodebuild build -project Pause.xcodeproj -scheme Pause -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO
 ```
-Expected: BUILD SUCCEEDED. Then run the tests; expected PASS.
-
-- [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/Pause/RulesView.swift Sources/Pause/RuleEditorView.swift
-git commit -m "feat: show that a change is waiting and offer to cancel it"
+xcodebuild test -project Pause.xcodeproj -scheme PauseUnitTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+```
+
+```bash
+xcodebuild build -project Pause.xcodeproj -scheme Pause -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO
+```
+
+Expected: both succeed, no failures. Then run the app in the simulator and look at the rules list with a removal scheduled.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add Sources/Pause Tests/PauseAppTests/AppModelFlowTests.swift
+```
+
+```bash
+git commit -m "feat: keep a removed app on screen until the removal lands"
 ```
 
 ---
@@ -1748,6 +1924,6 @@ None of this is proven by the simulator. After Task 13, install a signed build a
 - Raising an allowance leaves today's shield count unchanged, and the notice appears.
 - Lowering an allowance changes the shield count at once and clears the notice.
 - Cancelling a scheduled change clears the notice and leaves today's rule.
-- Removing an app leaves it shielded and counting until the next day, then releases it without opening Pause.
+- Removing an app leaves it listed, greyed and marked for tomorrow, still selected in the picker, and shielded and counting until the next day; it then releases without opening Pause, and the row is gone the next time Pause is opened.
 
 The last one is the only row that needs a reset to pass through, so it needs an overnight wait or a deliberate device-clock change — noting that changing the clock is exactly the case the spec records as undefended, so it demonstrates the mechanism rather than the guarantee.
