@@ -84,7 +84,98 @@ final class ConfigurationComparisonTests: XCTestCase {
         ))
     }
 
+    func testAUnitDroppingCoverageLoosens() throws {
+        XCTAssertTrue(ConfigurationComparison.isLoosening(from: try unit(), to: nil))
+    }
+
+    func testAUnitGainingCoverageDoesNotLoosen() throws {
+        XCTAssertFalse(ConfigurationComparison.isLoosening(from: nil, to: try unit()))
+    }
+
+    func testAUnitAbsentThroughoutDoesNotLoosen() {
+        XCTAssertFalse(ConfigurationComparison.isLoosening(
+            from: nil as ConfigurationComparison.RuleUnit?,
+            to: nil as ConfigurationComparison.RuleUnit?
+        ))
+    }
+
+    func testAUnitRaisingItsAllowanceLoosens() throws {
+        XCTAssertTrue(ConfigurationComparison.isLoosening(
+            from: try unit(sessionsPerDay: 3),
+            to: try unit(sessionsPerDay: 5)
+        ))
+    }
+
+    func testAUnitLoweringItsAllowanceDoesNotLoosen() throws {
+        XCTAssertFalse(ConfigurationComparison.isLoosening(
+            from: try unit(sessionsPerDay: 5),
+            to: try unit(sessionsPerDay: 3)
+        ))
+    }
+
+    func testAUnitLengtheningItsSessionLoosens() throws {
+        XCTAssertTrue(ConfigurationComparison.isLoosening(
+            from: try unit(sessionLengthMinutes: 5),
+            to: try unit(sessionLengthMinutes: 10)
+        ))
+    }
+
+    func testAUnitShorteningItsSessionDoesNotLoosen() throws {
+        XCTAssertFalse(ConfigurationComparison.isLoosening(
+            from: try unit(sessionLengthMinutes: 10),
+            to: try unit(sessionLengthMinutes: 5)
+        ))
+    }
+
+    func testAUnitRepointedAtAnotherApplicationLoosens() throws {
+        XCTAssertTrue(ConfigurationComparison.isLoosening(
+            from: try unit(seed: "instagram"),
+            to: try unit(seed: "threads")
+        ))
+    }
+
+    func testShorteningThePauseLoosensTheSettingsUnit() throws {
+        XCTAssertTrue(ConfigurationComparison.isLoosening(
+            from: try GlobalSettings(pauseSeconds: 10),
+            to: try GlobalSettings(pauseSeconds: 5)
+        ))
+    }
+
+    func testLengtheningThePauseDoesNotLoosenTheSettingsUnit() throws {
+        XCTAssertFalse(ConfigurationComparison.isLoosening(
+            from: try GlobalSettings(pauseSeconds: 5),
+            to: try GlobalSettings(pauseSeconds: 10)
+        ))
+    }
+
+    func testUnitsAreKeyedByRuleIdentity() throws {
+        let units = ConfigurationComparison.units(of: try twoRuleDocument())
+
+        XCTAssertEqual(Set(units.keys), [ruleID, otherRuleID])
+        XCTAssertEqual(units[ruleID]?.rule.id, ruleID)
+        XCTAssertEqual(units[ruleID]?.target.ruleID, ruleID)
+    }
+
     // MARK: - Helpers
+
+    private func unit(
+        sessionsPerDay: Int = 3,
+        sessionLengthMinutes: Int = 5,
+        seed: String = "instagram"
+    ) throws -> ConfigurationComparison.RuleUnit {
+        ConfigurationComparison.RuleUnit(
+            rule: try AppRule(
+                id: ruleID,
+                sessionsPerDay: sessionsPerDay,
+                sessionLengthMinutes: sessionLengthMinutes
+            ),
+            target: RuleTarget(
+                ruleID: ruleID,
+                applicationToken: try token(seed: seed),
+                launchRoute: nil
+            )
+        )
+    }
 
     private func document(
         sessionsPerDay: Int = 3,
