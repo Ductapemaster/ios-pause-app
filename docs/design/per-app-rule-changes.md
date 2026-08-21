@@ -60,10 +60,10 @@ The last case is the one that keeps last-write-wins where it belongs. A save tha
 
 ## What changes in the code
 
-`ConfigurationSaveRouter.route` keeps its signature. It already receives the candidate, the whole `ConfigurationFile` — which carries both the in-force and the pending document — and `now`, so the split is entirely internal to it. All four save paths gain the behavior at once and none of their callers change, `AppModel.applyPickerSelection` included.
+`ConfigurationSaveRouter.route` keeps its inputs. It already receives the candidate, the whole `ConfigurationFile` — which carries both the in-force and the pending document — and `now`, so the split is entirely internal to it. All four save paths gain the behavior at once, and `AppModel.applyPickerSelection` does not change at all. The return type gains `throws`, because building a document is a throwing call; that reaches the one place which routes a save and nowhere else.
 
 - **`ConfigurationComparison`** — `isLoosening(from:to:)` already walks rules one at a time and OR's the results. Extract that per-unit judgment and the settings judgment as their own functions; the document-level function becomes their disjunction and keeps its callers.
-- **`ConfigurationSaveRouter`** — build the two documents from the per-unit decision above.
+- **`ConfigurationSaveRouter`** — build the two documents from the per-unit decision above, walking the units the in-force document names, then those only the candidate adds, then those only the scheduled document still names. That last group exists because a save made before this design deferred a mixed picker trip whole, leaving an added app waiting in the scheduled document alone; walking it covers that app rather than dropping it.
 - **`ScheduledChange.addition`** — keep it. A picker save can no longer schedule an addition, since an add tightens and lands immediately, but the case is still emitted by the branch that reads a re-pointed target as a removal and an addition together. That branch guards a change no screen can make; leaving it alone keeps this effort to the judgment and out of the notice's wording.
 
 A latent fault closes with it. A deferred picker save writes an added rule's runtime immediately, while orphan cleanup keeps only the runtimes of rules the in-force document names — so the runtime of an added-but-deferred rule could be swept before its rule arrived. An add that applies at once is never in that window.

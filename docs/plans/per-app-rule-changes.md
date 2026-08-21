@@ -14,7 +14,7 @@
 
 - Swift 6, `SWIFT_VERSION: "6.0"`; iOS deployment target 26.5.
 - Regenerate the project with `xcodegen generate` after adding any file.
-- Full suite: `xcodebuild test -project Pause.xcodeproj -scheme PauseUnitTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`. It stands at 237 tests, 0 failures, before this plan.
+- Full suite: `xcodebuild test -project Pause.xcodeproj -scheme PauseUnitTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`. It stood at 237 tests, 0 failures, before this plan; each task adds to that, so measure the baseline at the commit you start from rather than trusting this number.
 - The unsigned device build must stay clean and warning-free: `xcodebuild build -project Pause.xcodeproj -scheme Pause -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO`.
 - No git remote is configured. Commit locally; never attempt a push.
 - `ConfigurationDocument.init` is declared `throws` but never throws; `try` on it is syntax, not a failure path.
