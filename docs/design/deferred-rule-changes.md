@@ -117,7 +117,11 @@ The reset releases the application, and the runtime file goes with the orphan cl
 
 ## What the app shows
 
-Saving a deferred edit shows a notice that a change is scheduled and when it takes effect, with a button to cancel it. It does not restate what changed. The friction is the wait and the fact of having scheduled something, not a recitation of the fields.
+Saving a deferred edit shows a notice that names the change and when it takes effect, with a button to cancel it: "Instagram is being removed tomorrow.", "Instagram changes to 5 sessions tomorrow.", "The pause changes to 20 seconds tomorrow." Where several things are scheduled at once the notice names the first and counts the rest — "Instagram is being removed, and 2 other changes start tomorrow." — which stays one sentence at three or four changes where naming each would not. A removal is named first, being the change worth seeing go.
+
+Naming it is what makes the single pending slot safe to look at. A later save replaces a scheduled change rather than stacking onto it, so a save made after a removal was scheduled supersedes it; a notice that only said a change was scheduled would let the removal go without a trace.
+
+The app in that sentence has no name Pause can read. `Label(token)` renders Apple's own name and icon as a view, and there is no string behind it, so the sentence is built as the token plus the words that follow it and the label is drawn where the subject goes.
 
 The notice sits at the top of the rules list and at the top of the rule editor, so a scheduled change cannot be forgotten before it lands. A deferred save leaves the editor open under the notice, where the wait is visible at the place it was chosen; a save that applied at once closes it.
 
