@@ -1,6 +1,6 @@
-# The shield configuration extension cannot read the app group
+# The shield configuration extension cannot write to the app group
 
-Instagram's shield reads "Open Pause to repair this app" instead of "Next session: 1 of 3" because `ShieldConfigExtension` cannot open files in the app group container. Every file operation it attempts returns `EPERM`, so `RuleLookup.resolve` never runs and the extension falls through to `ShieldPresentation.repair`. The inert "Done for today" button label and the missing session count are the same failure seen from two other angles.
+`ShieldConfigExtension` runs under a sandbox profile that refuses writes in the app group container. Taking the state lock is a write — `open(O_CREAT|O_RDWR)` on the lock file — so a shield render that began by taking the lock returned `EPERM` before reading anything, `RuleLookup.resolve` never ran, and the extension fell through to `ShieldPresentation.repair`: Instagram's shield read "Open Pause to repair this app" instead of "Next session: 1 of 3", with an inert "Done for today" button and no session count. Reads themselves are permitted, and the shield resolves once it stops taking the lock.
 
 The denial comes from the sandbox profile iOS assigns to the shield configuration extension point, not from anything in the bundle's entitlements or signature.
 
@@ -21,7 +21,7 @@ Eight such entries span 12:36:22 to 13:43:46. The archive contains no `Shield re
 
 `EPERM` is what `acquireFileLock` throws when `open(O_CREAT|O_RDWR|O_CLOEXEC)` on the lock file is denied (`Sources/Shared/AppGroupFileLock.swift:67-73`); `POSIXError(.EPERM)` bridges to exactly the observed `NSPOSIXErrorDomain Code=1`. Every logged entry carries the bridged `NSError` description rather than one of the extension's own `failedStage` strings, which rules out the two guarded paths — a nil application token and a missing configuration file.
 
-Whether the denial lands on the lock file's `open` or on a read inside `withLock` is not distinguished; both surface as the same error. `AppGroupContainer().directoryURL()` succeeds, so `containerURL(forSecurityApplicationGroupIdentifier:)` resolves the path and the app group is visible to the process. Only the file operations inside it are refused.
+The denial lands on the lock file's `open`, not on a read inside `withLock`: the same extension resolves normally once it reads the container's files without taking the lock (below). `AppGroupContainer().directoryURL()` succeeds, so `containerURL(forSecurityApplicationGroupIdentifier:)` resolves the path and the app group is visible to the process. Only writes inside it are refused.
 
 ### The sandbox profile is the discriminator
 
@@ -52,11 +52,16 @@ The instrument was coupled to the failure it measured. Reading `shield-diagnosti
 
 Phase 1 has the shield configuration extension compute what to display by taking a file lock and reading the configuration and runtime state from the app group. That is not permissible in this extension's sandbox, so the session count cannot be derived where it is currently derived. Whatever the shield displays has to be computed elsewhere and delivered through a channel the profile permits.
 
-The denial is not a blanket one on reading. Shared preferences are a separate channel from the container's files, and the extension reads them: a counter written by the shield action extension into `UserDefaults(suiteName:)` was read back and rendered by the configuration extension on every press, while that extension's own writes to the same suite never landed. Reads through shared preferences survive where writes do not — see [the platform evidence note](screen-time-platform-evidence.md). Within the container itself the denial is not direction-specific either: the lock file's `open(O_CREAT|O_RDWR)` is refused before any read is attempted.
+The denial is not a blanket one on reading. Shared preferences are a separate channel from the container's files, and the extension reads them: a counter written by the shield action extension into `UserDefaults(suiteName:)` was read back and rendered by the configuration extension on every press, while that extension's own writes to the same suite never landed. Reads through shared preferences survive where writes do not — see [the platform evidence note](screen-time-platform-evidence.md). Within the container the denial is direction-specific: reads of its files succeed, and the lock file's `open(O_CREAT|O_RDWR)` is refused.
 
-One question stays open for that redesign:
+The channel that redesign uses is the container's own files, read without the lock. `ShieldStateReader` loads the configuration and the runtime directly and never calls `AppGroupFileLock`, and the extension resolves: from `sysdiagnose_2026.08.20_22-41-03-0700`,
 
-- [ ] Which channel the profile does permit for handing precomputed text to the extension. Shared-preferences reads are a candidate on the evidence above.
+```
+22:37:09.775  I  ShieldConfigExtension  Shield resolved: 1 session left today
+22:40:39.376  I  ShieldConfigExtension  Shield resolved: That's all for today.
+```
+
+Both readings carry a real session count derived from those files, so reads of the container succeed under this profile. The denial is on the write, and `open(O_CREAT|O_RDWR)` on the lock file is a write — which is why taking the lock failed before any read was attempted, and why not taking it works.
 
 ## Method note
 

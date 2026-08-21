@@ -12,7 +12,7 @@ Three rigs stand behind everything below:
 
 ## The shield configuration extension's sandbox
 
-**Shared-preferences reads from the App Group succeed inside the shield configuration extension. Its writes to the same suite do not land.** Measured on device, 2026-08-12 and 08-13.
+**Reads from the App Group succeed inside the shield configuration extension — both its files and shared preferences. Writes do not land.** Measured on device, 2026-08-12, 08-13 and 08-20.
 
 The read was proven directly rather than inferred from an absence. The instrument was a tap counter held in the App Group's `UserDefaults` suite: the shield *action* extension increments it when the shield's primary button is pressed, and the *configuration* extension reads it and renders it into the shield's subtitle. Across five presses the rendered number climbed, so the configuration extension read back a value written by a different process.
 
@@ -22,8 +22,50 @@ The denial comes from the sandbox profile iOS assigns the shield configuration e
 
 Two consequences worth carrying:
 
-- The blocked screen is a **reader**. Whatever it displays has to be computed by another process and left where the profile permits it to be read.
+- The blocked screen is a **reader**. Whatever it displays has to be computed by another process and left where it can read it — which includes the container's own files, as long as nothing on the path takes the state lock, since `open(O_CREAT|O_RDWR)` on the lock file is itself a write.
 - The shield action extension can hand an `ApplicationToken` forward through the App Group. It recorded the shielded token before returning and the app read it back on every press, on both response paths — which is how the app learns which app was shielded, since no `ShieldActionResponse` carries that identity.
+
+## The monitor extension's sandbox
+
+**File operations in the app group container succeed inside the DeviceActivity monitor extension.** Measured on device, 2026-08-20. This is the opposite of the shield configuration extension's result above, against the same container from a sibling bundle.
+
+The instrument is `AppGroupSandboxProbe` (`Sources/Shared/AppGroupSandboxProbe.swift`). It runs the sequence `AppGroupFileLock` depends on — `open(O_CREAT|O_RDWR|O_CLOEXEC)`, `flock(LOCK_EX)`, `write`, `flock(LOCK_UN)` — against a file of its own, and names the step and the errno of a refusal rather than the fact that one happened. It runs on every monitor callback ahead of any other work, so no missing configuration or unmatched rule can short-circuit it.
+
+Four monitor readings across one three-minute session, from `sysdiagnose_2026.08.20_22-41-03-0700`:
+
+```
+22:36:50.973  monitor  intervalDidStart — daily-reset
+22:36:50.974  monitor  app group file I/O permitted
+22:37:14.713  action   app group file I/O permitted
+22:37:36.843  monitor  intervalDidStart — session.dae32a7f…
+22:37:36.843  monitor  app group file I/O permitted
+22:40:39.290  monitor  intervalWillEndWarning — session.dae32a7f…
+22:40:39.291  monitor  app group file I/O permitted
+22:40:39.315  monitor  intervalDidEnd — session.dae32a7f…
+22:40:39.315  monitor  app group file I/O permitted
+```
+
+The shield action extension's reading is the control: that extension already does container file I/O successfully, so a refusal there would have been evidence about the probe rather than about a sandbox. The other half of the control is in `AppGroupSandboxProbeTests`, which establishes that the probe reports `permitted` only where the operations genuinely succeed, and names the step and errno where they do not.
+
+Across the whole run no entry at error level appeared from any `com.koubalabs.pause` subsystem, and no `SessionReconciliationIssue` was logged for any operation. The monitor reached its shield work rather than failing at the lock.
+
+**Which sandbox profile the monitor extension point is assigned is not recorded.** The `runningboardd` extension-overlay entries that named the shield extensions' profiles are absent from this archive. The permission is measured; the profile that grants it is not, so the finding stands on behavior alone.
+
+### Open: an expiry callback ran for thirty-one seconds
+
+The two callbacks that arrive at expiry returned long after the work the user sees was finished:
+
+```
+22:40:39.290  monitor  intervalWillEndWarning — begins
+22:40:39.315  monitor  intervalDidEnd — begins
+22:40:39.376  shield   rendered "That's all for today."
+22:41:10.296  monitor  intervalWillEndWarning — returns, +31.006s
+22:41:10.325  monitor  intervalDidEnd — returns, +31.010s
+```
+
+The shield was applied inside the first 86 ms — the configuration extension could not have rendered the exhausted variant otherwise — so nothing the user waits on was delayed. What consumed the following 31 seconds is unmeasured. The two handlers ran on different threads and returned 29 ms apart, which fits both being serialized behind one blocking call rather than each spending the time separately. A sysdiagnose began collecting at 22:41:03, so the collection itself is not ruled out as the cause.
+
+It matters because an app extension runs on a runtime budget the system enforces. Instrumenting the reconcile's own stages would locate the wait; nothing here does that yet.
 
 ## DeviceActivity scheduling
 
