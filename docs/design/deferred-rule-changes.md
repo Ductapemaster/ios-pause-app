@@ -80,9 +80,13 @@ Nothing in the app currently runs when a logical day turns over. Session counts 
 
 That is not good enough once a scheduled change can remove an app. `ManagedSettingsStore` would keep shielding an application that no longer has a rule, and the shield would resolve against a document with no target for it — showing damage where the truth is release.
 
-Pause therefore registers one repeating daily activity whose interval begins at the reset time. `MonitorExtension.intervalDidStart` is empty today and becomes the entry point: it runs the same reconciliation every other callback already triggers. `SessionMonitorCallbackHandler` parses activity names as `session.<uuid>`, so it gains a branch routing a name it does not recognise to a plain reconcile rather than discarding it.
+Pause therefore registers one repeating daily activity whose interval begins at the reset time. `MonitorExtension.intervalDidStart` is empty today and becomes the entry point: it runs the same reconciliation every other callback already triggers.
 
-This fixes a category rather than a case. At the reset the monitor applies the pending configuration's consequences: the shield set matches the rules now in force, a removed application is released, and the session counter is reset where it can be seen. It costs one registration and one branch, because the handler already treats every callback as a prompt to reconcile rather than as proof of a particular event.
+The callback has to be read by name. A session's own activity begins at the instant the session is granted, and a schedule whose interval is already under way fires `intervalDidStart` immediately, so this callback arrives on every grant as well as at the reset. `SessionMonitorCallbackHandler` parses activity names as `session.<uuid>`; the reset branch acts only on a name that is not one, and discards the rest. Treating the arrival as the signal would hand a grant the reset's whole-configuration pass, which is the one pass that promotes a provisional session — spending a session on a launch that has not been confirmed.
+
+The reset activity repeats daily and is registered whenever Pause opens, so it too fires on registration. The reconciliation is therefore idempotent and reads nothing into the callback beyond "reconcile now": it resolves what applies from the moment it runs, which is right whether a day turned over or not.
+
+At the reset the monitor applies the pending configuration's consequences: the shield set matches the rules now in force, a removed application is released, and the session counter is reset where it can be seen. It costs one registration and one branch.
 
 Missed callbacks are already the architecture's assumption. A phone that is off at the reset misses it, and the reconciliation on app launch repairs the state the next time Pause opens. That fallback is what makes a released-but-still-shielded window rare rather than impossible; it is not a reason to skip the event.
 
@@ -90,7 +94,7 @@ Missed callbacks are already the architecture's assumption. A phone that is off 
 
 `AppModel` holds and edits the in-force document, never the raw effective one. That single choice keeps the rest honest: the screens show what applies today, and an edit made after a pending change has started builds on that change rather than on the document it superseded.
 
-`AppModel` writes configuration at three points — the picker save, the rule editor save, and rule removal. Each takes the same path:
+`AppModel` writes configuration at four points — the picker save, the rule editor save, the countdown setting, and rule removal. The countdown belongs on that list because `settings.pauseSeconds` is the one field a shorter value loosens, and nothing else can change it. Each takes the same path:
 
 1. Build the candidate document as it does today.
 2. Validate it, exactly as a direct save validates today. A pending document is held to the same rules as an effective one, so an invalid document cannot wait in storage and take effect unwatched.
@@ -106,7 +110,7 @@ A saved pending configuration replaces any earlier one rather than queueing behi
 
 Removing an app today runs `RuleRemovalCoordinator`, which stages the rule's runtime file and deletes it. A deferred removal must not do that: the rule is still in force, still counting sessions, and still shielding. Deleting its runtime would leave an app that is shielded with no session data, which resolves as damage.
 
-So a deferred removal writes only the pending document and touches nothing else. The runtime file is deleted during the reconciliation that follows the reset event, once the removal is in force. Cleanup rides the event rather than the edit.
+So a deferred removal writes only the pending document and touches nothing else. The reset releases the application, and the runtime file is deleted by the orphan cleanup that already runs when Pause opens, which keeps only the rules the in-force document names. A runtime outliving its rule by that much costs nothing: the shield set is built from the document's targets, so a runtime with no target is never read.
 
 ## What the app shows
 
@@ -121,9 +125,9 @@ The two pieces carrying the behaviour are pure functions over value types, testa
 - `isLoosening(from:to:)` — one test per field in both directions; a rule added and a rule removed; a target re-pointed at another application; and a mixed edit that loosens one field while tightening another, which must defer.
 - `inForce(on:)` — before, on, and after the start day, and with no pending document at all.
 
-Above those: the save paths leave `effective` untouched for a loosening edit and clear `pending` for a tightening one; a deferred removal leaves the runtime file in place; and the reset-event reconciliation deletes it once the removal is in force.
+Above those: the save paths leave `effective` untouched for a loosening edit and clear `pending` for a tightening one; a deferred removal leaves the runtime file in place; and the reset-event reconciliation releases the application once the removal is in force.
 
-`SessionMonitorCallbackHandler` gains tests that an unrecognised activity name reconciles rather than being discarded.
+`SessionMonitorCallbackHandler` gains tests that the reset activity reconciles and a session activity starting does not.
 
 ## Migration
 

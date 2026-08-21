@@ -15,6 +15,7 @@
 - Run `xcodegen generate` after adding or removing any source file, before building.
 - Test command: `xcodebuild test -project Pause.xcodeproj -scheme PauseUnitTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`
 - `Sources/Shared` compiles into the app and all three extensions. Any signature change there is a four-target change; check every call site before changing one.
+- Locate every edit by the symbol this plan names — a function, property, or type — never by line number. Each task shifts the lines under the ones after it.
 - Nothing on the shield configuration extension's read path may write, create a file, or take `AppGroupFileLock`. See `docs/research/shield-repair-variant.md`.
 - Every reader takes the in-force document, never `effective` directly.
 - The logical day comes from `LogicalDay`, never from `CalendarDay(date:calendar:)` called inline. Phase 2 changes the reset time in one place.
@@ -123,7 +124,7 @@ git commit -m "feat: name the logical day an instant belongs to"
 - Test: `Tests/SharedTests/ConfigurationFileTests.swift`
 
 **Interfaces:**
-- Consumes: `LogicalDay` from Task 1.
+- Consumes: `ConfigurationDocument`, and `CalendarDay`, which is already `Comparable` — the start-day comparison needs nothing new. This task stands on its own; no earlier task feeds it.
 - Produces: `PendingConfiguration(document:startDay:)` with `.document` and `.startDay`; `ConfigurationFile(effective:pending:)` with `.effective`, `.pending`, and `func inForce(on logicalDay: CalendarDay) -> ConfigurationDocument`.
 
 - [ ] **Step 1: Write the failing test**
@@ -453,9 +454,12 @@ public enum ConfigurationComparison {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [ ] **Step 4: Regenerate and run the tests**
 
-Run the test command. Expected: PASS, all eleven cases.
+```bash
+xcodegen generate
+```
+Then the test command. Expected: PASS, all eleven cases.
 
 - [ ] **Step 5: Commit**
 
@@ -476,7 +480,7 @@ git commit -m "feat: judge whether an edit permits more app use"
 - Consumes: `ConfigurationFile` from Task 2.
 - Produces: `ConfigurationStore.loadFile() throws -> ConfigurationFile?`, `ConfigurationStore.loadFileWithoutLocking() throws -> ConfigurationFile?`, `ConfigurationStore.save(file: ConfigurationFile) throws`.
 
-The existing `load()`, `loadWithoutLocking()` and `save(_:)` stay and keep their `ConfigurationDocument` signatures for now; later tasks migrate their callers, and Task 12 removes them. `load()` returns the effective document during that window, which is unchanged behaviour while nothing writes a pending document yet.
+The existing `load()`, `loadWithoutLocking()` and `save(_:)` stay and keep their `ConfigurationDocument` signatures for now; later tasks migrate their callers, and Task 14 removes them. `load()` returns the effective document during that window, which is unchanged behaviour while nothing writes a pending document yet.
 
 Both documents in the file are validated on save. A pending document is held to the same rules as an effective one so an invalid document cannot wait in storage and take effect unwatched.
 
@@ -518,6 +522,16 @@ final class ConfigurationStoreFileTests: XCTestCase {
         let loaded = try ConfigurationStore(directoryURL: directoryURL).loadFile()
 
         XCTAssertEqual(loaded, ConfigurationFile(effective: legacy, pending: nil))
+    }
+
+    func testACorruptFileInTheCurrentShapeIsReportedAsCorrupt() throws {
+        let directoryURL = try temporaryDirectory()
+        let url = directoryURL.appendingPathComponent(SharedIdentifiers.configurationFilename)
+        try Data(#"{"effective": {"rules": 7}}"#.utf8).write(to: url)
+
+        XCTAssertThrowsError(try ConfigurationStore(directoryURL: directoryURL).loadFile()) { error in
+            XCTAssertEqual(error as? PersistenceError, .corruptFile(url))
+        }
     }
 
     func testAnInvalidPendingDocumentIsRefusedOnSave() throws {
@@ -636,25 +650,47 @@ public struct ConfigurationStore {
     }
 
     private func loadFileUnlocked() throws -> ConfigurationFile? {
-        // A build before deferred changes wrote a bare document. The two shapes
-        // are distinguishable by decoding, so no version field is needed.
-        if let loaded = try? file.load(), let loaded {
-            try loaded.effective.validate()
-            try loaded.pending?.document.validate()
-            return loaded
+        guard try carriesTheWrapper() else {
+            guard let legacy = try legacyFile.load() else { return nil }
+            try legacy.validate()
+            return ConfigurationFile(effective: legacy, pending: nil)
         }
-        guard let legacy = try legacyFile.load() else { return nil }
-        try legacy.validate()
-        return ConfigurationFile(effective: legacy, pending: nil)
+        guard let loaded = try file.load() else { return nil }
+        try loaded.effective.validate()
+        try loaded.pending?.document.validate()
+        return loaded
+    }
+
+    /// Which of the two shapes the file holds. A build before deferred changes
+    /// wrote a bare document, and this one writes a wrapper with an `effective`
+    /// key, so no version field is needed.
+    ///
+    /// The choice is made on the key rather than on a failed decode. Falling
+    /// back whenever the wrapper fails to decode would leave a damaged wrapper
+    /// to be diagnosed by a legacy read of the same bytes, so what surfaces is
+    /// whatever the older shape made of them. A file carrying `effective` is
+    /// read as one, and its damage is reported as its own.
+    private func carriesTheWrapper() throws -> Bool {
+        guard FileManager.default.fileExists(atPath: file.url.path) else { return false }
+        let data = try Data(contentsOf: file.url)
+        guard let fields = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            // Not a JSON object at all. Decoding the current shape reports it as
+            // corrupt, which is what it is.
+            return true
+        }
+        return fields.keys.contains("effective")
     }
 }
 ```
 
 Note the parameter label: `save(file:)` takes `file document:` because the stored property is already named `file`.
 
-- [ ] **Step 4: Run the tests**
+- [ ] **Step 4: Regenerate and run the tests**
 
-Run the test command. Expected: PASS, including every existing `ConfigurationStore` test in `Tests/SharedTests/AtomicJSONFileTests.swift`.
+```bash
+xcodegen generate
+```
+Then the test command. Expected: PASS, including every existing `ConfigurationStore` test in `Tests/SharedTests/AtomicJSONFileTests.swift`, and `testFailedConfigurationCannotBePromotedByPickerSave` in `Tests/PauseAppTests/AppModelFlowTests.swift`, which requires a corrupt file to leave `configurationLoadState` at `.failed`.
 
 - [ ] **Step 5: Commit**
 
@@ -669,7 +705,7 @@ git commit -m "feat: persist a configuration file that can hold a scheduled chan
 
 **Files:**
 - Modify: `Sources/Shared/ShieldStateReader.swift`
-- Test: `Tests/SharedTests/ShieldStateReaderTests.swift:1-120` (extend)
+- Test: `Tests/SharedTests/ShieldStateReaderTests.swift` (extend)
 
 **Interfaces:**
 - Consumes: `ConfigurationStore.loadFileWithoutLocking()` from Task 4, `LogicalDay` from Task 1.
@@ -757,7 +793,7 @@ git commit -m "feat: show the shield the rules in force today"
 ### Task 6: The shield's tap grants against what is in force
 
 **Files:**
-- Modify: `Sources/ShieldActionExtension/ShieldActionExtension.swift:20-32`
+- Modify: `Sources/ShieldActionExtension/ShieldActionExtension.swift` — the `stateLock.withLock` block in `handle(action:for:completionHandler:)`
 
 **Interfaces:**
 - Consumes: `ConfigurationStore.loadFile()` from Task 4, `LogicalDay` from Task 1.
@@ -777,20 +813,15 @@ Inside the `stateLock.withLock` block, replace:
 with:
 
 ```swift
-                guard let file = try ConfigurationStore(directoryURL: directoryURL).loadFileUnlockedForCaller() else {
+                guard let file = try ConfigurationStore(directoryURL: directoryURL).loadFile() else {
                     return false
                 }
                 let configuration = file.inForce(on: LogicalDay.containing(now))
 ```
 
-This needs a lock-free read from inside a held lock, because `withLock` is re-entrant but the read must not re-enter for its own reasons. Add to `ConfigurationStore`:
+`loadFile()` takes the state lock from inside the `withLock` block that already holds it. `AppGroupFileLock` is recursive — `AppGroupFileLockState.withLock` counts depth and takes `flock` once, at depth zero — so the nested acquisition costs a counter increment. `AppModel.commitRuleRemoval(...)` already nests a `ConfigurationStore` write the same way.
 
-```swift
-    /// Reads for a caller that already holds the state lock.
-    public func loadFileUnlockedForCaller() throws -> ConfigurationFile? {
-        try loadFileWithoutLocking()
-    }
-```
+No new store method is needed.
 
 - [ ] **Step 2: Build the extension**
 
@@ -807,7 +838,7 @@ Run the test command. Expected: PASS, unchanged count.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/ShieldActionExtension/ShieldActionExtension.swift Sources/Shared/ConfigurationStore.swift
+git add Sources/ShieldActionExtension/ShieldActionExtension.swift
 git commit -m "feat: grant a session against the rules in force today"
 ```
 
@@ -816,27 +847,128 @@ git commit -m "feat: grant a session against the rules in force today"
 ### Task 7: The reconcilers work from what is in force
 
 **Files:**
-- Modify: `Sources/Shared/SessionReconciliationService.swift:6,33`
+- Modify: `Sources/Shared/SessionReconciliationService.swift` — the configuration loads in `reconcileUnlocked(now:trigger:)` and `resetRuntimeUnlocked(ruleID:now:calendar:)`
 - Modify: `Sources/Pause/AppModel.swift` — every `configurationStore.load()` call site
-- Test: `Tests/SharedTests/SessionReconciliationServiceTests.swift` (extend)
+- Test: `Tests/SharedTests/SessionReconciliationServiceTests.swift` (create)
 
 **Interfaces:**
 - Consumes: `ConfigurationStore.loadFile()`, `ConfigurationFile.inForce(on:)`, `LogicalDay`.
+- Produces: the fixture for `SessionReconciliationService` over a temporary directory. Task 12 extends this file and inherits it, so the two tasks are coupled through it as well as through the service.
 
 `ShieldReconciler` takes a `ConfigurationDocument` as a parameter rather than loading one, so it needs no change — its callers must pass the in-force document, which is what this task does.
 
 - [ ] **Step 1: Write the failing test**
 
 ```swift
+import Foundation
+import ManagedSettings
+import PauseCore
+import XCTest
+
+@MainActor
+final class SessionReconciliationServiceTests: XCTestCase {
+    private let ruleID = UUID(uuidString: "6f1a0e1c-1f3e-4a2b-9c0d-2b7f5a8e4d31")!
+    private let now = Date(timeIntervalSince1970: 1_750_000_000)
+    private let calendar = Calendar.current
+
     func testReconciliationUsesThePendingConfigurationOnceItsStartDayArrives() throws {
-        // Build a store whose pending document removes the only rule, with a
-        // start day of today, then reconcile and assert the shield set is empty.
-        // Follow the arrangement already used by the tests in this file for
-        // constructing a service over a temporary directory.
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedRemovalPending(in: directory, startDay: LogicalDay.containing(now, calendar: calendar))
+        var applied: Set<ApplicationToken>?
+
+        _ = makeService(directory: directory, applyApplications: { applied = $0 })
+            .reconcile(now: now, trigger: .appActivation)
+
+        XCTAssertEqual(applied, [])
     }
+
+    func testReconciliationKeepsTheEffectiveConfigurationBeforeTheStartDay() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedRemovalPending(in: directory, startDay: LogicalDay.next(after: now, calendar: calendar))
+        var applied: Set<ApplicationToken>?
+
+        _ = makeService(directory: directory, applyApplications: { applied = $0 })
+            .reconcile(now: now, trigger: .appActivation)
+
+        XCTAssertEqual(applied, [try token(seed: "instagram")])
+    }
+
+    // MARK: - Helpers
+
+    /// One rule in force, and a pending document that removes it.
+    private func seedRemovalPending(in directory: URL, startDay: CalendarDay) throws {
+        let effective = try ConfigurationDocument(
+            settings: .phaseOneDefault,
+            rules: [AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)],
+            targets: [
+                RuleTarget(
+                    ruleID: ruleID,
+                    applicationToken: try token(seed: "instagram"),
+                    launchRoute: nil
+                )
+            ]
+        )
+        try ConfigurationStore(directoryURL: directory).save(
+            file: ConfigurationFile(
+                effective: effective,
+                pending: PendingConfiguration(
+                    document: try ConfigurationDocument(
+                        settings: .phaseOneDefault,
+                        rules: [],
+                        targets: []
+                    ),
+                    startDay: startDay
+                )
+            )
+        )
+        try RuntimeRepository(directoryURL: directory).save(
+            RuleRuntime(
+                logicalDay: LogicalDay.containing(now, calendar: calendar),
+                sessionsStarted: 0
+            ),
+            ruleID: ruleID
+        )
+    }
+
+    /// The shield set is never written to disk and `ManagedSettingsStore` is out
+    /// of reach in the simulator, so the injected apply closure is where a test
+    /// reads what the reconcile decided.
+    private func makeService(
+        directory: URL,
+        applyApplications: @escaping (Set<ApplicationToken>) -> Void
+    ) -> SessionReconciliationService {
+        SessionReconciliationService(
+            directoryURL: directory,
+            shieldReconciler: ShieldReconciler(
+                currentApplications: { [] },
+                applyApplications: applyApplications,
+                failedGrantBlockIDs: { [] },
+                stateLock: AppGroupFileLock(directoryURL: directory)
+            ),
+            stopMonitoring: { _ in }
+        )
+    }
+
+    private func temporaryDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pause-reconciliation-service-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        return url
+    }
+
+    private func token(seed: String) throws -> ApplicationToken {
+        let data = Data(seed.utf8).base64EncodedString()
+        return try JSONDecoder().decode(
+            ApplicationToken.self,
+            from: Data("{\"data\":\"\(data)\"}".utf8)
+        )
+    }
+}
 ```
 
-Write this test concretely by copying the arrangement from the nearest existing test in that file — the point is that a reconcile run on or after the start day applies the pending document.
+`SessionReconciliationService.init(directoryURL:shieldReconciler:stopMonitoring:)` builds its store, repository and lock from the directory, so those are real files under a temporary directory; only the shield surface and the monitor stop are injected. `Tests/SharedTests/AppGroupFileLockTests.swift` uses the same arrangement. `SessionReconciliationCoordinatorTests` is no template — it drives the pure coordinator through injected closures and touches no disk. Task 12 extends this file and works in the fixture built here.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1011,8 +1143,7 @@ Run the test command. Expected: compile failure, `cannot find 'ConfigurationSave
 import Foundation
 import PauseCore
 
-/// Decides whether a saved edit takes effect now or at the next reset.
-public enum ConfigurationSaveRouter {
+/// Decides whether a saved edit takes effect now or at the next reset. public enum ConfigurationSaveRouter {
     public static func route(
         candidate: ConfigurationDocument,
         into existing: ConfigurationFile,
@@ -1038,9 +1169,12 @@ public enum ConfigurationSaveRouter {
 
 Note `effective: inForce` rather than `existing.effective`: once a pending change has started, it is what applies, so scheduling a further change must not resurrect the document it superseded.
 
-- [ ] **Step 4: Run the tests**
+- [ ] **Step 4: Regenerate and run the tests**
 
-Run the test command. Expected: PASS, all four cases.
+```bash
+xcodegen generate
+```
+Then the test command. Expected: PASS, all four cases.
 
 - [ ] **Step 5: Commit**
 
@@ -1054,38 +1188,148 @@ git commit -m "feat: send a loosening edit to the next reset"
 ### Task 9: The app saves through the router, and can cancel
 
 **Files:**
-- Modify: `Sources/Pause/AppModel.swift:496,528,580` — the three save paths
+- Modify: `Sources/Pause/AppModel.swift` — the four save paths
 - Test: `Tests/PauseAppTests/AppModelFlowTests.swift` (extend)
 
 **Interfaces:**
 - Consumes: `ConfigurationSaveRouter.route(candidate:into:now:calendar:)`.
-- Produces: `AppModel.pendingChangeStartDay: CalendarDay?` (published), `AppModel.cancelScheduledChange()`.
+- Produces: `AppModel.pendingChangeStartDay: CalendarDay?` (published), `AppModel.cancelScheduledChange(now:)`, `AppModel.persist(_:now:)` — the one place a configuration reaches the store — and a `now: Date = Date()` parameter on all four public write methods.
+
+`AppModel` writes configuration from four methods, and every one of them routes through `persist(_:now:)`:
+
+- `applyPickerSelection(now:)` — the picker save. It has two exits: it writes directly when `removedRuleIDs` is empty, and goes through `commitRuleRemoval(...)` when it is not, so routing it means changing both.
+- `updateRule(id:sessionsPerDay:sessionLengthMinutes:now:)` — the rule editor save.
+- `updatePauseSeconds(_:now:)` — the countdown setting.
+- `commitRuleRemoval(ruleIDs:nextConfiguration:configurationStore:runtimeRepository:now:)` — rule removal, reached from both `removeRule(id:now:)` and a picker save that drops an app. Its write sits inside `stateLock.withLock` alongside staged runtime removals. Task 10 changes what this path does.
+
+`updatePauseSeconds(_:now:)` is the only path that can change `settings.pauseSeconds`, which is the field `ConfigurationComparison` treats as loosening when it falls. Left writing directly to the store, shortening the countdown would bypass the feature entirely.
+
+The `now` parameters are what make a deferral testable. Every assertion here turns on the start day `LogicalDay.next(after:)` computes, and a save made at 23:59:59 lands on a different day from the one the test named. They also replace the two `Date()` calls these paths make internally: the logical day stamped on a new rule's runtime in `applyPickerSelection(now:)`, and the `restoreShields` reconcile inside `commitRuleRemoval(...)`. `sceneDidBecomeActive(now:)`, `requestSessionGrant(now:)` and `resetRuntime(ruleID:now:)` already take the clock this way, so no SwiftUI call site changes and no existing test moves.
 
 - [ ] **Step 1: Write the failing test**
 
 ```swift
     func testRaisingAnAllowanceLeavesTodaysRuleInPlace() throws {
-        // Arrange an AppModel over a temporary directory with one rule at 3
-        // sessions, following the arrangement used by the existing tests in
-        // this file. Save an edit raising it to 5.
-        // Assert: model.configuration.rules[0].sessionsPerDay == 3
-        //         model.pendingChangeStartDay != nil
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updateRule(
+            id: ruleID,
+            sessionsPerDay: 5,
+            sessionLengthMinutes: 5,
+            now: now
+        )
+
+        XCTAssertEqual(model.configuration.rules[0].sessionsPerDay, 3)
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
     }
 
     func testLoweringAnAllowanceAppliesAtOnceAndClearsASchedule() throws {
-        // Arrange as above, save a raise to 5, then save a lower to 2.
-        // Assert: model.configuration.rules[0].sessionsPerDay == 2
-        //         model.pendingChangeStartDay == nil
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updateRule(id: ruleID, sessionsPerDay: 5, sessionLengthMinutes: 5, now: now)
+        try model.updateRule(id: ruleID, sessionsPerDay: 2, sessionLengthMinutes: 5, now: now)
+
+        XCTAssertEqual(model.configuration.rules[0].sessionsPerDay, 2)
+        XCTAssertNil(model.pendingChangeStartDay)
     }
 
     func testCancellingAScheduledChangeLeavesTodaysRuleInForce() throws {
-        // Arrange as above, save a raise to 5, then call cancelScheduledChange().
-        // Assert: model.configuration.rules[0].sessionsPerDay == 3
-        //         model.pendingChangeStartDay == nil
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updateRule(id: ruleID, sessionsPerDay: 5, sessionLengthMinutes: 5, now: now)
+        model.cancelScheduledChange(now: now)
+
+        XCTAssertEqual(model.configuration.rules[0].sessionsPerDay, 3)
+        XCTAssertNil(model.pendingChangeStartDay)
+        XCTAssertEqual(
+            try ConfigurationStore(directoryURL: directory).loadFile()?.pending,
+            nil
+        )
+    }
+
+    func testShorteningThePauseWaitsWhileLengtheningItAppliesAtOnce() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updatePauseSeconds(5, now: now)
+
+        XCTAssertEqual(model.configuration.settings.pauseSeconds, 10)
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+
+        try model.updatePauseSeconds(20, now: now)
+
+        XCTAssertEqual(model.configuration.settings.pauseSeconds, 20)
+        XCTAssertNil(model.pendingChangeStartDay)
     }
 ```
 
-Write each of these concretely using the `AppModel` construction already used in this file — the assertions above are the contract.
+These need two stored properties and one helper on `AppModelFlowTests`, plus `import ManagedSettings` for `ApplicationToken`. The runtime file goes down with the rule so the shield reconcile that follows each save has something to read:
+
+```swift
+    private let ruleID = UUID(uuidString: "3f7c1d20-6b8a-4f19-8e42-0a5c9d1b7e63")!
+    private let now = Date(timeIntervalSince1970: 1_750_000_000)
+
+    private func seedOneRule(in directory: URL, sessionsPerDay: Int) throws {
+        try ConfigurationStore(directoryURL: directory).save(
+            ConfigurationDocument(
+                settings: .phaseOneDefault,
+                rules: [
+                    AppRule(
+                        id: ruleID,
+                        sessionsPerDay: sessionsPerDay,
+                        sessionLengthMinutes: 5
+                    )
+                ],
+                targets: [
+                    RuleTarget(
+                        ruleID: ruleID,
+                        applicationToken: try token(seed: "instagram"),
+                        launchRoute: nil
+                    )
+                ]
+            )
+        )
+        try RuntimeRepository(directoryURL: directory).save(
+            RuleRuntime(logicalDay: LogicalDay.containing(now), sessionsStarted: 0),
+            ruleID: ruleID
+        )
+    }
+
+    private func token(seed: String) throws -> ApplicationToken {
+        let data = Data(seed.utf8).base64EncodedString()
+        return try JSONDecoder().decode(
+            ApplicationToken.self,
+            from: Data("{\"data\":\"\(data)\"}".utf8)
+        )
+    }
+```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1132,7 +1376,9 @@ Add to `AppModel`:
     }
 ```
 
-Route the three existing save paths through `persist(_:)` in place of their direct `configurationStore.save(_:)` calls. Set `pendingChangeStartDay` from the loaded file at initialisation too, so a scheduled change survives a relaunch on screen.
+Give each of the four write paths a `now: Date = Date()` parameter and thread it into `persist(_:now:)`, replacing their direct `configurationStore.save(_:)` calls: `applyPickerSelection(now:)` on both its exits, `updateRule(id:sessionsPerDay:sessionLengthMinutes:now:)`, `updatePauseSeconds(_:now:)`, and the `commitConfiguration` closure that `commitRuleRemoval(ruleIDs:nextConfiguration:configurationStore:runtimeRepository:now:)` hands `RuleRemovalCoordinator`. The same `now` replaces the `Date()` those paths call internally.
+
+Set `pendingChangeStartDay` from the loaded file at initialisation too, so a scheduled change survives a relaunch on screen.
 
 - [ ] **Step 4: Run the tests**
 
@@ -1150,7 +1396,7 @@ git commit -m "feat: schedule a loosening edit and allow cancelling it"
 ### Task 10: A deferred removal keeps its session data
 
 **Files:**
-- Modify: `Sources/Pause/AppModel.swift:560-590` — the removal path
+- Modify: `Sources/Pause/AppModel.swift` — `removeRule(id:now:)`, and the removal branch of `applyPickerSelection(now:)`
 - Test: `Tests/PauseAppTests/AppModelFlowTests.swift` (extend)
 
 **Interfaces:**
@@ -1162,14 +1408,26 @@ Removing an app is always a loosening, so it always defers. `RuleRemovalCoordina
 
 ```swift
     func testRemovingAnAppLeavesItsRuntimeUntilTheChangeTakesEffect() throws {
-        // Arrange an AppModel over a temporary directory with one configured
-        // rule and a runtime file present. Remove the app.
-        // Assert: the runtime file still exists at
-        //         directoryURL/runtime-<ruleID>.json
-        //         model.configuration.targets is unchanged (still in force)
-        //         model.pendingChangeStartDay != nil
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let runtimeURL = directory.appendingPathComponent(
+            "runtime-\(ruleID.uuidString.lowercased()).json"
+        )
+        let probe = FlowProbe(status: .approved)
+        let model = makeModel(directory: directory, probe: probe, hasProtectedState: false)
+
+        try model.removeRule(id: ruleID, now: now)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: runtimeURL.path))
+        XCTAssertEqual(model.configuration.targets.count, 1)
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(probe.cleanupCount, 0)
+        XCTAssertEqual(probe.reconciliationCount, 0)
     }
 ```
+
+The runtime file is the assertion that matters: `RuleRemovalCoordinator` stages and deletes it, so its presence is what says the coordinator never ran. `seedOneRule(in:sessionsPerDay:)` is the helper Task 9 adds.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1177,9 +1435,11 @@ Run the test command. Expected: FAIL — the runtime file has been deleted.
 
 - [ ] **Step 3: Write the implementation**
 
-In the removal path, build the candidate document with the target and rule removed, then call `persist(_:)` and return. Do not call `ruleRemovalCoordinator.remove(...)`, do not stage or delete runtimes, do not unshield, and do not stop monitoring: the rule is still in force until the reset, so all of that state must stay. Task 11 does that work when the removal actually lands.
+In both removal paths, build the candidate document with the target and rule removed, then call `persist(_:now:)` and return. Do not call `ruleRemovalCoordinator.remove(...)`, do not stage or delete runtimes, do not unshield, do not stop monitoring, and leave `pickerSelection.applicationTokens` alone: the rule is still in force until the reset, so all of that state — including the app showing as selected — must stay.
 
-Keep `RuleRemovalCoordinator` and its tests. Task 11 calls it.
+The reset reconciliation releases the application once the removal is in force (Task 12), and the orphan cleanup that already runs on app activation deletes the runtime file the next time Pause opens.
+
+Both paths now bypass `commitRuleRemoval(...)`, which leaves `RuleRemovalCoordinator` and the staged-removal methods on `RuntimeRepository` with no caller. They and their tests stay in the tree; retiring them is a decision separate from this build.
 
 - [ ] **Step 4: Run the tests**
 
@@ -1197,27 +1457,44 @@ git commit -m "feat: keep a removed app's session data until the removal lands"
 ### Task 11: A callback at the reset
 
 **Files:**
-- Modify: `Sources/Shared/SessionMonitorCallbackHandler.swift:9-27`
-- Modify: `Sources/MonitorExtension/MonitorExtension.swift:6`
+- Modify: `Sources/Shared/SessionMonitorCallbackHandler.swift` — `SessionMonitorCallbackHandler`, alongside `intervalDidEnd(activityName:now:)` and `intervalWillEndWarning(activityName:now:)`, and `SessionMonitorReconciliationRunner.handle(activityName:now:warning:)`
+- Modify: `Sources/MonitorExtension/MonitorExtension.swift` — the empty `intervalDidStart(for:)` override, and `handle(activityName:warning:)`
+- Modify: `Sources/Shared/SessionReconciliationCoordinator.swift` — `SessionReconciliationTrigger`
 - Create: `Sources/Shared/DailyResetScheduler.swift`
 - Modify: `Sources/Pause/AppModel.swift` — register the daily activity on activation
 - Test: `Tests/SharedTests/SessionMonitorCallbackHandlerTests.swift` (extend)
 
 **Interfaces:**
-- Produces: `DailyResetActivityName.value` (`"daily-reset"`), `DailyResetScheduler.register()`, `SessionMonitorCallbackHandler.intervalDidStart(activityName:now:)`.
+- Produces: `DailyResetActivityName.value` (`"daily-reset"`), `DailyResetScheduler.register()`, `SessionMonitorCallbackHandler.intervalDidStart(activityName:now:)`, `SessionReconciliationTrigger.dailyReset`.
+
+A session grant registers a schedule whose interval already contains the moment of registration, and a schedule that is already under way fires `intervalDidStart` immediately — measured on device, recorded in `docs/research/screen-time-platform-evidence.md`. So this callback arrives on every grant as well as at the reset, and the handler has to tell them apart by name.
 
 - [ ] **Step 1: Write the failing test**
 
 ```swift
-    func testAnActivityNameThatIsNotASessionStillReconciles() {
-        var triggers: [SessionReconciliationTrigger] = []
-        let handler = SessionMonitorCallbackHandler { trigger, _ in triggers.append(trigger) }
+    func testTheDailyResetReconciles() {
+        var received: SessionReconciliationTrigger?
+        let handler = SessionMonitorCallbackHandler { trigger, _ in received = trigger }
 
-        handler.intervalDidStart(activityName: DailyResetActivityName.value, now: Date())
+        handler.intervalDidStart(activityName: DailyResetActivityName.value, now: now)
 
-        XCTAssertEqual(triggers.count, 1)
+        XCTAssertEqual(received, .dailyReset)
+    }
+
+    func testASessionIntervalStartingDoesNotReconcile() {
+        var count = 0
+        let handler = SessionMonitorCallbackHandler { _, _ in count += 1 }
+
+        handler.intervalDidStart(
+            activityName: SessionActivityName.sessionActivityName(for: ruleID),
+            now: now
+        )
+
+        XCTAssertEqual(count, 0)
     }
 ```
+
+`ruleID` and `now` are the stored properties `SessionMonitorCallbackHandlerTests` already declares.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1233,18 +1510,30 @@ public enum DailyResetActivityName {
 }
 ```
 
-and to `SessionMonitorCallbackHandler`:
+and to `SessionMonitorCallbackHandler`, guarding on the name exactly as `intervalDidEnd` and `intervalWillEndWarning` do:
 
 ```swift
-    /// The daily reset carries no rule of its own. Every callback is a prompt to
-    /// reconcile rather than proof that a particular boundary passed, so a name
-    /// this type does not recognise reconciles rather than being discarded.
+    /// Only the daily reset is acted on here. A session's own interval begins at
+    /// the instant it is granted, so this callback also arrives immediately on
+    /// every grant, carrying that session's name — which makes the name, not the
+    /// arrival, the thing worth reading.
     public func intervalDidStart(activityName: String, now: Date) {
-        reconcile(.appActivation, now)
+        guard SessionActivityName.ruleID(fromSessionActivityName: activityName) == nil else {
+            return
+        }
+        reconcile(.dailyReset, now)
     }
 ```
 
-Use whichever `SessionReconciliationTrigger` case represents a full reconcile with no specific rule; if the existing enum has no such case, add one named `.dailyReset` and handle it in `SessionReconciliationService` exactly as an app activation is handled.
+Add the case to `SessionReconciliationTrigger`, with `selectedRuleID` returning `nil`:
+
+```swift
+    case dailyReset
+```
+
+`.dailyReset` rather than `.appActivation`, for two reasons. `.appActivation` is the only trigger that promotes a provisional session to active, and a provisional session means the launch handoff has not been confirmed — a reset pass reusing it would spend a session on a launch that may never have happened. And device state is legible only through `sysdiagnose` and the unified log, so a trigger that says "app activated" when the reset fired corrupts the one debugging signal there is.
+
+`SessionReconciliationTrigger` lives in `Sources/Shared`, so adding a case is a four-target change: the exhaustive switch in `selectedRuleID` stops compiling until the case is handled, and every other switch over the trigger needs checking.
 
 Create `Sources/Shared/DailyResetScheduler.swift`:
 
@@ -1291,6 +1580,8 @@ and extend `handle` to call `runner.intervalDidStart(activityName:now:)` when `d
 
 Register the activity from `AppModel` on activation, once authorization is granted, alongside the existing reconciliation. Registering repeatedly with the same name replaces the schedule rather than accumulating.
 
+This schedule repeats and spans 00:00 to 23:59, so it too is already under way whenever it is registered, and registering it fires `intervalDidStart` at once. Two things follow: the reset reconciliation runs on ordinary app activations as well as at midnight, so it has to be idempotent, and the callback is not evidence that a logical day turned over. Nothing here treats it as evidence — it reconciles against whatever `inForce(on:)` returns for the moment it runs, which is correct on both.
+
 - [ ] **Step 4: Run the tests**
 
 Run the test command. Expected: PASS.
@@ -1298,65 +1589,73 @@ Run the test command. Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/Shared/SessionMonitorCallbackHandler.swift Sources/Shared/DailyResetScheduler.swift Sources/MonitorExtension/MonitorExtension.swift Sources/Pause/AppModel.swift Tests/SharedTests/SessionMonitorCallbackHandlerTests.swift
+git add Sources/Shared/SessionMonitorCallbackHandler.swift Sources/Shared/SessionReconciliationCoordinator.swift Sources/Shared/DailyResetScheduler.swift Sources/MonitorExtension/MonitorExtension.swift Sources/Pause/AppModel.swift Tests/SharedTests/SessionMonitorCallbackHandlerTests.swift
 git commit -m "feat: wake the monitor when a logical day begins"
 ```
 
 ---
 
-### Task 12: The reset cleans up what a landed removal left behind
+### Task 12: The reset releases what a landed removal no longer covers
 
 **Files:**
-- Modify: `Sources/Shared/SessionReconciliationService.swift`
-- Test: `Tests/SharedTests/SessionReconciliationServiceTests.swift` (extend)
+- Modify: `Sources/Shared/SessionReconciliationCoordinator.swift` — the `shouldApplyShields` decision
+- Test: `Tests/SharedTests/SessionReconciliationServiceTests.swift` (extend — Task 7 creates it)
 
 **Interfaces:**
-- Consumes: `ConfigurationFile.inForce(on:)`, `RuleRemovalCoordinator`.
+- Consumes: `SessionReconciliationTrigger.dailyReset` from Task 11, and the temporary-directory fixture Task 7 builds in the test file this task extends.
 
-Reconciliation already loads the in-force document (Task 7). It now also collapses a started pending document into `effective` and deletes runtime files for rules the in-force document no longer contains. Collapsing is what makes the cleanup safe: until it happens, the rule could still be resurrected by a cancel.
+A reconcile pass applies the shield set only when `shouldApplyShields` holds: the trigger is `.appActivation`, or a per-rule callback found something it could stop, or the pass raised an issue. A reset that lands a removal satisfies none of them. The rules the pass iterates come from the in-force document, so when the removal takes the last rule with it there is nothing to iterate, `selectedCallbackCanStop` stays false, and the shield set is never written — leaving the released application shielded until Pause is next opened.
+
+Adding `.dailyReset` to that condition is the whole change: the reset is a whole-configuration pass like an activation, not a callback about one rule.
+
+The reset writes nothing. A pending document that has started is folded into `effective` by `ConfigurationSaveRouter` on the next save, because the router routes against `inForce(on:)` rather than against `effective`; until then `inForce(on:)` keeps returning it. Leaving the file alone is what lets every reader stay read-only, and it keeps the monitor extension off a write path nothing has established it can take.
+
+The removed rule's runtime file is deleted by the orphan cleanup that already runs on app activation — `AppModel.cleanupOrphanedRuntimes()` keeps only the rules the in-force document names. A runtime left behind in the meantime changes nothing: `ShieldReconciler` builds the shield set from `configuration.targets`, so a runtime with no target is never read. Its session activity is a one-shot schedule that ends itself.
 
 - [ ] **Step 1: Write the failing test**
 
 ```swift
-    func testReconcilingAfterARemovalLandsDeletesItsRuntime() throws {
-        // Arrange a store whose pending document removes the only rule, with a
-        // start day of today, and whose runtime file exists.
-        // Reconcile with now inside that day.
-        // Assert: runtime-<ruleID>.json no longer exists
-        //         the saved file's effective document has no target
-        //         the saved file's pending is nil
+    func testTheResetReleasesAnApplicationWhoseRemovalHasLanded() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedRemovalPending(in: directory, startDay: LogicalDay.containing(now, calendar: calendar))
+        var applied: Set<ApplicationToken>?
+
+        _ = makeService(directory: directory, applyApplications: { applied = $0 })
+            .reconcile(now: now, trigger: .dailyReset)
+
+        XCTAssertEqual(applied, [])
     }
 
-    func testReconcilingBeforeARemovalLandsKeepsItsRuntime() throws {
-        // Same arrangement with a start day of tomorrow.
-        // Assert: runtime-<ruleID>.json still exists and pending is unchanged.
+    func testTheResetKeepsShieldingAnApplicationWhoseRemovalHasNotLanded() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedRemovalPending(in: directory, startDay: LogicalDay.next(after: now, calendar: calendar))
+        var applied: Set<ApplicationToken>?
+
+        _ = makeService(directory: directory, applyApplications: { applied = $0 })
+            .reconcile(now: now, trigger: .dailyReset)
+
+        XCTAssertEqual(applied, [try token(seed: "instagram")])
     }
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run the test command. Expected: FAIL — the runtime file is still present after the removal lands.
+Run the test command. Expected: the first FAILS — `applied` is `nil`, because no shield set was written. The second passes already: the rule is still in force, its runtime holds no open session, and that is enough to reach the apply.
 
 - [ ] **Step 3: Write the implementation**
 
-In the reconcile path, after computing the in-force document:
+In `SessionReconciliationCoordinator.reconcile(...)`, include the reset in the decision:
 
 ```swift
-        let today = LogicalDay.containing(now)
-        if let pending = file.pending, pending.startDay <= today {
-            let removedRuleIDs = Set(file.effective.targets.map(\.ruleID))
-                .subtracting(pending.document.targets.map(\.ruleID))
-            try configurationStore.save(
-                file: ConfigurationFile(effective: pending.document, pending: nil)
-            )
-            for ruleID in removedRuleIDs {
-                try? runtimeRepository.delete(ruleID: ruleID)
-                stopMonitoring([ruleID])
-            }
-        }
+        let shouldApplyShields = trigger == .appActivation
+            || trigger == .dailyReset
+            || selectedCallbackCanStop
+            || !result.issues.isEmpty
 ```
 
-Then continue with the existing reconciliation, which applies the shield set from the in-force document and so releases the removed application.
+Nothing else changes. The existing reconciliation already builds the shield set from the in-force document, so the removed application is released the moment the apply runs.
 
 - [ ] **Step 4: Run the tests**
 
@@ -1365,8 +1664,8 @@ Run the test command. Expected: PASS across all suites.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/Shared/SessionReconciliationService.swift Tests/SharedTests/SessionReconciliationServiceTests.swift
-git commit -m "feat: finish a removal when it takes effect"
+git add Sources/Shared/SessionReconciliationCoordinator.swift Tests/SharedTests/SessionReconciliationServiceTests.swift
+git commit -m "feat: release an app when its removal takes effect"
 ```
 
 ---
