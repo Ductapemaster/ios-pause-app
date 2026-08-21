@@ -1,12 +1,12 @@
 ## Status — resume here (2026-08-20)
 
-**State:** Phase 1 is implemented through Task 8 and 192 tests pass. A signed build runs on an iPhone 16 Pro (iOS 26.6), and the core loop works end to end: the shield names the sessions still available, the pause countdown runs, the session is granted, and Instagram reopens. The shield reads its state without the state lock, because the sandbox profile the configuration extension runs under refuses every write in the app group container. The device matrix is otherwise unrun.
+**State:** Phase 1 is implemented through Task 8 and 192 tests pass. A signed build runs on an iPhone 16 Pro (iOS 26.6) and the core loop works on the phone: the shield names the sessions still available, the pause countdown runs, the session is granted, and Instagram reopens. The shield reads its state without the state lock, because the sandbox profile its configuration extension runs under refuses every write. The 23-row device acceptance matrix is unrun, deferred in favour of new work (why: the app behaves correctly in the use tested so far, and acceptance gates work already built rather than blocking what follows). Deferred rule changes are specified and planned, not built.
 
-**Next step:** A prototype confining rule changes — disabling an app, changing session count or length — to the following day, so a rule cannot be relaxed to escape the current one.
+**Next step:** Execute `docs/plans/deferred-rule-changes.md` from Task 1, after filling the four under-specified tests it flags and settling the reconciliation trigger named in Task 11.
 
-**Blockers:** None.
+**Blockers:** No git remote is configured, so nothing can be pushed. Every commit is local only.
 
-**Read first:** Before any shield work, `docs/research/shield-repair-variant.md` — what the shield sandbox forbids, and why nothing on that path may write.
+**Read first:** Before shield work, `docs/research/shield-repair-variant.md`. Before building deferred changes, `docs/design/deferred-rule-changes.md`.
 
 ## Evidence
 
