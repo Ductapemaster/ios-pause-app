@@ -26,7 +26,7 @@ public enum ConfigurationSaveRouter {
         var immediateUnits: [ConfigurationComparison.RuleUnit] = []
         var scheduledResultUnits: [ConfigurationComparison.RuleUnit] = []
 
-        for ruleID in orderedRuleIDs(inForce: inForce, candidate: candidate) {
+        for ruleID in orderedRuleIDs(inForce: inForce, candidate: candidate, scheduled: scheduled) {
             let inForceUnit = inForceUnits[ruleID]
             let candidateUnit = candidateUnits[ruleID]
             let target: ConfigurationComparison.RuleUnit?
@@ -72,17 +72,28 @@ public enum ConfigurationSaveRouter {
     }
 
     /// Rule order is user-visible in the rules list, so the documents this
-    /// builds keep the in-force order and append only what the candidate adds.
-    /// A unit named by the scheduled document alone is ignored: a scheduled
-    /// document can only hold units the effective one holds, since an addition
-    /// is a tightening and never waits.
+    /// builds keep the in-force order and append what the candidate adds, then
+    /// anything only the scheduled document still names.
     private static func orderedRuleIDs(
         inForce: ConfigurationDocument,
-        candidate: ConfigurationDocument
+        candidate: ConfigurationDocument,
+        scheduled: ConfigurationDocument?
     ) -> [UUID] {
         var ordered = inForce.targets.map(\.ruleID)
-        let known = Set(ordered)
-        ordered.append(contentsOf: candidate.targets.map(\.ruleID).filter { !known.contains($0) })
+        var known = Set(ordered)
+        for ruleID in candidate.targets.map(\.ruleID) where !known.contains(ruleID) {
+            ordered.append(ruleID)
+            known.insert(ruleID)
+        }
+        // A unit only the scheduled document names is an app added by a save
+        // this router made before it judged per app, which deferred the whole
+        // edit and so left the addition waiting. Walking it here is what covers
+        // that app rather than dropping it: an addition does not loosen, so the
+        // per-unit judgment lands it in both documents and the wait ends.
+        for ruleID in scheduled?.targets.map(\.ruleID) ?? [] where !known.contains(ruleID) {
+            ordered.append(ruleID)
+            known.insert(ruleID)
+        }
         return ordered
     }
 

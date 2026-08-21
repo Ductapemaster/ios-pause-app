@@ -199,6 +199,31 @@ final class ConfigurationSaveRouterTests: XCTestCase {
         XCTAssertEqual(result.pending?.document.settings.pauseSeconds, 5)
     }
 
+    /// A file written before the router judged per app can hold an addition
+    /// that is waiting, because the old router deferred a mixed picker save
+    /// whole. The added app is named by neither the in-force document nor a
+    /// candidate built from it, so walking only those two would drop it.
+    func testAnAppLeftWaitingByTheOldWholeEditRuleIsCoveredRatherThanDropped() throws {
+        let existing = ConfigurationFile(
+            effective: try document(seeds: ["a"]),
+            pending: PendingConfiguration(
+                document: try document(seeds: ["a", "c"]),
+                startDay: LogicalDay.next(after: now(), calendar: calendar)
+            )
+        )
+        let candidate = try document(seeds: ["a"])
+
+        let result = try ConfigurationSaveRouter.route(
+            candidate: candidate,
+            into: existing,
+            now: now(),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(seeds(of: result.effective), ["a", "c"])
+        XCTAssertNil(result.pending)
+    }
+
     // MARK: - Helpers
 
     private let ruleIDs = [
