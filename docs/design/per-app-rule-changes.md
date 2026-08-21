@@ -64,7 +64,7 @@ The last case is the one that keeps last-write-wins where it belongs. A save tha
 
 - **`ConfigurationComparison`** — `isLoosening(from:to:)` already walks rules one at a time and OR's the results. Extract that per-unit judgment and the settings judgment as their own functions; the document-level function becomes their disjunction and keeps its callers.
 - **`ConfigurationSaveRouter`** — build the two documents from the per-unit decision above.
-- **`ScheduledChange.addition`** — delete the case. An addition is a tightening, so it can never be scheduled. It is reachable today only because a mixed picker save defers the add along with the drop, which is the behavior this design removes. Its wording and tests go with it.
+- **`ScheduledChange.addition`** — keep it. A picker save can no longer schedule an addition, since an add tightens and lands immediately, but the case is still emitted by the branch that reads a re-pointed target as a removal and an addition together. That branch guards a change no screen can make; leaving it alone keeps this effort to the judgment and out of the notice's wording.
 
 A latent fault closes with it. A deferred picker save writes an added rule's runtime immediately, while orphan cleanup keeps only the runtimes of rules the in-force document names — so the runtime of an added-but-deferred rule could be swept before its rule arrived. An add that applies at once is never in that window.
 
@@ -73,6 +73,8 @@ A latent fault closes with it. A deferred picker save writes an added rule's run
 The notice draws what one document does to another, so it follows the split without changing: with the adds already in the effective document, only the deferred units are left to name. A mixed picker save that used to name the drop and count the add alongside it now names the drop alone, and the app it added is simply covered.
 
 One rule needs restating, and stating precisely. A deferred save leaves the rule editor open under the notice and an immediate save closes it; a save can now defer one part of itself and apply another. **The editor stays open when this save deferred something.** Not when something is merely scheduled: a save can now leave the slot occupied without having deferred anything itself, by carrying forward a change scheduled for an app it did not touch, and closing the editor is right there — the wait it would be showing is not the one the person just chose.
+
+The test is one comparison. A save deferred part of itself exactly when the new effective document differs from the candidate it was handed, because the two can only differ on a unit this save touched: an untouched unit takes its in-force form in the effective document and already had that form in the candidate. The editor reads that rather than the pending slot, which stays what the notice is drawn from.
 
 ## What is not changing
 
