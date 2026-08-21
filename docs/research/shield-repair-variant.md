@@ -52,11 +52,11 @@ The instrument was coupled to the failure it measured. Reading `shield-diagnosti
 
 Phase 1 has the shield configuration extension compute what to display by taking a file lock and reading the configuration and runtime state from the app group. That is not permissible in this extension's sandbox, so the session count cannot be derived where it is currently derived. Whatever the shield displays has to be computed elsewhere and delivered through a channel the profile permits.
 
-Open questions for that redesign:
+The denial is not a blanket one on reading. Shared preferences are a separate channel from the container's files, and the extension reads them: a counter written by the shield action extension into `UserDefaults(suiteName:)` was read back and rendered by the configuration extension on every press, while that extension's own writes to the same suite never landed. Reads through shared preferences survive where writes do not — see [the platform evidence note](screen-time-platform-evidence.md). Within the container itself the denial is not direction-specific either: the lock file's `open(O_CREAT|O_RDWR)` is refused before any read is attempted.
 
-- [ ] Whether the profile denies reads as well as writes, or writes only.
-- [ ] Whether `UserDefaults` reads from the app group survive where its writes do not.
-- [ ] Which channel the profile does permit for handing precomputed text to the extension.
+One question stays open for that redesign:
+
+- [ ] Which channel the profile does permit for handing precomputed text to the extension. Shared-preferences reads are a candidate on the evidence above.
 
 ## Method note
 
@@ -66,7 +66,7 @@ The instances met here:
 
 - `log collect` needs USB and root.
 - `devicectl` exposes only standard subdirectories of a container, never the root, so its listing is silent about `configuration.json` and the runtime files either way.
-- Shared preferences do not flush on process exit, and the suite is unavailable to a process denied the app group — so an absent key confounds "never ran," "lost the write," and "could not write at all."
+- Shared preferences do not flush on process exit, and this extension's writes to the app group suite do not land — so an absent key confounds "never ran," "lost the write," and "could not write at all."
 - `strings` without `-a` skips the sections holding Swift literals, and in a debug-dylib build the `.appex` binary is a launcher stub whose literals live in a sibling `.debug.dylib`. Scanning the stub returns nothing for strings that are certainly present.
 - A shell pipeline reports the exit status of its last command, so `devicectl … | tail` exits 0 after `devicectl` aborts on timeout.
 
