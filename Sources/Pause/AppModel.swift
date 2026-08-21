@@ -419,7 +419,6 @@ final class AppModel: ObservableObject {
 
         var nextRules: [AppRule] = []
         var nextTargets: [RuleTarget] = []
-        var removalOutcome = RuleRemovalOutcome(cleanupErrors: [])
 
         for target in existingTargets {
             guard retainedTokens.contains(target.applicationToken) else { continue }
@@ -455,18 +454,16 @@ final class AppModel: ObservableObject {
                 rules: nextRules,
                 targets: nextTargets
             )
-            if removedRuleIDs.isEmpty {
-                try persist(nextConfiguration, now: now)
-            } else {
-                removalOutcome = try commitRuleRemoval(
-                    ruleIDs: removedRuleIDs,
-                    nextConfiguration: nextConfiguration,
-                    configurationStore: configurationStore,
-                    runtimeRepository: runtimeRepository,
-                    now: now
-                )
-            }
+            try persist(nextConfiguration, now: now)
             activationCoordinator.configurationSaveCompleted(successfully: true)
+            if !removedRuleIDs.isEmpty {
+                // Dropping an app always loosens the rules, so the edit is
+                // scheduled for the next reset and only the pending document is
+                // written. Every rule in the save is still in force until then,
+                // so their runtimes, shields, monitoring and picker state all
+                // stay as they are.
+                return
+            }
         } catch let changeError {
             activationCoordinator.configurationSaveCompleted(successfully: false)
             var repairErrors: [Error] = []
@@ -496,7 +493,6 @@ final class AppModel: ObservableObject {
         normalizedSelection.applicationTokens = selectedTokens
         pickerSelection = normalizedSelection
         reconcileShieldsIfAuthorized(title: "Apps updated, but shields need repair")
-        presentRemovalCleanupErrors(removalOutcome.cleanupErrors)
     }
 
     func updateRule(
@@ -574,10 +570,10 @@ final class AppModel: ObservableObject {
 
     func removeRule(id: UUID, now: Date = Date()) throws {
         try requireConfigurationMutation(.ruleRemoval)
-        guard let configurationStore, let runtimeRepository else {
+        guard configurationStore != nil else {
             throw AppModelError.storageUnavailable
         }
-        guard let target = configuration.targets.first(where: { $0.ruleID == id }) else {
+        guard configuration.targets.contains(where: { $0.ruleID == id }) else {
             throw AppModelError.ruleNotFound
         }
 
@@ -586,23 +582,16 @@ final class AppModel: ObservableObject {
             rules: configuration.rules.filter { $0.id != id },
             targets: configuration.targets.filter { $0.ruleID != id }
         )
-        let removalOutcome: RuleRemovalOutcome
+        // Removing an app always loosens the rules, so the edit is scheduled
+        // for the next reset and only the pending document is written. The rule
+        // is still in force until then, so its runtime, its shield, its session
+        // monitoring and its place in the picker all stay as they are.
         do {
-            removalOutcome = try commitRuleRemoval(
-                ruleIDs: [id],
-                nextConfiguration: nextConfiguration,
-                configurationStore: configurationStore,
-                runtimeRepository: runtimeRepository,
-                now: now
-            )
+            try persist(nextConfiguration, now: now)
         } catch {
             activationCoordinator.configurationSaveCompleted(successfully: false)
             throw error
         }
-
-        pickerSelection.applicationTokens.remove(target.applicationToken)
-        reconcileShieldsIfAuthorized(title: "App removed, but shields need repair")
-        presentRemovalCleanupErrors(removalOutcome.cleanupErrors)
     }
 
     func present(_ error: Error, title: String = "Couldn't save changes") {

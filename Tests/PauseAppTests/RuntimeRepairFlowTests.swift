@@ -199,7 +199,7 @@ final class RuntimeRepairFlowTests: XCTestCase {
         }
     }
 
-    func testSuccessfulRuleRemovalClearsOnlyRemovedMarkerAfterConfigurationCommit() throws {
+    func testRuleRemovalSchedulesTheChangeAndKeepsEveryMarkerUntilItLands() throws {
         let harness = try makeHarness(corruptSelectedRuntime: false)
         let markers = FailedGrantBlockStore(directoryURL: harness.directory)
         try markers.add(ruleID: selectedRuleID)
@@ -207,15 +207,17 @@ final class RuntimeRepairFlowTests: XCTestCase {
 
         try harness.model.removeRule(id: selectedRuleID, now: now)
 
-        XCTAssertFalse(try markers.contains(ruleID: selectedRuleID))
-        XCTAssertTrue(try markers.contains(ruleID: otherRuleID))
         // Removing an app loosens the rules, so it is scheduled for the next
-        // reset rather than applied to the document in force today.
+        // reset. Until then the rule is in force, so its failed-grant block
+        // stays; the orphan cleanup clears it once the removal has landed.
+        XCTAssertTrue(try markers.contains(ruleID: selectedRuleID))
+        XCTAssertTrue(try markers.contains(ruleID: otherRuleID))
         let file = try XCTUnwrap(ConfigurationStore(directoryURL: harness.directory).loadFile())
         XCTAssertTrue(file.effective.rules.contains(where: { $0.id == selectedRuleID }))
-        let saved = try XCTUnwrap(file.pending?.document)
-        XCTAssertFalse(saved.rules.contains(where: { $0.id == selectedRuleID }))
-        XCTAssertTrue(saved.rules.contains(where: { $0.id == otherRuleID }))
+        XCTAssertEqual(file.pending?.startDay, LogicalDay.next(after: now))
+        let scheduled = try XCTUnwrap(file.pending?.document)
+        XCTAssertFalse(scheduled.rules.contains(where: { $0.id == selectedRuleID }))
+        XCTAssertTrue(scheduled.rules.contains(where: { $0.id == otherRuleID }))
     }
 
     private func makeHarness(corruptSelectedRuntime: Bool) throws -> RuntimeRepairHarness {

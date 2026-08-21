@@ -277,6 +277,25 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertNil(model.pendingChangeStartDay)
     }
 
+    func testRemovingAnAppLeavesItsRuntimeUntilTheChangeTakesEffect() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let runtimeURL = directory.appendingPathComponent(
+            "runtime-\(ruleID.uuidString.lowercased()).json"
+        )
+        let probe = FlowProbe(status: .approved)
+        let model = makeModel(directory: directory, probe: probe, hasProtectedState: false)
+
+        try model.removeRule(id: ruleID, now: now)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: runtimeURL.path))
+        XCTAssertEqual(model.configuration.targets.count, 1)
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(probe.cleanupCount, 0)
+        XCTAssertEqual(probe.reconciliationCount, 0)
+    }
+
     private func makeModel(
         directory: URL,
         probe: FlowProbe,
