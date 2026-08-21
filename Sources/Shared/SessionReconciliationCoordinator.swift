@@ -55,12 +55,14 @@ public struct SessionReconciliationResult: LocalizedError {
 
 public enum SessionReconciliationTrigger: Equatable, Sendable {
     case appActivation
+    case dailyReset
     case intervalDidEnd(ruleID: UUID)
     case intervalWillEndWarning(ruleID: UUID, activityName: String)
 
     var selectedRuleID: UUID? {
         switch self {
         case .appActivation: nil
+        case .dailyReset: nil
         case let .intervalDidEnd(ruleID): ruleID
         case let .intervalWillEndWarning(ruleID, _): ruleID
         }

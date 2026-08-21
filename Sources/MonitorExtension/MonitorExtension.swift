@@ -3,7 +3,10 @@ import Foundation
 import OSLog
 
 final class MonitorExtension: DeviceActivityMonitor {
-    override func intervalDidStart(for activity: DeviceActivityName) {}
+    override func intervalDidStart(for activity: DeviceActivityName) {
+        super.intervalDidStart(for: activity)
+        handle(activityName: activity.rawValue, warning: false, didStart: true)
+    }
 
     override func intervalDidEnd(for activity: DeviceActivityName) {
         super.intervalDidEnd(for: activity)
@@ -15,7 +18,7 @@ final class MonitorExtension: DeviceActivityMonitor {
         handle(activityName: activity.rawValue, warning: true)
     }
 
-    private func handle(activityName: String, warning: Bool) {
+    private func handle(activityName: String, warning: Bool, didStart: Bool = false) {
         let logger = Logger(subsystem: "com.koubalabs.pause.monitor", category: "reconciliation")
         let runner = SessionMonitorReconciliationRunner(
             makeReconcile: {
@@ -28,7 +31,9 @@ final class MonitorExtension: DeviceActivityMonitor {
                 logger.error("\(message, privacy: .public)")
             }
         )
-        if warning {
+        if didStart {
+            runner.intervalDidStart(activityName: activityName, now: Date())
+        } else if warning {
             runner.intervalWillEndWarning(activityName: activityName, now: Date())
         } else {
             runner.intervalDidEnd(activityName: activityName, now: Date())

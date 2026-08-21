@@ -3,6 +3,7 @@ import DeviceActivity
 @preconcurrency import FamilyControls
 import Foundation
 import ManagedSettings
+import OSLog
 import PauseCore
 
 struct AppError: Identifiable {
@@ -202,6 +203,7 @@ final class AppModel: ObservableObject {
     func sceneDidBecomeActive(now: Date = Date()) {
         isSceneActive = true
         refreshAuthorizationStatus()
+        registerDailyReset()
 
         var coordinator = activationCoordinator
         let outcome: PauseActivationOutcome<AppEntryRoute>
@@ -931,6 +933,24 @@ final class AppModel: ObservableObject {
             )
         } catch {
             presentedError = AppError(title: title, error: error)
+        }
+    }
+
+    /// Re-registers the repeating daily activity that wakes the monitor at the
+    /// reset. Registering under a name already registered replaces its schedule,
+    /// so running this on every activation keeps one registration, not many.
+    ///
+    /// A failure here is logged rather than surfaced: the user cannot act on it,
+    /// and the next activation both retries the registration and reconciles the
+    /// state the reset would have handled.
+    private func registerDailyReset() {
+        guard canApplyManagedSettings else { return }
+        do {
+            try DailyResetScheduler(center: activityCenter).register()
+        } catch {
+            Logger(subsystem: "com.koubalabs.pause", category: "dailyReset").error(
+                "Could not register the daily reset activity: \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 

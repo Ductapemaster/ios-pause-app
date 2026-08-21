@@ -1,11 +1,26 @@
 import Foundation
 import PauseCore
 
+public enum DailyResetActivityName {
+    public static let value = "daily-reset"
+}
+
 public struct SessionMonitorCallbackHandler {
     private let reconcile: (SessionReconciliationTrigger, Date) -> Void
 
     public init(reconcile: @escaping (SessionReconciliationTrigger, Date) -> Void) {
         self.reconcile = reconcile
+    }
+
+    /// Only the daily reset is acted on here. A session's own interval begins at
+    /// the instant it is granted, so this callback also arrives immediately on
+    /// every grant, carrying that session's name — which makes the name, not the
+    /// arrival, the thing worth reading.
+    public func intervalDidStart(activityName: String, now: Date) {
+        guard SessionActivityName.ruleID(fromSessionActivityName: activityName) == nil else {
+            return
+        }
+        reconcile(.dailyReset, now)
     }
 
     public func intervalDidEnd(activityName: String, now: Date) {
@@ -43,6 +58,10 @@ public struct SessionMonitorReconciliationRunner {
         self.errorSink = errorSink
     }
 
+    public func intervalDidStart(activityName: String, now: Date) {
+        handle(activityName: activityName, now: now, warning: false, didStart: true)
+    }
+
     public func intervalDidEnd(activityName: String, now: Date) {
         handle(activityName: activityName, now: now, warning: false)
     }
@@ -51,7 +70,12 @@ public struct SessionMonitorReconciliationRunner {
         handle(activityName: activityName, now: now, warning: true)
     }
 
-    private func handle(activityName: String, now: Date, warning: Bool) {
+    private func handle(
+        activityName: String,
+        now: Date,
+        warning: Bool,
+        didStart: Bool = false
+    ) {
         do {
             let reconcile = try makeReconcile()
             let handler = SessionMonitorCallbackHandler { trigger, date in
@@ -63,7 +87,9 @@ public struct SessionMonitorReconciliationRunner {
                     )
                 }
             }
-            if warning {
+            if didStart {
+                handler.intervalDidStart(activityName: activityName, now: now)
+            } else if warning {
                 handler.intervalWillEndWarning(activityName: activityName, now: now)
             } else {
                 handler.intervalDidEnd(activityName: activityName, now: now)

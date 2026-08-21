@@ -41,6 +41,27 @@ final class SessionMonitorCallbackHandlerTests: XCTestCase {
         XCTAssertEqual(count, 0)
     }
 
+    func testTheDailyResetReconciles() {
+        var received: SessionReconciliationTrigger?
+        let handler = SessionMonitorCallbackHandler { trigger, _ in received = trigger }
+
+        handler.intervalDidStart(activityName: DailyResetActivityName.value, now: now)
+
+        XCTAssertEqual(received, .dailyReset)
+    }
+
+    func testASessionIntervalStartingDoesNotReconcile() {
+        var count = 0
+        let handler = SessionMonitorCallbackHandler { _, _ in count += 1 }
+
+        handler.intervalDidStart(
+            activityName: SessionActivityName.sessionActivityName(for: ruleID),
+            now: now
+        )
+
+        XCTAssertEqual(count, 0)
+    }
+
     func testSynchronousRunnerWorksOnMainAndBackgroundContextsWithoutDeadlock() {
         let mainEvents = MonitorEvents()
         let mainRunner = SessionMonitorReconciliationRunner(
