@@ -139,14 +139,14 @@ final class PauseEntryRouterTests: XCTestCase {
 final class ForegroundPauseStateTests: XCTestCase {
     func testSceneInactivityAbandonsAnUnfinishedCountdown() {
         XCTAssertEqual(
-            ForegroundPauseState.countingDown.transitioned(for: .sceneBecameInactive),
+            ForegroundPauseState.countingDown.transitioned(for: .sceneLeftForeground),
             .configuration
         )
     }
 
     func testSceneInactivityDoesNotRollBackAStartedGrant() {
         XCTAssertEqual(
-            ForegroundPauseState.grantStarted.transitioned(for: .sceneBecameInactive),
+            ForegroundPauseState.grantStarted.transitioned(for: .sceneLeftForeground),
             .grantStarted
         )
     }
@@ -268,7 +268,7 @@ final class PauseActivationCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(activate(), .resolved("pause"))
         coordinator.countdownDidStart()
-        coordinator.sceneDidBecomeInactive()
+        coordinator.sceneDidLeaveForeground()
         XCTAssertEqual(coordinator.foregroundState, .configuration)
         XCTAssertEqual(activate(), .configuration)
     }
@@ -356,7 +356,7 @@ final class PauseActivationCoordinatorTests: XCTestCase {
     func testGrantStartedSurvivesInactivityWithoutReconsumingIntent() {
         var coordinator = PauseActivationCoordinator(configurationState: .knownGood)
         coordinator.grantDidStart()
-        coordinator.sceneDidBecomeInactive()
+        coordinator.sceneDidLeaveForeground()
         var consumed = 0
 
         let outcome: PauseActivationOutcome<String> = coordinator.activate(

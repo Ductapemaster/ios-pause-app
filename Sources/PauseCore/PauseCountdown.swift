@@ -106,7 +106,11 @@ public enum PauseEntryRouter {
 }
 
 public enum ForegroundPauseEvent: Equatable, Sendable {
-    case sceneBecameInactive
+    /// The scene left the foreground entirely. A transient loss of active
+    /// status — a notification banner, a Control Center pull, the app switcher
+    /// — is not this event: the user has not left, and a countdown they are
+    /// still sitting in front of should survive it.
+    case sceneLeftForeground
 }
 
 public enum ForegroundPauseState: Equatable, Sendable {
@@ -116,9 +120,9 @@ public enum ForegroundPauseState: Equatable, Sendable {
 
     public func transitioned(for event: ForegroundPauseEvent) -> ForegroundPauseState {
         switch (self, event) {
-        case (.countingDown, .sceneBecameInactive):
+        case (.countingDown, .sceneLeftForeground):
             .configuration
-        case (.configuration, .sceneBecameInactive), (.grantStarted, .sceneBecameInactive):
+        case (.configuration, .sceneLeftForeground), (.grantStarted, .sceneLeftForeground):
             self
         }
     }
@@ -236,9 +240,9 @@ public struct PauseActivationCoordinator: Sendable {
         foregroundState = .configuration
     }
 
-    public mutating func sceneDidBecomeInactive() {
+    public mutating func sceneDidLeaveForeground() {
         hasHandledCurrentActivation = false
-        foregroundState = foregroundState.transitioned(for: .sceneBecameInactive)
+        foregroundState = foregroundState.transitioned(for: .sceneLeftForeground)
     }
 
     public mutating func activate<Intent, Payload>(

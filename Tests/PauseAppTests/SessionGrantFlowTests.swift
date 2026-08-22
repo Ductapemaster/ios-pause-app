@@ -100,7 +100,7 @@ final class SessionGrantFlowTests: XCTestCase {
         await launcher.waitUntilOpenStarts()
 
         await harness.model.requestSessionGrant(now: now.addingTimeInterval(1))
-        harness.model.sceneDidBecomeInactive()
+        harness.model.sceneDidLeaveForeground()
         harness.model.sceneDidBecomeActive(now: now.addingTimeInterval(2))
 
         XCTAssertEqual(harness.scheduler.registerCount, 1)
@@ -165,6 +165,30 @@ final class SessionGrantFlowTests: XCTestCase {
         XCTAssertTrue(message.contains("future reconciliation"))
         XCTAssertTrue(message.contains("save the failed-session block"))
         XCTAssertFalse(message.contains("couldn't confirm whether the app was blocked"))
+    }
+
+    /// Leaving by Home already abandons an attempt without charging a session.
+    /// A cancel makes that existing exit visible, so it must cost exactly what
+    /// Home costs: nothing reserved, nothing scheduled, nothing charged.
+    func testCancellingTheCountdownReturnsToConfigurationWithoutChargingASession() throws {
+        let harness = try makeHarness(route: nil, automaticRoute: false, launchSucceeds: true)
+        harness.model.sceneDidBecomeActive(now: now)
+        guard case .pause = harness.model.entryRoute else {
+            return XCTFail("The shield intent should open the countdown")
+        }
+
+        harness.model.returnToConfiguration()
+
+        guard case .configuration = harness.model.entryRoute else {
+            return XCTFail("Cancelling returns to the rules list")
+        }
+        XCTAssertFalse(harness.model.isGrantRequested)
+        XCTAssertEqual(harness.scheduler.registerCount, 0)
+        let runtime = try XCTUnwrap(
+            RuntimeRepository(directoryURL: harness.directory).load(ruleID: ruleID)
+        )
+        XCTAssertEqual(runtime.sessionsStarted, 0)
+        XCTAssertNil(runtime.openSession)
     }
 
     private func makeHarness(

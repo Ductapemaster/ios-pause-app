@@ -30,10 +30,18 @@ struct PauseApp: App {
                 )
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active {
+                switch phase {
+                case .active:
                     model.sceneDidBecomeActive()
-                } else {
-                    model.sceneDidBecomeInactive()
+                case .background:
+                    model.sceneDidLeaveForeground()
+                case .inactive:
+                    // A banner, a Control Center pull, or the app switcher. The
+                    // user has not left, so an in-progress countdown stands.
+                    // Backgrounding still arrives as its own phase.
+                    break
+                @unknown default:
+                    break
                 }
             }
             .task {
@@ -52,7 +60,8 @@ struct PauseApp: App {
             PauseView(
                 entry: entry,
                 isGrantRequested: model.isGrantRequested,
-                onUseSession: model.requestSessionGrant
+                onUseSession: model.requestSessionGrant,
+                onCancel: model.returnToConfiguration
             )
         case let .manualReturn(content):
             ManualReturnView(content: content)
