@@ -62,13 +62,14 @@ enum AppRootRoute: Equatable {
     case authorizedContent
 }
 
-enum AppModelError: LocalizedError {
+enum AppModelError: LocalizedError, Equatable {
     case storageUnavailable
     case unsafeConfiguration
     case ruleNotFound
     case invalidSessionsPerDay
     case invalidSessionLength
     case invalidPauseDuration
+    case invalidResetMinuteOfDay
 
     var errorDescription: String? {
         switch self {
@@ -84,6 +85,8 @@ enum AppModelError: LocalizedError {
             "Session length must be between 1 and 120 minutes."
         case .invalidPauseDuration:
             "Pause duration must be between 1 and 120 seconds."
+        case .invalidResetMinuteOfDay:
+            "The daily reset must fall on a quarter hour."
         }
     }
 }
@@ -545,7 +548,35 @@ final class AppModel: ObservableObject {
         }
 
         var nextConfiguration = configuration
-        nextConfiguration.settings = try GlobalSettings(pauseSeconds: seconds)
+        nextConfiguration.settings = try GlobalSettings(
+            pauseSeconds: seconds,
+            resetMinuteOfDay: configuration.settings.resetMinuteOfDay
+        )
+        do {
+            try persist(nextConfiguration, now: now)
+        } catch {
+            activationCoordinator.configurationSaveCompleted(successfully: false)
+            throw error
+        }
+    }
+
+    func setResetMinuteOfDay(_ minute: Int, now: Date = Date()) throws {
+        // Mirrors updatePauseSeconds: the same mutation gate runs first, so a
+        // save that the coordinator is not ready for is refused the same way.
+        try requireConfigurationMutation(.globalSettingsEdit)
+        guard (0..<(24 * 60)).contains(minute),
+              minute % GlobalSettings.resetMinuteStep == 0 else {
+            throw AppModelError.invalidResetMinuteOfDay
+        }
+        guard configurationStore != nil else {
+            throw AppModelError.storageUnavailable
+        }
+
+        var nextConfiguration = configuration
+        nextConfiguration.settings = try GlobalSettings(
+            pauseSeconds: configuration.settings.pauseSeconds,
+            resetMinuteOfDay: minute
+        )
         do {
             try persist(nextConfiguration, now: now)
         } catch {

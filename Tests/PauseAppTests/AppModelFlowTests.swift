@@ -413,6 +413,51 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
     }
 
+    func testSettingTheResetTimePersistsItAndKeepsThePauseDuration() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeEmptyConfiguration(to: directory)
+        let model = makeModel(directory: directory, probe: FlowProbe(status: .approved), hasProtectedState: false)
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        model.sceneDidBecomeActive(now: now)
+        let pauseBefore = model.configuration.settings.pauseSeconds
+
+        try model.setResetMinuteOfDay(6 * 60, now: now)
+
+        XCTAssertEqual(model.configuration.settings.resetMinuteOfDay, 6 * 60)
+        XCTAssertEqual(model.configuration.settings.pauseSeconds, pauseBefore)
+    }
+
+    /// The pause-duration setter rebuilds the whole settings value, so a reset
+    /// time already chosen must survive an unrelated edit to the countdown.
+    func testEditingThePauseDurationKeepsTheResetTime() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeEmptyConfiguration(to: directory)
+        let model = makeModel(directory: directory, probe: FlowProbe(status: .approved), hasProtectedState: false)
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        model.sceneDidBecomeActive(now: now)
+        try model.setResetMinuteOfDay(9 * 60 + 45, now: now)
+
+        try model.updatePauseSeconds(30, now: now)
+
+        XCTAssertEqual(model.configuration.settings.resetMinuteOfDay, 9 * 60 + 45)
+        XCTAssertEqual(model.configuration.settings.pauseSeconds, 30)
+    }
+
+    func testAResetTimeOffTheQuarterHourGridIsRefused() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeEmptyConfiguration(to: directory)
+        let model = makeModel(directory: directory, probe: FlowProbe(status: .approved), hasProtectedState: false)
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        model.sceneDidBecomeActive(now: now)
+
+        XCTAssertThrowsError(try model.setResetMinuteOfDay(7, now: now)) { error in
+            XCTAssertEqual(error as? AppModelError, .invalidResetMinuteOfDay)
+        }
+    }
+
     private func makeModel(
         directory: URL,
         probe: FlowProbe,

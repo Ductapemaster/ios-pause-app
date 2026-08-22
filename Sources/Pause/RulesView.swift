@@ -89,8 +89,16 @@ struct RulesView: View {
                             .font(.system(.body, design: .rounded).monospacedDigit())
                     }
                 }
+
+                Picker(selection: resetMinuteOfDay) {
+                    ForEach(Array(stride(from: 0, through: 1425, by: 15)), id: \.self) { minute in
+                        Text(Self.resetLabel(for: minute)).tag(minute)
+                    }
+                } label: {
+                    Text("Day reset")
+                }
             } footer: {
-                Text("The pause shown before every allowed session.")
+                Text("The pause shown before every allowed session, and the time each day's sessions renew.")
             }
 
             Section {
@@ -147,6 +155,27 @@ struct RulesView: View {
                 }
             }
         )
+    }
+
+    private var resetMinuteOfDay: Binding<Int> {
+        Binding(
+            get: { model.configuration.settings.resetMinuteOfDay },
+            set: { minute in
+                do {
+                    try model.setResetMinuteOfDay(minute)
+                } catch {
+                    model.present(error)
+                }
+            }
+        )
+    }
+
+    private static func resetLabel(for minute: Int) -> String {
+        var components = DateComponents()
+        components.hour = minute / 60
+        components.minute = minute % 60
+        let date = Calendar.current.date(from: components) ?? Date()
+        return date.formatted(date: .omitted, time: .shortened)
     }
 
     private var pickerExplanation: String {
