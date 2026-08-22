@@ -81,7 +81,7 @@ These exercise Pause's own rollback, repair and accounting rather than Screen Ti
 
 Each of these was a row in an earlier, longer matrix. Dropping a row does not make its behavior verified — it makes it **unverified by choice**, on the reasoning given. Any of them is worth reinstating if the behavior it names ever misbehaves in use.
 
-- **Lock interruption** and **scene interruption**. Both reach the same branch as pressing Home: `PauseApp.swift:32-38` treats `.inactive` exactly as backgrounding. One trigger through that branch is the script's step 6; the other two would re-observe one code path. That the branch is aggressive is a known product question, recorded in the roadmap, not an acceptance question.
+- **Lock interruption** and **scene interruption**. At acceptance both reached the same branch as pressing Home, so triggering one of the three — the script's step 6 — covered the code path. That is no longer true: scene handling now abandons an attempt only on backgrounding, and a transient loss of active status stands. A banner or Control Center pull is therefore its own path, and confirming a countdown survives one is worth a row if the behaviour is ever doubted. Locking still reaches backgrounding, so it still abandons.
 - **Denied authorization.** A whole fresh-install-and-deny cycle to observe one setup screen refusing to advance.
 - **Multiple application selection as its own row.** Apple's picker rendering Apple's labels is Apple's behavior; step 2 depends on the selection working anyway, so a failure there stops the run regardless.
 - **Independent rule editing as its own row.** Per-rule persistence is unit-covered and folded into step 2, where it costs nothing to look.
