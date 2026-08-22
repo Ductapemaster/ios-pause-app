@@ -146,7 +146,7 @@ Phase 1 repeats the old three-minute and sixteen-minute device checks through th
 
 ## Daily Resets and Windows
 
-The reset is a setting, on a fifteen-minute grid, applying to all seven days, defaulting to midnight — [its own design](configurable-daily-reset.md) carries the detail. An instant belongs to the period beginning at the most recent reset: today's if that time has passed, otherwise yesterday's, so every allowance day runs twenty-four hours. A session is charged to the allowance day in which it began and stays open across the next reset.
+The reset is a setting, on a fifteen-minute grid, applying to all seven days, defaulting to midnight — [its own design](configurable-daily-reset.md) carries the detail. An instant belongs to the period beginning at the most recent reset: today's if that time has passed, otherwise yesterday's, so every allowance day runs the length of the civil day it begins on. A session is charged to the allowance day in which it began and stays open across the next reset.
 
 A window has a start time, end time, and weekday set. Its start is inclusive and end exclusive. An overnight window's weekday names the day on which it begins.
 
