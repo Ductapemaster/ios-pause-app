@@ -214,7 +214,10 @@ final class RuntimeRepairFlowTests: XCTestCase {
         XCTAssertTrue(try markers.contains(ruleID: otherRuleID))
         let file = try XCTUnwrap(ConfigurationStore(directoryURL: harness.directory).loadFile())
         XCTAssertTrue(file.effective.rules.contains(where: { $0.id == selectedRuleID }))
-        XCTAssertEqual(file.pending?.startDay, LogicalDay.next(after: now))
+        XCTAssertEqual(
+            file.pending?.startDay,
+            LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current)
+        )
         let scheduled = try XCTUnwrap(file.pending?.document)
         XCTAssertFalse(scheduled.rules.contains(where: { $0.id == selectedRuleID }))
         XCTAssertTrue(scheduled.rules.contains(where: { $0.id == otherRuleID }))

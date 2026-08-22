@@ -16,7 +16,7 @@ public enum ConfigurationSaveRouter {
         now: Date,
         calendar: Calendar = .current
     ) throws -> ConfigurationFile {
-        let inForce = existing.inForce(on: LogicalDay.containing(now, calendar: calendar))
+        let inForce = existing.inForce(at: now, calendar: calendar)
         let scheduled = existing.pending?.document
 
         let inForceUnits = ConfigurationComparison.units(of: inForce)
@@ -66,7 +66,11 @@ public enum ConfigurationSaveRouter {
             effective: immediate,
             pending: PendingConfiguration(
                 document: scheduledResult,
-                startDay: LogicalDay.next(after: now, calendar: calendar)
+                startDay: LogicalDay.next(
+                    after: now,
+                    resetMinuteOfDay: existing.effective.settings.resetMinuteOfDay,
+                    calendar: calendar
+                )
             )
         )
     }

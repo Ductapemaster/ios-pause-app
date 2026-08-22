@@ -180,7 +180,7 @@ final class AppModel: ObservableObject {
 
             if let savedFile = try configurationStore.loadFile() {
                 let openedAt = Date()
-                let savedConfiguration = savedFile.inForce(on: LogicalDay.containing(openedAt))
+                let savedConfiguration = savedFile.inForce(at: openedAt)
                 configurationFile = savedFile
                 configuration = savedConfiguration
                 pendingChangeStartDay = Self.scheduledStartDay(in: savedFile, now: openedAt)
@@ -439,7 +439,7 @@ final class AppModel: ObservableObject {
             )
         }
 
-        let today = LogicalDay.containing(now)
+        let today = logicalDay(at: now)
         do {
             for token in addedTokens {
                 let rule = try AppRule(sessionsPerDay: 3, sessionLengthMinutes: 5)
@@ -561,7 +561,7 @@ final class AppModel: ObservableObject {
               file.pending != nil else { return }
         // Cancelling a loosening leaves the stricter rule standing, which is a
         // tightening, so it applies at once.
-        let kept = file.inForce(on: LogicalDay.containing(now))
+        let kept = file.inForce(at: now)
         do {
             let cleared = ConfigurationFile(effective: kept, pending: nil)
             try configurationStore.save(file: cleared)
@@ -865,7 +865,7 @@ final class AppModel: ObservableObject {
         )
         try configurationStore.save(file: routed)
         configurationFile = routed
-        configuration = routed.inForce(on: LogicalDay.containing(now))
+        configuration = routed.inForce(at: now)
         pendingChangeStartDay = Self.scheduledStartDay(in: routed, now: now)
         lastSaveDeferredPart = routed.effective != candidate
     }
@@ -876,8 +876,20 @@ final class AppModel: ObservableObject {
     /// not scheduled.
     private static func scheduledStartDay(in file: ConfigurationFile, now: Date) -> CalendarDay? {
         guard let startDay = file.pending?.startDay,
-              startDay > LogicalDay.containing(now) else { return nil }
+              startDay > file.logicalDay(at: now) else { return nil }
         return startDay
+    }
+
+    /// The allowance day, resolved from the file when there is one. The fallback
+    /// covers only the window before a file has been loaded, where the in-force
+    /// document is the sole source of settings.
+    private func logicalDay(at now: Date) -> CalendarDay {
+        configurationFile?.logicalDay(at: now)
+            ?? LogicalDay.containing(
+                now,
+                resetMinuteOfDay: configuration.settings.resetMinuteOfDay,
+                calendar: .current
+            )
     }
 
     /// Re-selects the document in force for the day Pause is being opened on, so
@@ -886,7 +898,7 @@ final class AppModel: ObservableObject {
     /// nothing from disk.
     private func refreshInForceConfiguration(now: Date) {
         guard let configurationFile else { return }
-        configuration = configurationFile.inForce(on: LogicalDay.containing(now))
+        configuration = configurationFile.inForce(at: now)
         pendingChangeStartDay = Self.scheduledStartDay(in: configurationFile, now: now)
         pickerSelection.applicationTokens = Set(configuration.targets.map(\.applicationToken))
     }

@@ -60,7 +60,7 @@ public final class SessionReconciliationService {
             guard let file = try configurationStore.loadFile() else {
                 throw SessionReconciliationServiceError.configurationMissing
             }
-            configuration = file.inForce(on: LogicalDay.containing(now))
+            configuration = file.inForce(at: now)
         } catch {
             return SessionReconciliationResult(
                 repairRuleIDs: trigger.selectedRuleID.map { [$0] } ?? [],
@@ -115,14 +115,16 @@ public final class SessionReconciliationService {
         calendar: Calendar
     ) -> SessionReconciliationResult {
         let configuration: ConfigurationDocument
+        let file: ConfigurationFile
         do {
-            guard let file = try configurationStore.loadFile() else {
+            guard let loadedFile = try configurationStore.loadFile() else {
                 throw SessionReconciliationServiceError.configurationMissing
             }
-            let inForce = file.inForce(on: LogicalDay.containing(now, calendar: calendar))
+            let inForce = loadedFile.inForce(at: now, calendar: calendar)
             guard inForce.rules.contains(where: { $0.id == ruleID }) else {
                 throw RuleLookupError.ruleNotFound(ruleID)
             }
+            file = loadedFile
             configuration = inForce
         } catch {
             return SessionReconciliationResult(
@@ -142,7 +144,7 @@ public final class SessionReconciliationService {
         )
         return coordinator.resetRuntime(
             ruleID: ruleID,
-            logicalDay: LogicalDay.containing(now, calendar: calendar),
+            logicalDay: file.logicalDay(at: now, calendar: calendar),
             saveRuntime: runtimeRepository.save,
             clearFailedGrantBlock: failedGrantBlockStore.clear,
             applyShields: { [shieldReconciler, runtimeRepository] in

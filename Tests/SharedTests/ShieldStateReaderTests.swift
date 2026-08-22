@@ -95,7 +95,7 @@ final class ShieldStateReaderTests: XCTestCase {
                 effective: effective,
                 pending: PendingConfiguration(
                     document: scheduled,
-                    startDay: LogicalDay.containing(now, calendar: calendar)
+                    startDay: LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: calendar)
                 )
             )
         )
@@ -103,7 +103,7 @@ final class ShieldStateReaderTests: XCTestCase {
             url: directoryURL.appendingPathComponent("runtime-\(ruleID.uuidString.lowercased()).json")
         ).save(
             RuleRuntime(
-                logicalDay: LogicalDay.containing(now, calendar: calendar),
+                logicalDay: LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: calendar),
                 sessionsStarted: 1,
                 openSession: nil
             )

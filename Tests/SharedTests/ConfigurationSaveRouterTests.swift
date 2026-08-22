@@ -40,7 +40,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
 
         XCTAssertEqual(result.effective, existing.effective)
         XCTAssertEqual(result.pending?.document, candidate)
-        XCTAssertEqual(result.pending?.startDay, LogicalDay.next(after: now(), calendar: calendar))
+        XCTAssertEqual(result.pending?.startDay, LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar))
     }
 
     func testATighteningEditClearsAScheduledChange() throws {
@@ -48,7 +48,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
             effective: try document(seeds: ["a"], sessionsPerDay: ["a": 3]),
             pending: PendingConfiguration(
                 document: try document(seeds: ["a"], sessionsPerDay: ["a": 5]),
-                startDay: LogicalDay.next(after: now(), calendar: calendar)
+                startDay: LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar)
             )
         )
         let candidate = try document(seeds: ["a"], sessionsPerDay: ["a": 2])
@@ -69,7 +69,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
             effective: try document(seeds: ["a"], sessionsPerDay: ["a": 3]),
             pending: PendingConfiguration(
                 document: try document(seeds: ["a"], sessionsPerDay: ["a": 5]),
-                startDay: LogicalDay.next(after: now(), calendar: calendar)
+                startDay: LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar)
             )
         )
         let candidate = try document(seeds: ["a"], sessionsPerDay: ["a": 8])
@@ -99,7 +99,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
 
         XCTAssertEqual(seeds(of: result.effective), ["a", "b", "c"])
         XCTAssertEqual(seeds(of: result.pending?.document), ["a", "c"])
-        XCTAssertEqual(result.pending?.startDay, LogicalDay.next(after: now(), calendar: calendar))
+        XCTAssertEqual(result.pending?.startDay, LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar))
     }
 
     func testAScheduledRemovalSurvivesASaveAboutAnotherApp() throws {
@@ -107,7 +107,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
             effective: try document(seeds: ["a", "b"]),
             pending: PendingConfiguration(
                 document: try document(seeds: ["a"]),
-                startDay: LogicalDay.next(after: now(), calendar: calendar)
+                startDay: LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar)
             )
         )
         // Adding "c" says nothing about "b", whose removal is already scheduled.
@@ -130,7 +130,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
             effective: try document(seeds: ["a", "b"]),
             pending: PendingConfiguration(
                 document: scheduled,
-                startDay: LogicalDay.next(after: now(), calendar: calendar)
+                startDay: LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar)
             )
         )
         let candidate = try document(seeds: ["a", "b", "c"])
@@ -152,7 +152,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
             effective: try document(seeds: ["a", "b"]),
             pending: PendingConfiguration(
                 document: try document(seeds: ["a", "b"], sessionsPerDay: ["a": 5]),
-                startDay: LogicalDay.next(after: now(), calendar: calendar)
+                startDay: LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar)
             )
         )
         let candidate = try document(seeds: ["a", "b"], sessionsPerDay: ["a": 4])
@@ -208,7 +208,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
             effective: try document(seeds: ["a"]),
             pending: PendingConfiguration(
                 document: try document(seeds: ["a", "c"]),
-                startDay: LogicalDay.next(after: now(), calendar: calendar)
+                startDay: LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar)
             )
         )
         let candidate = try document(seeds: ["a"])

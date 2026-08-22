@@ -33,8 +33,10 @@ enum ScheduledChangeWording {
     /// a start day that is neither tomorrow nor arrived, which reads as a date
     /// instead — formatted through `Date.formatted`, so the device locale
     /// decides the order of the fields.
-    static func phrase(for day: CalendarDay, now: Date = Date()) -> String {
-        if day == LogicalDay.next(after: now) { return "tomorrow" }
+    static func phrase(for day: CalendarDay, resetMinuteOfDay: Int, now: Date = Date()) -> String {
+        if day == LogicalDay.next(after: now, resetMinuteOfDay: resetMinuteOfDay, calendar: .current) {
+            return "tomorrow"
+        }
         guard let date = day.date(in: .current) else { return "at the next reset" }
         return "on \(date.formatted(.dateTime.month(.abbreviated).day()))"
     }
@@ -171,7 +173,10 @@ struct ScheduledChangeNotice: View {
     private var sentence: some View {
         switch ScheduledChangeWording.sentence(
             for: model.scheduledChanges,
-            starting: ScheduledChangeWording.phrase(for: startDay)
+            starting: ScheduledChangeWording.phrase(
+                for: startDay,
+                resetMinuteOfDay: model.configuration.settings.resetMinuteOfDay
+            )
         ) {
         case let .aboutApp(token, predicate):
             // The label holds the first line and the rest wraps beside it; the

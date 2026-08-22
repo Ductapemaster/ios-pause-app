@@ -222,7 +222,7 @@ final class AppModelFlowTests: XCTestCase {
         )
 
         XCTAssertEqual(model.configuration.rules[0].sessionsPerDay, 3)
-        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
     }
 
     func testLoweringAnAllowanceAppliesAtOnceAndClearsASchedule() throws {
@@ -276,7 +276,7 @@ final class AppModelFlowTests: XCTestCase {
         try model.updatePauseSeconds(5, now: now)
 
         XCTAssertEqual(model.configuration.settings.pauseSeconds, 10)
-        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
 
         try model.updatePauseSeconds(20, now: now)
 
@@ -298,7 +298,7 @@ final class AppModelFlowTests: XCTestCase {
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: runtimeURL.path))
         XCTAssertEqual(model.configuration.targets.count, 1)
-        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
         XCTAssertEqual(probe.cleanupCount, 0)
         XCTAssertEqual(probe.reconciliationCount, 0)
     }
@@ -319,7 +319,7 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(model.pickerSelection.applicationTokens, [try token(seed: "instagram")])
         XCTAssertEqual(model.configuration.rules.map(\.id), [ruleID])
         XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
-        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
     }
 
     func testTheRemovalTakesTheAppAndItsSelectionWhenItLands() throws {
@@ -362,7 +362,7 @@ final class AppModelFlowTests: XCTestCase {
             [try token(seed: "instagram"), try token(seed: "threads")]
         )
         XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
-        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
         XCTAssertTrue(model.lastSaveDeferredPart)
     }
 
@@ -409,7 +409,7 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(model.configuration.settings.pauseSeconds, 20)
         XCTAssertFalse(model.lastSaveDeferredPart)
         // The removal is still scheduled; only this save deferred nothing.
-        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
         XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
     }
 
@@ -471,7 +471,7 @@ final class AppModelFlowTests: XCTestCase {
             )
         )
         try RuntimeRepository(directoryURL: directory).save(
-            RuleRuntime(logicalDay: LogicalDay.containing(now), sessionsStarted: 0),
+            RuleRuntime(logicalDay: LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: .current), sessionsStarted: 0),
             ruleID: ruleID
         )
     }

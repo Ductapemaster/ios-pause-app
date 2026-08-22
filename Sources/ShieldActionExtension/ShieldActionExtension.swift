@@ -37,7 +37,7 @@ final class ShieldActionExtension: ShieldActionDelegate {
                 guard let file = try ConfigurationStore(directoryURL: directoryURL).loadFile() else {
                     return false
                 }
-                let configuration = file.inForce(on: LogicalDay.containing(now))
+                let configuration = file.inForce(at: now)
                 let resolvedRule = try RuleLookup.resolve(
                     applicationToken: application,
                     configuration: configuration,
