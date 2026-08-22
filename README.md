@@ -1,5 +1,11 @@
 # Pause
 
-Pause is a personal iOS app that inserts a deliberate pause before opening selected distracting apps and limits access through daily session allowances and schedules.
+Pause is a personal iOS app that interrupts reflexive entry into selected apps with a deliberate pause and a daily session allowance.
 
-The product requirements are in [`docs/product-requirements.md`](docs/product-requirements.md). The approved architecture and phased scope are in [`docs/design/pause-app.md`](docs/design/pause-app.md). Implementation has not started in this repository.
+**Target:** The deployment minimum is iOS 26.5. Qualification is pending on the iPhone 16 running its exact installed iOS 26.x version. iOS 27 will require a separate future qualification after its release and matching Xcode toolchain are available; support is not yet promised.
+
+**Setup:** Copy `Local.xcconfig.example` to `Local.xcconfig`, set `DEVELOPMENT_TEAM`, run `xcodegen generate`, and open `Pause.xcodeproj`.
+
+**Test:** `xcodebuild test -project Pause.xcodeproj -scheme PauseUnitTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro'`
+
+**Docs:** [Product requirements](docs/product-requirements.md) · [Approved design](docs/design/pause-app.md) · [Phase 1 plan](docs/plans/phase-1-core-action-loop.md) · [Device acceptance](docs/testing/phase-1-device-acceptance.md)

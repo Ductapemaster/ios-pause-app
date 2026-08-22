@@ -1,0 +1,172 @@
+name: Pause
+
+options:
+  bundleIdPrefix: com.koubalabs.pause
+  deploymentTarget:
+    iOS: "26.5"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+# DEVELOPMENT_TEAM comes from Local.xcconfig, which is gitignored.
+configFiles:
+  Debug: Local.xcconfig
+  Release: Local.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"
+    SWIFT_EMIT_LOC_STRINGS: NO
+
+targets:
+  PauseCore:
+    type: library.static
+    platform: iOS
+    sources:
+      - Sources/PauseCore
+
+  Pause:
+    type: application
+    platform: iOS
+    sources:
+      - Sources/Pause
+      - Sources/Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.koubalabs.pause
+        PRODUCT_NAME: Pause
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: Config/Pause.entitlements
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+    dependencies:
+      - target: PauseCore
+      - target: MonitorExtension
+      - target: ShieldConfigExtension
+      - target: ShieldActionExtension
+
+  MonitorExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Sources/MonitorExtension
+      - Sources/Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.koubalabs.pause.monitor
+        CODE_SIGN_ENTITLEMENTS: Config/MonitorExtension.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: PauseCore
+      - sdk: FamilyControls.framework
+      - sdk: ManagedSettings.framework
+      - sdk: DeviceActivity.framework
+    info:
+      path: Config/MonitorExtension-Info.plist
+      properties:
+        CFBundleDisplayName: Pause Monitor
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.deviceactivity.monitor-extension
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).MonitorExtension
+
+  ShieldConfigExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Sources/ShieldConfigExtension
+      - Sources/Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.koubalabs.pause.shieldconfig
+        CODE_SIGN_ENTITLEMENTS: Config/ShieldConfigExtension.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: PauseCore
+      - sdk: ManagedSettings.framework
+      - sdk: ManagedSettingsUI.framework
+    info:
+      path: Config/ShieldConfigExtension-Info.plist
+      properties:
+        CFBundleDisplayName: Pause Shield
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.ManagedSettingsUI.shield-configuration-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShieldConfigExtension
+
+  ShieldActionExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Sources/ShieldActionExtension
+      - Sources/Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.koubalabs.pause.shieldaction
+        CODE_SIGN_ENTITLEMENTS: Config/ShieldActionExtension.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: PauseCore
+      - sdk: ManagedSettings.framework
+      - sdk: FamilyControls.framework
+    info:
+      path: Config/ShieldActionExtension-Info.plist
+      properties:
+        CFBundleDisplayName: Pause Shield Action
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.ManagedSettings.shield-action-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShieldActionExtension
+
+  PauseCoreTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests/PauseCoreTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: PauseCore
+
+  PauseSharedTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests/SharedTests
+      - Sources/Shared
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: PauseCore
+
+  PauseAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests/PauseAppTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Pause
+
+schemes:
+  Pause:
+    build:
+      targets:
+        Pause: all
+    run:
+      config: Debug
+  PauseUnitTests:
+    build:
+      targets:
+        PauseCoreTests: [test]
+        PauseSharedTests: [test]
+    test:
+      config: Debug
+      targets:
+        - PauseCoreTests
+        - PauseSharedTests
+        - PauseAppTests

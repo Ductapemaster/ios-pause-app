@@ -101,7 +101,7 @@ RuleTarget
 
 Apple's token provides the display surface through its system label and icon. A rule remains valid without a launch route.
 
-Each rule gets its own small runtime record. The main app updates a rule when it grants or rolls over a session; the monitor clears that rule's expired session. A second session cannot be granted while the first is active, which keeps those writes serialized by product behavior rather than by a general database.
+Each rule gets its own small runtime record. The main app updates a rule when it grants or rolls over a session; the monitor clears that rule's expired session.
 
 Shared App Group state is split by ownership:
 
@@ -109,7 +109,13 @@ Shared App Group state is split by ownership:
 - One runtime record per rule: written by the main app for grants and by the monitor for expiry reconciliation.
 - Latest shield intent: written by the shield action extension and consumed by the main app.
 
-Files use atomic replacement. Product state does not use `UserDefaults` except for the narrow shield intent whose action-extension write was measured on device in the old spike.
+Every app and extension process coordinates shared state through one App Group lock file, `pause-state-v1.lock`. Darwin `flock` provides cross-process exclusion, and a process-local recursive lock allows storage methods to nest inside a larger transaction without deadlocking. The same lock covers configuration and runtime reads and writes, failed-grant markers, and Managed Settings shield snapshots and changes.
+
+A compound operation holds the lock from its initial read through its final runtime, marker, monitoring, and shield decision. Session preparation includes activity registration, provisional runtime reservation, selected-app unshielding, and any synchronous rollback or stop repair; the lock is released before an external app launch. Monitor callbacks use the same lock, so a callback observes either the state before preparation or the stored new expiry, never the gap between registration and reservation. Framework calls that synchronously reenter on the same thread can take the recursive lock; cross-thread callback behavior during `startMonitoring` and `stopMonitoring` remains part of the signed-device gate.
+
+Lock acquisition and transaction-body failures remain visible to the caller. Once the body has completed, unlock and file-descriptor close are best-effort cleanup: reporting a release failure as a failed transaction would invite a retry or rollback after shared state had already committed. The implementation still attempts both operations, and closing the descriptor releases the kernel lock if explicit unlock failed.
+
+JSON files still use atomic replacement inside the transaction so a process interruption cannot leave a partial document. Product state does not use `UserDefaults` except for the narrow shield intent whose action-extension write was measured on device in the old spike.
 
 ## Core Entry Flow
 
