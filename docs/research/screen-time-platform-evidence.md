@@ -112,6 +112,17 @@ weekday 7 → Sat 2026-08-15 09:00:00 → Sat 2026-08-15 17:00:00 (480 min)
 
 A weekday component in a `DateComponents` is honoured rather than ignored: every mask lands on the day it names, at the times it names. Weekday 5 is the day the read happened on, and it resolved to *that* day's 09:00–17:00 — an interval already several hours under way when it was read. **`nextInterval` reports an interval that is already running rather than skipping to the next week's occurrence.**
 
+### A wrapping `intervalStart`/`intervalEnd` pair resolves to the ~24-hour span it names
+
+Measured in the simulator, 2026-08-22. A schedule with `intervalStart` at 06:00 and `intervalEnd` at 05:59 — the pair `DailyResetScheduler` registers for a reset away from midnight — read back through `nextInterval`:
+
+```
+WRAPPING nextInterval: Optional(2026-08-22 13:00:00 +0000 to 2026-08-23 12:59:00 +0000)
+SAME-DAY nextInterval: Optional(2026-08-22 07:00:00 +0000 to 2026-08-23 06:59:00 +0000)
+```
+
+The device's local zone was UTC-7 that day, so the wrapping schedule resolved to 2026-08-22 06:00 local through 2026-08-23 05:59 local — a 23h59m span beginning at the named start, the same shape a same-day schedule (00:00–23:59, read alongside it as a control) resolves to. Nothing here suggested the pair was rejected, inverted, or truncated. `DailyResetScheduler.register(resetMinuteOfDay:)` registers the wrapping pair directly rather than pinning `intervalEnd` to `23:59`.
+
 ### Open: does one schedule span several weekdays?
 
 Whether a single schedule whose `intervalStart` and `intervalEnd` name *different* weekdays covers one continuous multi-day interval, or a per-day mask repeated on each weekday in between, is not measured.

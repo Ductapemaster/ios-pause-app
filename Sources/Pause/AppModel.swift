@@ -934,7 +934,9 @@ final class AppModel: ObservableObject {
     private func registerDailyReset() {
         guard canApplyManagedSettings else { return }
         do {
-            try DailyResetScheduler(center: activityCenter).register()
+            try DailyResetScheduler(center: activityCenter).register(
+                resetMinuteOfDay: configuration.settings.resetMinuteOfDay
+            )
         } catch {
             Logger(subsystem: "com.koubalabs.pause", category: "dailyReset").error(
                 "Could not register the daily reset activity: \(error.localizedDescription, privacy: .public)"

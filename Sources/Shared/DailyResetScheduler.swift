@@ -16,10 +16,23 @@ public struct DailyResetScheduler {
         self.startMonitoring = startMonitoring
     }
 
-    public func register() throws {
+    /// Registers a repeating interval that begins at the reset and ends one
+    /// minute before it, so `nextInterval` covers the full day the reset
+    /// opens. Measured in the simulator (see
+    /// `docs/research/screen-time-platform-evidence.md`): a wrapping
+    /// `intervalStart`/`intervalEnd` pair resolves to a ~24-hour
+    /// `DateInterval` beginning at the configured start, so a reset away
+    /// from midnight is safe to register directly rather than pinned to
+    /// `23:59`.
+    public func register(resetMinuteOfDay: Int) throws {
+        let start = DateComponents(
+            hour: resetMinuteOfDay / 60,
+            minute: resetMinuteOfDay % 60
+        )
+        let endMinute = (resetMinuteOfDay + 24 * 60 - 1) % (24 * 60)
         let schedule = DeviceActivitySchedule(
-            intervalStart: DateComponents(hour: 0, minute: 0),
-            intervalEnd: DateComponents(hour: 23, minute: 59),
+            intervalStart: start,
+            intervalEnd: DateComponents(hour: endMinute / 60, minute: endMinute % 60),
             repeats: true
         )
         try startMonitoring(DeviceActivityName(DailyResetActivityName.value), schedule)
