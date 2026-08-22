@@ -115,6 +115,56 @@ final class ShieldStateReaderTests: XCTestCase {
         XCTAssertEqual(presentation.subtitle, "5 sessions left today")
     }
 
+    /// The feature's central behaviour: with the reset away from midnight, the
+    /// civil date turning over must not renew the allowance. The count has to
+    /// ride to the configured reset, because that is the instant the shield's
+    /// wait is measured against.
+    func testTheSessionCountSurvivesMidnightWhenTheResetIsLater() throws {
+        let ruleID = UUID()
+        let token = try token(seed: "instagram")
+        let directoryURL = try temporaryDirectory()
+        let spentAt = date(year: 2026, month: 8, day: 20, hour: 9)
+        let afterMidnight = date(year: 2026, month: 8, day: 21, hour: 2)
+
+        try seed(
+            directoryURL: directoryURL,
+            ruleID: ruleID,
+            token: token,
+            sessionsPerDay: 4,
+            sessionsStarted: 4,
+            resetMinuteOfDay: 6 * 60,
+            spentAt: spentAt
+        )
+
+        let presentation = try ShieldStateReader(directoryURL: directoryURL)
+            .presentation(for: token, now: afterMidnight, calendar: calendar)
+
+        XCTAssertEqual(presentation.subtitle, "That's all for today.")
+    }
+
+    func testTheSessionCountRenewsAtTheConfiguredReset() throws {
+        let ruleID = UUID()
+        let token = try token(seed: "instagram")
+        let directoryURL = try temporaryDirectory()
+        let spentAt = date(year: 2026, month: 8, day: 20, hour: 9)
+        let afterTheReset = date(year: 2026, month: 8, day: 21, hour: 7)
+
+        try seed(
+            directoryURL: directoryURL,
+            ruleID: ruleID,
+            token: token,
+            sessionsPerDay: 4,
+            sessionsStarted: 4,
+            resetMinuteOfDay: 6 * 60,
+            spentAt: spentAt
+        )
+
+        let presentation = try ShieldStateReader(directoryURL: directoryURL)
+            .presentation(for: token, now: afterTheReset, calendar: calendar)
+
+        XCTAssertEqual(presentation.subtitle, "4 sessions left today")
+    }
+
     // MARK: - Helpers
 
     /// Writes the files the app would have written, without taking the lock, so
@@ -144,6 +194,41 @@ final class ShieldStateReaderTests: XCTestCase {
         try AtomicJSONFile<RuleRuntime>(
             url: directoryURL.appendingPathComponent("runtime-\(ruleID.uuidString.lowercased()).json")
         ).save(runtime)
+    }
+
+    /// The same, for a reset away from midnight: the file carries the reset and
+    /// the runtime is charged to the allowance day the sessions were spent in.
+    private func seed(
+        directoryURL: URL,
+        ruleID: UUID,
+        token: ApplicationToken,
+        sessionsPerDay: Int,
+        sessionsStarted: Int,
+        resetMinuteOfDay: Int,
+        spentAt: Date
+    ) throws {
+        let configuration = try ConfigurationDocument(
+            settings: GlobalSettings(pauseSeconds: 10, resetMinuteOfDay: resetMinuteOfDay),
+            rules: [AppRule(id: ruleID, sessionsPerDay: sessionsPerDay, sessionLengthMinutes: 5)],
+            targets: [RuleTarget(ruleID: ruleID, applicationToken: token, launchRoute: nil)]
+        )
+        try AtomicJSONFile<ConfigurationFile>(
+            url: directoryURL.appendingPathComponent(SharedIdentifiers.configurationFilename)
+        ).save(ConfigurationFile(effective: configuration, pending: nil))
+
+        try AtomicJSONFile<RuleRuntime>(
+            url: directoryURL.appendingPathComponent("runtime-\(ruleID.uuidString.lowercased()).json")
+        ).save(
+            RuleRuntime(
+                logicalDay: LogicalDay.containing(
+                    spentAt,
+                    resetMinuteOfDay: resetMinuteOfDay,
+                    calendar: calendar
+                ),
+                sessionsStarted: sessionsStarted,
+                openSession: nil
+            )
+        )
     }
 
     private func temporaryDirectory() throws -> URL {

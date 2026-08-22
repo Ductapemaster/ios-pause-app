@@ -34,13 +34,19 @@ public struct ResolvedRule {
 }
 
 public enum RuleLookup {
+    /// Resolves against the whole file rather than a document, because the
+    /// answer needs two things the file alone can pair: which document is in
+    /// force, and which allowance day the session count is charged to. Both come
+    /// from the effective document's reset, so taking the file is what stops a
+    /// caller resolving one against the other's frame.
     public static func resolve(
         applicationToken: ApplicationToken,
-        configuration: ConfigurationDocument,
+        configurationFile: ConfigurationFile,
         runtimeRepository: any RuntimeReading,
         now: Date,
         calendar: Calendar = .current
     ) throws -> ResolvedRule {
+        let configuration = configurationFile.inForce(at: now, calendar: calendar)
         let matchingTargets = configuration.targets.filter {
             $0.applicationToken == applicationToken
         }
@@ -60,18 +66,28 @@ public enum RuleLookup {
         return ResolvedRule(
             rule: rule,
             target: target,
-            evaluation: evaluate(rule: rule, runtime: runtime, now: now, calendar: calendar)
+            evaluation: evaluate(
+                rule: rule,
+                runtime: runtime,
+                logicalDay: configurationFile.logicalDay(at: now, calendar: calendar),
+                now: now
+            )
         )
     }
 
+    /// The day is passed in rather than derived here. Deriving it would need a
+    /// reset minute, and the only reset that may decide an allowance day is the
+    /// effective document's — which this function, holding one rule and one
+    /// runtime, is not placed to read. It takes no calendar for the same reason:
+    /// nothing here has an instant to turn into a day.
     public static func evaluate(
         rule: AppRule,
         runtime: RuleRuntime,
-        now: Date,
-        calendar: Calendar = .current
+        logicalDay: CalendarDay,
+        now: Date
     ) -> RuleEvaluation {
         var currentRuntime = runtime
-        currentRuntime.rollOver(to: CalendarDay(date: now, calendar: calendar))
+        currentRuntime.rollOver(to: logicalDay)
         currentRuntime.clearExpiredSession(at: now)
 
         return RuleEvaluation(

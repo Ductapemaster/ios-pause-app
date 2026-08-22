@@ -458,6 +458,69 @@ final class AppModelFlowTests: XCTestCase {
         }
     }
 
+    /// The entry decision, on the path the shield actually takes: a tap resolved
+    /// after civil midnight but before a 06:00 reset must still be refused, since
+    /// the allowance it would spend belongs to the day still running.
+    func testEntryIsRefusedAfterMidnightWhileTheAllowanceDayStillRuns() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let calendar = Calendar(identifier: .gregorian)
+        let spentAt = calendar.date(from: DateComponents(year: 2026, month: 8, day: 20, hour: 9))!
+        let afterMidnight = calendar.date(from: DateComponents(year: 2026, month: 8, day: 21, hour: 2))!
+        let applicationToken = try token(seed: "instagram")
+        try ConfigurationStore(directoryURL: directory).save(
+            file: ConfigurationFile(
+                effective: try ConfigurationDocument(
+                    settings: GlobalSettings(pauseSeconds: 10, resetMinuteOfDay: 6 * 60),
+                    rules: [AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)],
+                    targets: [
+                        RuleTarget(
+                            ruleID: ruleID,
+                            applicationToken: applicationToken,
+                            launchRoute: nil
+                        )
+                    ]
+                ),
+                pending: nil
+            )
+        )
+        try RuntimeRepository(directoryURL: directory).save(
+            RuleRuntime(
+                logicalDay: LogicalDay.containing(
+                    spentAt,
+                    resetMinuteOfDay: 6 * 60,
+                    calendar: calendar
+                ),
+                sessionsStarted: 3
+            ),
+            ruleID: ruleID
+        )
+        let suiteName = "pause-allowance-day-defaults-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        try ShieldIntentStore(defaults: defaults).write(
+            ShieldIntent(applicationToken: applicationToken, createdAt: afterMidnight)
+        )
+        let model = AppModel(
+            shieldReconciler: ShieldReconciler(
+                currentApplications: { [] },
+                applyApplications: { _ in },
+                failedGrantBlockIDs: { [] }
+            ),
+            shieldIntentStore: ShieldIntentStore(defaults: defaults),
+            storageDirectoryURL: directory,
+            authorizationStatusProvider: { .approved },
+            authorizationRequester: {}
+        )
+
+        model.sceneDidBecomeActive(now: afterMidnight)
+
+        guard case let .refused(content) = model.entryRoute else {
+            return XCTFail("A spent allowance day must refuse entry, not open the pause")
+        }
+        XCTAssertEqual(content.title, "No sessions left today")
+    }
+
     private func makeModel(
         directory: URL,
         probe: FlowProbe,

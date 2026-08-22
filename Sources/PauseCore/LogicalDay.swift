@@ -2,9 +2,9 @@ import Foundation
 
 /// The single place that decides which allowance day an instant belongs to.
 ///
-/// An allowance day begins at the configured reset and runs twenty-four hours,
-/// and is named for the civil date it begins on. Session counting and deferred
-/// rule changes both ask this type, which is what keeps a rule change and the
+/// An allowance day begins at the configured reset, tracks the civil day it
+/// begins on, and is named for that date. Session counting and deferred rule
+/// changes both ask this type, which is what keeps a rule change and the
 /// allowance reset it arrives with on the same instant.
 public enum LogicalDay {
     public static func containing(

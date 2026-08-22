@@ -297,10 +297,22 @@ final class AppModel: ObservableObject {
             )
         }
         let launcher = targetLauncher ?? AppLaunchRouter(configuration: configuration)
+        let runtime: any RuntimePersisting
+        if let sessionRuntimePersistence {
+            runtime = sessionRuntimePersistence
+        } else {
+            // A rule matched, so a file was loaded: `configuration` is only ever
+            // populated from one.
+            guard let configurationFile else { return }
+            runtime = RepositoryRuntimePersistence(
+                repository: runtimeRepository,
+                configurationFile: configurationFile,
+                now: now
+            )
+        }
         let coordinator = SessionGrantCoordinator(
             scheduler: scheduler,
-            runtime: sessionRuntimePersistence
-                ?? RepositoryRuntimePersistence(repository: runtimeRepository, now: now),
+            runtime: runtime,
             shield: shield,
             launcher: launcher,
             lock: stateLock
@@ -354,7 +366,7 @@ final class AppModel: ObservableObject {
         let reset = { [self] in
             coordinator.resetRuntime(
                 ruleID: ruleID,
-                logicalDay: CalendarDay(date: now, calendar: .current),
+                logicalDay: logicalDay(at: now),
                 saveRuntime: runtimeRepository.save,
                 clearFailedGrantBlock: failedGrantBlockStore.clear,
                 applyShields: {
@@ -784,8 +796,8 @@ final class AppModel: ObservableObject {
         let evaluation = RuleLookup.evaluate(
             rule: rule,
             runtime: runtime,
-            now: now,
-            calendar: .current
+            logicalDay: logicalDay(at: now),
+            now: now
         )
         let resolution = PauseEntryResolution.resolved(
             ruleID: rule.id,
@@ -911,16 +923,16 @@ final class AppModel: ObservableObject {
         return startDay
     }
 
-    /// The allowance day, resolved from the file when there is one. The fallback
-    /// covers only the window before a file has been loaded, where the in-force
-    /// document is the sole source of settings.
+    /// The allowance day, resolved from the file's effective document — the one
+    /// reset that may decide it.
+    ///
+    /// With no file there are no saved settings to read: `configuration` is then
+    /// the empty document, whose reset is a default rather than anything the user
+    /// chose. So the fallback is the civil date, written as the midnight reset it
+    /// is, rather than a reset taken from a document that may be a pending one.
     private func logicalDay(at now: Date) -> CalendarDay {
         configurationFile?.logicalDay(at: now)
-            ?? LogicalDay.containing(
-                now,
-                resetMinuteOfDay: configuration.settings.resetMinuteOfDay,
-                calendar: .current
-            )
+            ?? LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: .current)
     }
 
     /// Re-selects the document in force for the day Pause is being opened on, so
