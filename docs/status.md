@@ -2,11 +2,11 @@
 
 **State:** Phase 1 is accepted and closed. The core action loop is built and in use on the phone: authorization, selection, shielding, shield handoff, the pause countdown, session grants, the daily limit, and per-app judgment of a saved edit. 258 tests pass, the unsigned build is warning-free, and a signed build is installed. Acceptance was made on ordinary device use across several configured apps rather than on the scripted run-through, which is kept as a regression script; [the acceptance doc](testing/phase-1-device-acceptance.md) records that basis and what it leaves unverified. One gap is carried knowingly: the sixteen-minute expiry row, where a session over fifteen minutes expires on `intervalDidEnd` rather than the observed `intervalWillEndWarning`. Any use of a session that long settles it.
 
-**Next step:** Start Phase 2, time-based rules — design before code. [The roadmap](ROADMAP.md) carries the product feedback raised from device use and the open SQLite storage decision, which should be settled before the file-lock work it would delete.
+**Next step:** Either clear the four small items the roadmap lists as ready to build — the countdown cancel, the scene-interruption split, the shield's second button, and the bounded lock wait — or start Phase 2, time-based rules, design before code.
 
 **Blockers:** No git remote is configured, so nothing can be pushed. Every commit is local only.
 
-**Read first:** Before shield work, `docs/research/shield-repair-variant.md`. Before scheduling or callback work, `docs/research/screen-time-platform-evidence.md`. Before starting a storage change, the roadmap's open SQLite decision — it would delete `AppGroupFileLock`.
+**Read first:** Before shield work, `docs/research/shield-repair-variant.md`. Before scheduling or callback work, `docs/research/screen-time-platform-evidence.md`.
 
 ## Evidence
 

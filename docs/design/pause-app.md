@@ -117,6 +117,8 @@ Lock acquisition and transaction-body failures remain visible to the caller. Onc
 
 JSON files still use atomic replacement inside the transaction so a process interruption cannot leave a partial document. Product state does not use `UserDefaults` except for the narrow shield intent whose action-extension write was measured on device in the old spike.
 
+JSON files under one lock are the settled storage design, not an interim one. SQLite was weighed and declined: its write-ahead journal coordinates through cross-process shared memory, which interacts badly with iOS file protection while the device is locked — precisely the situation the monitor and shield extensions run in. That is a live hazard traded for correct locking and real transactions, which this design already approximates by holding one lock across a compound operation, and it would add a schema and migrations to carry. The decision stands unless a failure appears that files under a lock cannot address.
+
 ## Core Entry Flow
 
 1. Opening a restricted app shows the custom shield. The shield names the app using Apple's metadata and shows which session would be granted next.
