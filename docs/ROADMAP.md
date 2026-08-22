@@ -1,6 +1,6 @@
 # Roadmap
 
-Prioritized work not currently in flight. Phase 2 time-based rules remain the next planned phase; Phase 1 acceptance comes first.
+Prioritized work not currently in flight. Phase 1 is accepted and closed; Phase 2 time-based rules are the next planned phase.
 
 ## Product feedback awaiting work
 
@@ -11,6 +11,8 @@ Raised from device use:
 - A notification banner or a Control Center swipe abandons a pause, because scene handling treats `.inactive` the same as backgrounding (`PauseApp.swift:32-38`). Deliberate under the design, arguably too aggressive in use.
 
 ## Deferred
+
+**The sixteen-minute expiry restoration is unverified.** A session over fifteen minutes expires on `intervalDidEnd`, where the observed three-minute case expires on `intervalWillEndWarning` — different callbacks, and only the shorter one has been seen restore the shield. The failure it would catch is silent and open-ended: a session that never ends leaves its target unblocked until something else reconciles. Phase 1 was accepted carrying it, on the reasoning in [the acceptance doc](testing/phase-1-device-acceptance.md) (why: it costs one sixteen-minute wait to close, and any real use of a session that long settles it).
 
 **Applying a picker selection blocks the main thread.** Adding an app holds the interface while each added app takes a file-lock cycle plus a JSON encode and atomic write, `configurationStore.save` takes another, and `ShieldReconciler.reconcile` holds a lock while re-reading every configured target's runtime and finishes with a `ManagedSettingsStore` write. Two `@Published` writes land in one run-loop turn, each rebuilding a `Label(ApplicationToken)` per rule. `AppModel` is `@MainActor` and no actor, `Task`, or dispatch hop exists on the path. Which part dominates is unmeasured; the ManagedSettings and FamilyControls costs are not visible from source.
 
