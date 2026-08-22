@@ -13,6 +13,8 @@ final class DailyResetSchedulerTests: XCTestCase {
 
         XCTAssertEqual(registered?.intervalStart.hour, 6)
         XCTAssertEqual(registered?.intervalStart.minute, 30)
+        XCTAssertEqual(registered?.intervalEnd.hour, 6)
+        XCTAssertEqual(registered?.intervalEnd.minute, 29)
         XCTAssertTrue(registered?.repeats == true)
     }
 
@@ -26,6 +28,8 @@ final class DailyResetSchedulerTests: XCTestCase {
 
         XCTAssertEqual(registered?.intervalStart.hour, 0)
         XCTAssertEqual(registered?.intervalStart.minute, 0)
+        XCTAssertEqual(registered?.intervalEnd.hour, 23)
+        XCTAssertEqual(registered?.intervalEnd.minute, 59)
     }
 
     func testTheRegisteredActivityIsTheDailyResetByName() throws {
