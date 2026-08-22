@@ -599,6 +599,12 @@ final class AppModel: ObservableObject {
             activationCoordinator.configurationSaveCompleted(successfully: false)
             throw error
         }
+        // The registration names a wall-clock time, so replacing it has to happen
+        // here rather than at the next activation: an app terminated before it is
+        // backgrounded would otherwise leave iOS waking Pause at the old reset.
+        // This reads the reset that took effect, not `minute`, so a save the
+        // router deferred leaves the registration where it was.
+        registerDailyReset()
     }
 
     /// Drops a scheduled change, leaving the rules in force today standing.
