@@ -12,6 +12,13 @@ final class ShieldActionExtension: ShieldActionDelegate {
         for application: ApplicationToken,
         completionHandler: @escaping (ShieldActionResponse) -> Void
     ) {
+        // Leaving without starting a session: close the shielded app rather than
+        // dismissing in place, which would leave the user on the app they opened
+        // by reflex.
+        if action == .secondaryButtonPressed {
+            completionHandler(.close)
+            return
+        }
         guard action == .primaryButtonPressed else {
             completionHandler(.none)
             return

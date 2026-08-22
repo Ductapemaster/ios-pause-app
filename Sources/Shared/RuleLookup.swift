@@ -89,6 +89,9 @@ public enum RuleLookup {
 public struct ShieldPresentation: Equatable, Sendable {
     public let subtitle: String
     public let primaryButtonTitle: String
+    /// The same on every shield, including a refusal: whatever the shield says,
+    /// leaving without starting a session is always available.
+    public let secondaryButtonTitle = "Not now"
 
     public init(rule: AppRule, decision: SessionDecision) {
         switch decision {
