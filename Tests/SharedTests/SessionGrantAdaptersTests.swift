@@ -24,7 +24,11 @@ final class SessionGrantAdaptersTests: XCTestCase {
             ),
             ruleID: ruleID
         )
-        let adapter = RepositoryRuntimePersistence(repository: repository, now: now)
+        let adapter = RepositoryRuntimePersistence(
+            repository: repository,
+            configurationFile: try configurationFile(),
+            now: now
+        )
         let expiresAt = now.addingTimeInterval(5 * 60)
 
         try adapter.reserve(ruleID: ruleID, activityName: "session.new", expiresAt: expiresAt)
@@ -36,6 +40,78 @@ final class SessionGrantAdaptersTests: XCTestCase {
             runtime.openSession,
             OpenSession(activityName: "session.new", expiresAt: expiresAt, state: .provisional)
         )
+    }
+
+    /// A session reserved after civil midnight but before the configured reset
+    /// belongs to the allowance day still running, so the count it is charged to
+    /// is the one already spent. Charging it to the civil date would hand back a
+    /// full allowance every night at 00:00 whatever the reset says.
+    func testReserveChargesToTheAllowanceDayRatherThanTheCivilDate() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = RuntimeRepository(directoryURL: directory)
+        let ruleID = UUID(uuidString: "d8aa967e-10a8-4a9d-a4ab-e49aaf19fa9a")!
+        let calendar = Calendar(identifier: .gregorian)
+        let spentAt = calendar.date(from: DateComponents(year: 2026, month: 8, day: 20, hour: 9))!
+        let afterMidnight = calendar.date(from: DateComponents(year: 2026, month: 8, day: 21, hour: 2))!
+        let allowanceDay = LogicalDay.containing(spentAt, resetMinuteOfDay: 6 * 60, calendar: calendar)
+        try repository.save(
+            RuleRuntime(logicalDay: allowanceDay, sessionsStarted: 2),
+            ruleID: ruleID
+        )
+        let adapter = RepositoryRuntimePersistence(
+            repository: repository,
+            configurationFile: try configurationFile(resetMinuteOfDay: 6 * 60),
+            now: afterMidnight,
+            calendar: calendar
+        )
+
+        try adapter.reserve(
+            ruleID: ruleID,
+            activityName: "session.new",
+            expiresAt: afterMidnight.addingTimeInterval(5 * 60)
+        )
+
+        let runtime = try XCTUnwrap(repository.load(ruleID: ruleID))
+        XCTAssertEqual(runtime.logicalDay, allowanceDay)
+        XCTAssertEqual(runtime.sessionsStarted, 3)
+    }
+
+    /// The pair: past the reset, the same instant does start a new allowance day.
+    func testReserveRenewsTheCountOnceTheConfiguredResetHasPassed() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = RuntimeRepository(directoryURL: directory)
+        let ruleID = UUID(uuidString: "d8aa967e-10a8-4a9d-a4ab-e49aaf19fa9a")!
+        let calendar = Calendar(identifier: .gregorian)
+        let spentAt = calendar.date(from: DateComponents(year: 2026, month: 8, day: 20, hour: 9))!
+        let afterTheReset = calendar.date(from: DateComponents(year: 2026, month: 8, day: 21, hour: 7))!
+        try repository.save(
+            RuleRuntime(
+                logicalDay: LogicalDay.containing(spentAt, resetMinuteOfDay: 6 * 60, calendar: calendar),
+                sessionsStarted: 2
+            ),
+            ruleID: ruleID
+        )
+        let adapter = RepositoryRuntimePersistence(
+            repository: repository,
+            configurationFile: try configurationFile(resetMinuteOfDay: 6 * 60),
+            now: afterTheReset,
+            calendar: calendar
+        )
+
+        try adapter.reserve(
+            ruleID: ruleID,
+            activityName: "session.new",
+            expiresAt: afterTheReset.addingTimeInterval(5 * 60)
+        )
+
+        let runtime = try XCTUnwrap(repository.load(ruleID: ruleID))
+        XCTAssertEqual(
+            runtime.logicalDay,
+            LogicalDay.containing(afterTheReset, resetMinuteOfDay: 6 * 60, calendar: calendar)
+        )
+        XCTAssertEqual(runtime.sessionsStarted, 1)
     }
 
     func testFailedGrantForceShieldOverridesProvisionalRuntimeAndTouchesOnlySelectedToken() throws {
@@ -283,7 +359,11 @@ final class SessionGrantAdaptersTests: XCTestCase {
         )
         let coordinator = SessionGrantCoordinator(
             scheduler: AdapterScheduler(),
-            runtime: RepositoryRuntimePersistence(repository: repository, now: now),
+            runtime: RepositoryRuntimePersistence(
+                repository: repository,
+                configurationFile: try configurationFile(),
+                now: now
+            ),
             shield: controller,
             launcher: AdapterFailingLauncher()
         )
@@ -362,7 +442,11 @@ final class SessionGrantAdaptersTests: XCTestCase {
         let coordinator = SessionGrantCoordinator(
             scheduler: scheduler,
             runtime: AdapterRollbackFailingRuntime(
-                underlying: RepositoryRuntimePersistence(repository: repository, now: now)
+                underlying: RepositoryRuntimePersistence(
+                    repository: repository,
+                    configurationFile: try configurationFile(),
+                    now: now
+                )
             ),
             shield: controller,
             launcher: AdapterFailingLauncher()
@@ -421,7 +505,11 @@ final class SessionGrantAdaptersTests: XCTestCase {
         )
         let coordinator = SessionGrantCoordinator(
             scheduler: ABAScheduler(callback: callback),
-            runtime: RepositoryRuntimePersistence(repository: repository, now: now),
+            runtime: RepositoryRuntimePersistence(
+                repository: repository,
+                configurationFile: try configurationFile(),
+                now: now
+            ),
             shield: ConfigurationShieldController(
                 configuration: configuration,
                 reconciler: reconciler,
@@ -459,6 +547,18 @@ final class SessionGrantAdaptersTests: XCTestCase {
                 RuleTarget(ruleID: selectedID, applicationToken: selectedToken, launchRoute: nil),
                 RuleTarget(ruleID: otherID, applicationToken: otherToken, launchRoute: nil),
             ]
+        )
+    }
+
+    /// A file carrying only a reset, which is all the grant adapter reads from
+    /// one.
+    private func configurationFile(resetMinuteOfDay: Int = 0) throws -> ConfigurationFile {
+        ConfigurationFile(
+            effective: try ConfigurationDocument(
+                settings: GlobalSettings(pauseSeconds: 10, resetMinuteOfDay: resetMinuteOfDay),
+                rules: [],
+                targets: []
+            )
         )
     }
 

@@ -33,8 +33,14 @@ enum ScheduledChangeWording {
     /// a start day that is neither tomorrow nor arrived, which reads as a date
     /// instead — formatted through `Date.formatted`, so the device locale
     /// decides the order of the fields.
-    static func phrase(for day: CalendarDay, now: Date = Date()) -> String {
-        if day == LogicalDay.next(after: now) { return "tomorrow" }
+    ///
+    /// The file answers what tomorrow is, rather than a reset minute picked out
+    /// here: the day being named was stamped by the file's own reset, so only
+    /// that reset can say whether it is the next one.
+    static func phrase(for day: CalendarDay, in file: ConfigurationFile, now: Date = Date()) -> String {
+        if day == file.nextLogicalDay(after: now) {
+            return "tomorrow"
+        }
         guard let date = day.date(in: .current) else { return "at the next reset" }
         return "on \(date.formatted(.dateTime.month(.abbreviated).day()))"
     }
@@ -167,11 +173,18 @@ struct ScheduledChangeNotice: View {
         }
     }
 
+    /// Without a file there is no saved reset to name a day against, and no
+    /// scheduled change either, so the generic phrase is the whole of that case.
+    private var startPhrase: String {
+        guard let file = model.configurationFile else { return "at the next reset" }
+        return ScheduledChangeWording.phrase(for: startDay, in: file)
+    }
+
     @ViewBuilder
     private var sentence: some View {
         switch ScheduledChangeWording.sentence(
             for: model.scheduledChanges,
-            starting: ScheduledChangeWording.phrase(for: startDay)
+            starting: startPhrase
         ) {
         case let .aboutApp(token, predicate):
             // The label holds the first line and the rest wraps beside it; the

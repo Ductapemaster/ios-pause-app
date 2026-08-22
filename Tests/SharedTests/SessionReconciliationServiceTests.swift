@@ -12,7 +12,7 @@ final class SessionReconciliationServiceTests: XCTestCase {
     func testReconciliationUsesThePendingConfigurationOnceItsStartDayArrives() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        try seedRemovalPending(in: directory, startDay: LogicalDay.containing(now, calendar: calendar))
+        try seedRemovalPending(in: directory, startDay: LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: calendar))
         var applied: Set<ApplicationToken>?
 
         _ = makeService(directory: directory, applyApplications: { applied = $0 })
@@ -24,7 +24,7 @@ final class SessionReconciliationServiceTests: XCTestCase {
     func testReconciliationKeepsTheEffectiveConfigurationBeforeTheStartDay() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        try seedRemovalPending(in: directory, startDay: LogicalDay.next(after: now, calendar: calendar))
+        try seedRemovalPending(in: directory, startDay: LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: calendar))
         var applied: Set<ApplicationToken>?
 
         _ = makeService(directory: directory, applyApplications: { applied = $0 })
@@ -36,7 +36,7 @@ final class SessionReconciliationServiceTests: XCTestCase {
     func testTheResetReleasesAnApplicationWhoseRemovalHasLanded() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        try seedRemovalPending(in: directory, startDay: LogicalDay.containing(now, calendar: calendar))
+        try seedRemovalPending(in: directory, startDay: LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: calendar))
         var applied: Set<ApplicationToken>?
 
         _ = makeService(directory: directory, applyApplications: { applied = $0 })
@@ -48,7 +48,7 @@ final class SessionReconciliationServiceTests: XCTestCase {
     func testTheResetKeepsShieldingAnApplicationWhoseRemovalHasNotLanded() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        try seedRemovalPending(in: directory, startDay: LogicalDay.next(after: now, calendar: calendar))
+        try seedRemovalPending(in: directory, startDay: LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: calendar))
         var applied: Set<ApplicationToken>?
 
         _ = makeService(directory: directory, applyApplications: { applied = $0 })
@@ -87,7 +87,7 @@ final class SessionReconciliationServiceTests: XCTestCase {
         )
         try RuntimeRepository(directoryURL: directory).save(
             RuleRuntime(
-                logicalDay: LogicalDay.containing(now, calendar: calendar),
+                logicalDay: LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: calendar),
                 sessionsStarted: 0
             ),
             ruleID: ruleID

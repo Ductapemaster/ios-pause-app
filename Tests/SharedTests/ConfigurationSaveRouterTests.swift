@@ -40,7 +40,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
 
         XCTAssertEqual(result.effective, existing.effective)
         XCTAssertEqual(result.pending?.document, candidate)
-        XCTAssertEqual(result.pending?.startDay, LogicalDay.next(after: now(), calendar: calendar))
+        XCTAssertEqual(result.pending?.startDay, LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar))
     }
 
     func testATighteningEditClearsAScheduledChange() throws {
@@ -48,7 +48,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
             effective: try document(seeds: ["a"], sessionsPerDay: ["a": 3]),
             pending: PendingConfiguration(
                 document: try document(seeds: ["a"], sessionsPerDay: ["a": 5]),
-                startDay: LogicalDay.next(after: now(), calendar: calendar)
+                startDay: LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar)
             )
         )
         let candidate = try document(seeds: ["a"], sessionsPerDay: ["a": 2])
@@ -69,7 +69,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
             effective: try document(seeds: ["a"], sessionsPerDay: ["a": 3]),
             pending: PendingConfiguration(
                 document: try document(seeds: ["a"], sessionsPerDay: ["a": 5]),
-                startDay: LogicalDay.next(after: now(), calendar: calendar)
+                startDay: LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar)
             )
         )
         let candidate = try document(seeds: ["a"], sessionsPerDay: ["a": 8])
@@ -99,7 +99,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
 
         XCTAssertEqual(seeds(of: result.effective), ["a", "b", "c"])
         XCTAssertEqual(seeds(of: result.pending?.document), ["a", "c"])
-        XCTAssertEqual(result.pending?.startDay, LogicalDay.next(after: now(), calendar: calendar))
+        XCTAssertEqual(result.pending?.startDay, LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar))
     }
 
     func testAScheduledRemovalSurvivesASaveAboutAnotherApp() throws {
@@ -107,7 +107,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
             effective: try document(seeds: ["a", "b"]),
             pending: PendingConfiguration(
                 document: try document(seeds: ["a"]),
-                startDay: LogicalDay.next(after: now(), calendar: calendar)
+                startDay: LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar)
             )
         )
         // Adding "c" says nothing about "b", whose removal is already scheduled.
@@ -130,7 +130,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
             effective: try document(seeds: ["a", "b"]),
             pending: PendingConfiguration(
                 document: scheduled,
-                startDay: LogicalDay.next(after: now(), calendar: calendar)
+                startDay: LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar)
             )
         )
         let candidate = try document(seeds: ["a", "b", "c"])
@@ -152,7 +152,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
             effective: try document(seeds: ["a", "b"]),
             pending: PendingConfiguration(
                 document: try document(seeds: ["a", "b"], sessionsPerDay: ["a": 5]),
-                startDay: LogicalDay.next(after: now(), calendar: calendar)
+                startDay: LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar)
             )
         )
         let candidate = try document(seeds: ["a", "b"], sessionsPerDay: ["a": 4])
@@ -208,7 +208,7 @@ final class ConfigurationSaveRouterTests: XCTestCase {
             effective: try document(seeds: ["a"]),
             pending: PendingConfiguration(
                 document: try document(seeds: ["a", "c"]),
-                startDay: LogicalDay.next(after: now(), calendar: calendar)
+                startDay: LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar)
             )
         )
         let candidate = try document(seeds: ["a"])
@@ -222,6 +222,60 @@ final class ConfigurationSaveRouterTests: XCTestCase {
 
         XCTAssertEqual(seeds(of: result.effective), ["a", "c"])
         XCTAssertNil(result.pending)
+    }
+
+    /// A save that moves the reset re-stamps the start day of whatever is still
+    /// deferred, and the label is read back through the reset the save just put
+    /// in force. Stamping it in the pre-save frame lets a loosening — here an app
+    /// leaving Pause — land the moment it is saved.
+    func testMovingTheResetEarlierDoesNotLandADeferredLooseningAtOnce() throws {
+        let existing = ConfigurationFile(
+            effective: try document(seeds: ["a", "b"], resetMinuteOfDay: 10 * 60),
+            pending: PendingConfiguration(
+                document: try document(seeds: ["a"], resetMinuteOfDay: 10 * 60),
+                startDay: LogicalDay.next(after: now(), resetMinuteOfDay: 10 * 60, calendar: calendar)
+            )
+        )
+        // What the settings screen builds: the rules in force, with a new reset.
+        let candidate = try document(seeds: ["a", "b"], resetMinuteOfDay: 0)
+
+        let result = try ConfigurationSaveRouter.route(
+            candidate: candidate,
+            into: existing,
+            now: now(),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(seeds(of: result.inForce(at: now(), calendar: calendar)), ["a", "b"])
+        XCTAssertEqual(
+            result.pending?.startDay,
+            LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar)
+        )
+    }
+
+    /// The mirror: moving the reset later must not push a deferred change past
+    /// the next reset the new setting names.
+    func testMovingTheResetLaterStartsADeferredChangeAtTheNextResetItNames() throws {
+        let existing = ConfigurationFile(
+            effective: try document(seeds: ["a", "b"], resetMinuteOfDay: 0),
+            pending: PendingConfiguration(
+                document: try document(seeds: ["a"], resetMinuteOfDay: 0),
+                startDay: LogicalDay.next(after: now(), resetMinuteOfDay: 0, calendar: calendar)
+            )
+        )
+        let candidate = try document(seeds: ["a", "b"], resetMinuteOfDay: 10 * 60)
+
+        let result = try ConfigurationSaveRouter.route(
+            candidate: candidate,
+            into: existing,
+            now: now(),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(
+            result.pending?.startDay,
+            LogicalDay.next(after: now(), resetMinuteOfDay: 10 * 60, calendar: calendar)
+        )
     }
 
     // MARK: - Helpers
@@ -241,10 +295,14 @@ final class ConfigurationSaveRouterTests: XCTestCase {
     private func document(
         seeds: [String],
         sessionsPerDay: [String: Int] = [:],
-        pauseSeconds: Int = 10
+        pauseSeconds: Int = 10,
+        resetMinuteOfDay: Int = 0
     ) throws -> ConfigurationDocument {
         try ConfigurationDocument(
-            settings: GlobalSettings(pauseSeconds: pauseSeconds),
+            settings: GlobalSettings(
+                pauseSeconds: pauseSeconds,
+                resetMinuteOfDay: resetMinuteOfDay
+            ),
             rules: try seeds.map { seed in
                 try AppRule(
                     id: ruleIDs[seed]!,

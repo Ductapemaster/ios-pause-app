@@ -21,8 +21,8 @@ final class RuleLookupTests: XCTestCase {
         let evaluation = RuleLookup.evaluate(
             rule: rule,
             runtime: runtime,
-            now: now,
-            calendar: calendar
+            logicalDay: CalendarDay(date: now, calendar: calendar),
+            now: now
         )
 
         XCTAssertEqual(evaluation.runtime.logicalDay, CalendarDay(date: now, calendar: calendar))
@@ -48,8 +48,8 @@ final class RuleLookupTests: XCTestCase {
         let evaluation = RuleLookup.evaluate(
             rule: rule,
             runtime: runtime,
-            now: now,
-            calendar: calendar
+            logicalDay: CalendarDay(date: now, calendar: calendar),
+            now: now
         )
 
         XCTAssertEqual(evaluation.runtime, runtime)

@@ -40,10 +40,9 @@ public struct ShieldStateReader {
         guard let file = try configurationStore.loadFileWithoutLocking() else {
             throw RuleLookupError.targetNotFound
         }
-        let configuration = file.inForce(on: LogicalDay.containing(now, calendar: calendar))
         let resolved = try RuleLookup.resolve(
             applicationToken: applicationToken,
-            configuration: configuration,
+            configurationFile: file,
             runtimeRepository: runtimeReader,
             now: now,
             calendar: calendar

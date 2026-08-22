@@ -4,7 +4,7 @@ Pause puts a deliberate pause and a daily allowance between a reflex and an app.
 
 ## The model
 
-A **rule** covers one app with a daily allowance: how many sessions, and how long each runs. A covered app is **shielded** by Screen Time. Tapping through the shield opens Pause, which runs a **countdown** in the foreground; only when it completes can the user spend a session. Spending one grants timed access, and expiry restores the shield. The allowance renews at the start of the next **logical day**.
+A **rule** covers one app with a daily allowance: how many sessions, and how long each runs. A covered app is **shielded** by Screen Time. Tapping through the shield opens Pause, which runs a **countdown** in the foreground; only when it completes can the user spend a session. Spending one grants timed access, and expiry restores the shield. The allowance renews at the start of the next **allowance day**, which begins at the daily reset — a setting, on a fifteen-minute grid, applying to all seven days, that defaults to midnight.
 
 Two properties hold the design together:
 
@@ -23,13 +23,13 @@ Two properties hold the design together:
 
 ## What it knowingly does not do
 
-- **Device time is taken as given.** The logical day comes from the device clock and calendar, so moving the clock or crossing time zones moves the boundary. Not defended against — the cost is not worth a case that arises in travel rather than in use.
+- **Device time is taken as given.** The allowance day comes from the device clock and calendar, so moving the clock or crossing time zones moves the boundary. Not defended against — the cost is not worth a case that arises in travel rather than in use.
 - **Deleting Pause defeats all of it.** Reinstalling gives a clean slate. Nothing in the design prevents that, and nothing can.
 - **One pending slot, not a queue.** A second save replaces a scheduled change for that app rather than stacking onto it, and cancelling is the only way back to the rules in force.
 - **A save states its opinion by rebuilding.** Touched is inferred from the resulting document rather than declared by the screen, so an editor save that changes nothing reads as untouched and carries a scheduled change forward.
 - **The countdown length is the one field a late edit reaches.** It is not per-day, so it has no reset to ride in on; shortening it late takes effect that much sooner. Accepted — the exposure is a few seconds.
 - **Expiry restoration is verified at three minutes, not sixteen.** A session over fifteen minutes ends on a different callback, and only the shorter one has been observed. Tracked in [the roadmap](ROADMAP.md).
-- **The daily reset will be movable, and moving it refills the day.** Once the reset is a setting it applies the moment it is saved, and a session count rolls over whenever its day label changes — in either direction. Setting the reset a few minutes out therefore hands back the day's sessions, which makes the cap advisory. Accepted for the comparison logic it saves, with the guard that would close it named in [the design](design/configurable-daily-reset.md).
+- **Moving the daily reset refills the day.** A reset-time change applies the moment it is saved, and a session count rolls over whenever the allowance day's label changes — in either direction — so setting the reset a few minutes out hands back the day's sessions, which makes the cap advisory rather than enforced. Accepted for the comparison logic it saves, with the guard that would close it named in [the design](design/configurable-daily-reset.md).
 
 ## Where things are
 

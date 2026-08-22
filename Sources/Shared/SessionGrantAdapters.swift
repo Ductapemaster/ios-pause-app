@@ -3,6 +3,12 @@ import PauseCore
 
 extension AppGroupFileLock: SessionGrantLocking {}
 
+/// Charges a reserved session to the allowance day the file defines.
+///
+/// It takes the configuration file rather than a day so that the day cannot be
+/// supplied wrongly: a session reserved at 02:00 under a 06:00 reset belongs to
+/// the day that began at yesterday's reset, and the civil date would renew the
+/// count four hours early.
 @MainActor
 public final class RepositoryRuntimePersistence: RuntimePersisting {
     private let repository: RuntimeRepository
@@ -11,12 +17,13 @@ public final class RepositoryRuntimePersistence: RuntimePersisting {
 
     public init(
         repository: RuntimeRepository,
+        configurationFile: ConfigurationFile,
         now: Date,
         calendar: Calendar = .current
     ) {
         self.repository = repository
         self.now = now
-        logicalDay = CalendarDay(date: now, calendar: calendar)
+        logicalDay = configurationFile.logicalDay(at: now, calendar: calendar)
     }
 
     public func reserve(ruleID: UUID, activityName: String, expiresAt: Date) throws {

@@ -6,7 +6,7 @@ Prioritized work not currently in flight. Phase 1 is accepted and closed; Phase 
 
 **Three interface changes are unverified on the phone.** The countdown cancel, the scene-interruption split so a banner no longer abandons a pause, and the shield's "Not now" that closes the app. Unit tests reach the model and the shield copy; they cannot reach a SwiftUI scene phase or a shield button. The check is one signed build: confirm a banner does not kill a countdown, the cancel returns without charging a session, and "Not now" closes the app.
 
-**The configurable daily reset is unverified on the phone.** Once built, move the reset to a quarter-hour a few minutes ahead, spend a session, and confirm the count renews at the new time rather than at midnight.
+**The configurable daily reset is unverified on the phone.** Move the reset to a quarter-hour a few minutes ahead, spend a session so the count is non-zero, wait for the reset to pass, and confirm the count renews at the new time rather than at midnight and that the shield reflects the renewed allowance.
 
 **The sixteen-minute expiry restoration is unverified.** A session over fifteen minutes expires on `intervalDidEnd`, where the observed three-minute case expires on `intervalWillEndWarning` — different callbacks, and only the shorter one has been seen restore the shield. The failure it would catch is silent and open-ended: a session that never ends leaves its target unblocked until something else reconciles. Phase 1 was accepted carrying it, on the reasoning in [the acceptance record](archive/phase-1-core-action-loop/acceptance.md) (why: it costs one sixteen-minute wait to close, and any real use of a session that long settles it).
 

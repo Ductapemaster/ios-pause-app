@@ -222,7 +222,7 @@ final class AppModelFlowTests: XCTestCase {
         )
 
         XCTAssertEqual(model.configuration.rules[0].sessionsPerDay, 3)
-        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
     }
 
     func testLoweringAnAllowanceAppliesAtOnceAndClearsASchedule() throws {
@@ -276,7 +276,7 @@ final class AppModelFlowTests: XCTestCase {
         try model.updatePauseSeconds(5, now: now)
 
         XCTAssertEqual(model.configuration.settings.pauseSeconds, 10)
-        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
 
         try model.updatePauseSeconds(20, now: now)
 
@@ -298,7 +298,7 @@ final class AppModelFlowTests: XCTestCase {
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: runtimeURL.path))
         XCTAssertEqual(model.configuration.targets.count, 1)
-        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
         XCTAssertEqual(probe.cleanupCount, 0)
         XCTAssertEqual(probe.reconciliationCount, 0)
     }
@@ -319,7 +319,7 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(model.pickerSelection.applicationTokens, [try token(seed: "instagram")])
         XCTAssertEqual(model.configuration.rules.map(\.id), [ruleID])
         XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
-        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
     }
 
     func testTheRemovalTakesTheAppAndItsSelectionWhenItLands() throws {
@@ -362,7 +362,7 @@ final class AppModelFlowTests: XCTestCase {
             [try token(seed: "instagram"), try token(seed: "threads")]
         )
         XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
-        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
         XCTAssertTrue(model.lastSaveDeferredPart)
     }
 
@@ -409,8 +409,116 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(model.configuration.settings.pauseSeconds, 20)
         XCTAssertFalse(model.lastSaveDeferredPart)
         // The removal is still scheduled; only this save deferred nothing.
-        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now))
+        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
         XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
+    }
+
+    func testSettingTheResetTimePersistsItAndKeepsThePauseDuration() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeEmptyConfiguration(to: directory)
+        let model = makeModel(directory: directory, probe: FlowProbe(status: .approved), hasProtectedState: false)
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        model.sceneDidBecomeActive(now: now)
+        let pauseBefore = model.configuration.settings.pauseSeconds
+
+        try model.setResetMinuteOfDay(6 * 60, now: now)
+
+        XCTAssertEqual(model.configuration.settings.resetMinuteOfDay, 6 * 60)
+        XCTAssertEqual(model.configuration.settings.pauseSeconds, pauseBefore)
+    }
+
+    /// The pause-duration setter rebuilds the whole settings value, so a reset
+    /// time already chosen must survive an unrelated edit to the countdown.
+    func testEditingThePauseDurationKeepsTheResetTime() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeEmptyConfiguration(to: directory)
+        let model = makeModel(directory: directory, probe: FlowProbe(status: .approved), hasProtectedState: false)
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        model.sceneDidBecomeActive(now: now)
+        try model.setResetMinuteOfDay(9 * 60 + 45, now: now)
+
+        try model.updatePauseSeconds(30, now: now)
+
+        XCTAssertEqual(model.configuration.settings.resetMinuteOfDay, 9 * 60 + 45)
+        XCTAssertEqual(model.configuration.settings.pauseSeconds, 30)
+    }
+
+    func testAResetTimeOffTheQuarterHourGridIsRefused() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeEmptyConfiguration(to: directory)
+        let model = makeModel(directory: directory, probe: FlowProbe(status: .approved), hasProtectedState: false)
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        model.sceneDidBecomeActive(now: now)
+
+        XCTAssertThrowsError(try model.setResetMinuteOfDay(7, now: now)) { error in
+            XCTAssertEqual(error as? AppModelError, .invalidResetMinuteOfDay)
+        }
+    }
+
+    /// The entry decision, on the path the shield actually takes: a tap resolved
+    /// after civil midnight but before a 06:00 reset must still be refused, since
+    /// the allowance it would spend belongs to the day still running.
+    func testEntryIsRefusedAfterMidnightWhileTheAllowanceDayStillRuns() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let calendar = Calendar(identifier: .gregorian)
+        let spentAt = calendar.date(from: DateComponents(year: 2026, month: 8, day: 20, hour: 9))!
+        let afterMidnight = calendar.date(from: DateComponents(year: 2026, month: 8, day: 21, hour: 2))!
+        let applicationToken = try token(seed: "instagram")
+        try ConfigurationStore(directoryURL: directory).save(
+            file: ConfigurationFile(
+                effective: try ConfigurationDocument(
+                    settings: GlobalSettings(pauseSeconds: 10, resetMinuteOfDay: 6 * 60),
+                    rules: [AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)],
+                    targets: [
+                        RuleTarget(
+                            ruleID: ruleID,
+                            applicationToken: applicationToken,
+                            launchRoute: nil
+                        )
+                    ]
+                ),
+                pending: nil
+            )
+        )
+        try RuntimeRepository(directoryURL: directory).save(
+            RuleRuntime(
+                logicalDay: LogicalDay.containing(
+                    spentAt,
+                    resetMinuteOfDay: 6 * 60,
+                    calendar: calendar
+                ),
+                sessionsStarted: 3
+            ),
+            ruleID: ruleID
+        )
+        let suiteName = "pause-allowance-day-defaults-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        try ShieldIntentStore(defaults: defaults).write(
+            ShieldIntent(applicationToken: applicationToken, createdAt: afterMidnight)
+        )
+        let model = AppModel(
+            shieldReconciler: ShieldReconciler(
+                currentApplications: { [] },
+                applyApplications: { _ in },
+                failedGrantBlockIDs: { [] }
+            ),
+            shieldIntentStore: ShieldIntentStore(defaults: defaults),
+            storageDirectoryURL: directory,
+            authorizationStatusProvider: { .approved },
+            authorizationRequester: {}
+        )
+
+        model.sceneDidBecomeActive(now: afterMidnight)
+
+        guard case let .refused(content) = model.entryRoute else {
+            return XCTFail("A spent allowance day must refuse entry, not open the pause")
+        }
+        XCTAssertEqual(content.title, "No sessions left today")
     }
 
     private func makeModel(
@@ -471,7 +579,7 @@ final class AppModelFlowTests: XCTestCase {
             )
         )
         try RuntimeRepository(directoryURL: directory).save(
-            RuleRuntime(logicalDay: LogicalDay.containing(now), sessionsStarted: 0),
+            RuleRuntime(logicalDay: LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: .current), sessionsStarted: 0),
             ruleID: ruleID
         )
     }

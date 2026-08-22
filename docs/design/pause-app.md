@@ -6,12 +6,12 @@
 - **Pause** — the foreground-only countdown that must finish before a session can begin.
 - **Session** — a fixed wall-clock grant to enter one restricted app. Its time continues whether or not that app remains in use.
 - **Window** — a recurring period when a rule refuses new sessions. A window does not shorten a session already granted.
-- **Logical day** — the period between one configured daily reset and the next. Session allowances renew at its start.
+- **Allowance day** (code: `logicalDay`) — the period between one configured daily reset and the next. Session allowances renew at its start.
 - **Launch route** — an optional public URL that lets Pause return to a selected app automatically. Selection and enforcement do not depend on one.
 
 ## Goal
 
-Pause interrupts reflexive entry into selected distracting apps, then limits how many entries are available in each logical day. The smallest useful product is the complete action loop: blocked app, deliberate foreground pause, fixed session grant, and automatic re-blocking at expiry.
+Pause interrupts reflexive entry into selected distracting apps, then limits how many entries are available in each allowance day. The smallest useful product is the complete action loop: blocked app, deliberate foreground pause, fixed session grant, and automatic re-blocking at expiry.
 
 This is a personal app for one iPhone. It is not designed for the App Store, a second user, or another device.
 
@@ -32,7 +32,7 @@ The product requirements remain the source of product behavior, with these appro
 - Apple's picker may select any eligible installed app. Apple's label and icon identify it; there is no separate hand-maintained display-name list.
 - Automatic return is independent of selection and enforcement. Instagram has the first launch route. Apps without a supported route receive a manual-return instruction after the grant.
 - The pause advances only while Pause is active. Leaving the foreground, locking the phone, or interrupting the flow abandons the attempt and consumes no session.
-- Every day resets. One time applies to all seven days by default, with an optional weekday/weekend split.
+- Every day resets at the same time, on a fifteen-minute grid, applying to all seven days. There is no weekday/weekend split.
 - History is deferred to the roadmap so the implementation stays centered on behavior modification through the action loop.
 
 "Immediately" at session expiry means the system-driven callback rather than zero latency. The old device spike measured the callback about three seconds after the named expiry; Phase 1 rechecks the behavior through the product flow.
@@ -146,7 +146,7 @@ Phase 1 repeats the old three-minute and sixteen-minute device checks through th
 
 ## Daily Resets and Windows
 
-Phase 1 uses midnight. Phase 2 makes the reset a setting, on a fifteen-minute grid, applying to all seven days — [its own design](configurable-daily-reset.md) carries the detail. An instant belongs to the period beginning at the most recent reset: today's if that time has passed, otherwise yesterday's, so every logical day runs twenty-four hours. A session is charged to the logical day in which it began and stays open across the next reset.
+The reset is a setting, on a fifteen-minute grid, applying to all seven days, defaulting to midnight — [its own design](configurable-daily-reset.md) carries the detail. An instant belongs to the period beginning at the most recent reset: today's if that time has passed, otherwise yesterday's, so every allowance day runs the length of the civil day it begins on. A session is charged to the allowance day in which it began and stays open across the next reset.
 
 A window has a start time, end time, and weekday set. Its start is inclusive and end exclusive. An overnight window's weekday names the day on which it begins.
 
@@ -175,7 +175,7 @@ Pure behavior uses XCTest in the simulator:
 - Fixed session length and expiry comparison.
 - Foreground pause cancellation as an app-state reducer.
 - Provisional grant commit and rollback.
-- Daily rollover under one daily time and a weekday/weekend split.
+- Daily rollover under a configured reset time.
 - Same-day, overnight, reset-crossing, daylight-saving, and time-zone window cases.
 - Sessions surviving reset and window boundaries.
 - Atomic state round trips and visible corrupt-state failures.

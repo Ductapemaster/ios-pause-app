@@ -62,13 +62,14 @@ enum AppRootRoute: Equatable {
     case authorizedContent
 }
 
-enum AppModelError: LocalizedError {
+enum AppModelError: LocalizedError, Equatable {
     case storageUnavailable
     case unsafeConfiguration
     case ruleNotFound
     case invalidSessionsPerDay
     case invalidSessionLength
     case invalidPauseDuration
+    case invalidResetMinuteOfDay
 
     var errorDescription: String? {
         switch self {
@@ -84,6 +85,8 @@ enum AppModelError: LocalizedError {
             "Session length must be between 1 and 120 minutes."
         case .invalidPauseDuration:
             "Pause duration must be between 1 and 120 seconds."
+        case .invalidResetMinuteOfDay:
+            "The daily reset must be a quarter hour between 00:00 and 23:45."
         }
     }
 }
@@ -118,7 +121,11 @@ final class AppModel: ObservableObject {
     /// The whole saved file, kept beside the published `configuration` so a
     /// scheduled change is still reachable once the in-force document has been
     /// selected out of it.
-    private var configurationFile: ConfigurationFile?
+    ///
+    /// Published because the rules list reads it directly, to ask the file which
+    /// allowance day a scheduled change starts on rather than picking a reset
+    /// minute out of a document itself.
+    @Published private(set) var configurationFile: ConfigurationFile?
     private var runtimeRepository: RuntimeRepository?
     private var failedGrantBlockStore: FailedGrantBlockStore?
     private var stateLock: AppGroupFileLock?
@@ -180,7 +187,7 @@ final class AppModel: ObservableObject {
 
             if let savedFile = try configurationStore.loadFile() {
                 let openedAt = Date()
-                let savedConfiguration = savedFile.inForce(on: LogicalDay.containing(openedAt))
+                let savedConfiguration = savedFile.inForce(at: openedAt)
                 configurationFile = savedFile
                 configuration = savedConfiguration
                 pendingChangeStartDay = Self.scheduledStartDay(in: savedFile, now: openedAt)
@@ -294,10 +301,22 @@ final class AppModel: ObservableObject {
             )
         }
         let launcher = targetLauncher ?? AppLaunchRouter(configuration: configuration)
+        let runtime: any RuntimePersisting
+        if let sessionRuntimePersistence {
+            runtime = sessionRuntimePersistence
+        } else {
+            // A rule matched, so a file was loaded: `configuration` is only ever
+            // populated from one.
+            guard let configurationFile else { return }
+            runtime = RepositoryRuntimePersistence(
+                repository: runtimeRepository,
+                configurationFile: configurationFile,
+                now: now
+            )
+        }
         let coordinator = SessionGrantCoordinator(
             scheduler: scheduler,
-            runtime: sessionRuntimePersistence
-                ?? RepositoryRuntimePersistence(repository: runtimeRepository, now: now),
+            runtime: runtime,
             shield: shield,
             launcher: launcher,
             lock: stateLock
@@ -351,7 +370,7 @@ final class AppModel: ObservableObject {
         let reset = { [self] in
             coordinator.resetRuntime(
                 ruleID: ruleID,
-                logicalDay: CalendarDay(date: now, calendar: .current),
+                logicalDay: logicalDay(at: now),
                 saveRuntime: runtimeRepository.save,
                 clearFailedGrantBlock: failedGrantBlockStore.clear,
                 applyShields: {
@@ -439,7 +458,7 @@ final class AppModel: ObservableObject {
             )
         }
 
-        let today = LogicalDay.containing(now)
+        let today = logicalDay(at: now)
         do {
             for token in addedTokens {
                 let rule = try AppRule(sessionsPerDay: 3, sessionLengthMinutes: 5)
@@ -545,13 +564,47 @@ final class AppModel: ObservableObject {
         }
 
         var nextConfiguration = configuration
-        nextConfiguration.settings = try GlobalSettings(pauseSeconds: seconds)
+        nextConfiguration.settings = try GlobalSettings(
+            pauseSeconds: seconds,
+            resetMinuteOfDay: configuration.settings.resetMinuteOfDay
+        )
         do {
             try persist(nextConfiguration, now: now)
         } catch {
             activationCoordinator.configurationSaveCompleted(successfully: false)
             throw error
         }
+    }
+
+    func setResetMinuteOfDay(_ minute: Int, now: Date = Date()) throws {
+        // Mirrors updatePauseSeconds: the same mutation gate runs first, so a
+        // save that the coordinator is not ready for is refused the same way.
+        try requireConfigurationMutation(.globalSettingsEdit)
+        guard (0..<(24 * 60)).contains(minute),
+              minute % GlobalSettings.resetMinuteStep == 0 else {
+            throw AppModelError.invalidResetMinuteOfDay
+        }
+        guard configurationStore != nil else {
+            throw AppModelError.storageUnavailable
+        }
+
+        var nextConfiguration = configuration
+        nextConfiguration.settings = try GlobalSettings(
+            pauseSeconds: configuration.settings.pauseSeconds,
+            resetMinuteOfDay: minute
+        )
+        do {
+            try persist(nextConfiguration, now: now)
+        } catch {
+            activationCoordinator.configurationSaveCompleted(successfully: false)
+            throw error
+        }
+        // The registration names a wall-clock time, so replacing it has to happen
+        // here rather than at the next activation: an app terminated before it is
+        // backgrounded would otherwise leave iOS waking Pause at the old reset.
+        // This reads the reset that took effect, not `minute`, so a save the
+        // router deferred leaves the registration where it was.
+        registerDailyReset()
     }
 
     /// Drops a scheduled change, leaving the rules in force today standing.
@@ -561,7 +614,7 @@ final class AppModel: ObservableObject {
               file.pending != nil else { return }
         // Cancelling a loosening leaves the stricter rule standing, which is a
         // tightening, so it applies at once.
-        let kept = file.inForce(on: LogicalDay.containing(now))
+        let kept = file.inForce(at: now)
         do {
             let cleared = ConfigurationFile(effective: kept, pending: nil)
             try configurationStore.save(file: cleared)
@@ -753,8 +806,8 @@ final class AppModel: ObservableObject {
         let evaluation = RuleLookup.evaluate(
             rule: rule,
             runtime: runtime,
-            now: now,
-            calendar: .current
+            logicalDay: logicalDay(at: now),
+            now: now
         )
         let resolution = PauseEntryResolution.resolved(
             ruleID: rule.id,
@@ -865,7 +918,7 @@ final class AppModel: ObservableObject {
         )
         try configurationStore.save(file: routed)
         configurationFile = routed
-        configuration = routed.inForce(on: LogicalDay.containing(now))
+        configuration = routed.inForce(at: now)
         pendingChangeStartDay = Self.scheduledStartDay(in: routed, now: now)
         lastSaveDeferredPart = routed.effective != candidate
     }
@@ -876,8 +929,20 @@ final class AppModel: ObservableObject {
     /// not scheduled.
     private static func scheduledStartDay(in file: ConfigurationFile, now: Date) -> CalendarDay? {
         guard let startDay = file.pending?.startDay,
-              startDay > LogicalDay.containing(now) else { return nil }
+              startDay > file.logicalDay(at: now) else { return nil }
         return startDay
+    }
+
+    /// The allowance day, resolved from the file's effective document — the one
+    /// reset that may decide it.
+    ///
+    /// With no file there are no saved settings to read: `configuration` is then
+    /// the empty document, whose reset is a default rather than anything the user
+    /// chose. So the fallback is the civil date, written as the midnight reset it
+    /// is, rather than a reset taken from a document that may be a pending one.
+    private func logicalDay(at now: Date) -> CalendarDay {
+        configurationFile?.logicalDay(at: now)
+            ?? LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: .current)
     }
 
     /// Re-selects the document in force for the day Pause is being opened on, so
@@ -886,7 +951,7 @@ final class AppModel: ObservableObject {
     /// nothing from disk.
     private func refreshInForceConfiguration(now: Date) {
         guard let configurationFile else { return }
-        configuration = configurationFile.inForce(on: LogicalDay.containing(now))
+        configuration = configurationFile.inForce(at: now)
         pendingChangeStartDay = Self.scheduledStartDay(in: configurationFile, now: now)
         pickerSelection.applicationTokens = Set(configuration.targets.map(\.applicationToken))
     }
@@ -922,7 +987,9 @@ final class AppModel: ObservableObject {
     private func registerDailyReset() {
         guard canApplyManagedSettings else { return }
         do {
-            try DailyResetScheduler(center: activityCenter).register()
+            try DailyResetScheduler(center: activityCenter).register(
+                resetMinuteOfDay: configuration.settings.resetMinuteOfDay
+            )
         } catch {
             Logger(subsystem: "com.koubalabs.pause", category: "dailyReset").error(
                 "Could not register the daily reset activity: \(error.localizedDescription, privacy: .public)"
