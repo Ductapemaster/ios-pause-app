@@ -23,6 +23,12 @@ Two global settings exist:
 1. **pause duration**: how long the user must "pause" before being allowed to enter an app.
 2. **day reset**: when during each day the number of available sessions resets, chosen in fifteen-minute steps. The same time applies every day.
 
+## Seeing the day's usage
+
+Opening Pause shows, for each restricted app, how many sessions are charged against the current day beside the limit set for it — *"2/4"*. It covers the day in progress only; previous days are not kept. Session length is not shown here, because the app's own screen is where it is read and set.
+
+The count answers the same question the blocked screen answers, at a different moment. In Pause it is read before reaching for the app, while the choice not to open it is still cheap. On the blocked screen it arrives once the reflex has already run, and what it informs is whether to spend a session or stop. Both surfaces resolve the same allowance, so they cannot disagree.
+
 ## Entering a restricted app
 
 1. Tap the restricted app. It opens to a blocked screen naming which session this would be — *"Instagram — 3rd of 4 sessions today."*

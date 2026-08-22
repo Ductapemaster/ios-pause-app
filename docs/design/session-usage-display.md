@@ -50,7 +50,7 @@ Rebuilding the snapshot is one file read and one lock acquisition per rule, sync
 
 ## Product requirements
 
-`docs/product-requirements.md` assigns the count to the shield: *"the screen informs with a count and refuses with a reason."* That stays true and gains a second surface — the app now answers the same question before the app is reached. The requirements are updated to say so.
+Both surfaces and the relationship between them are stated in [the product requirements](../product-requirements.md), which are the source of truth for what the count is for.
 
 ## Testing
 
