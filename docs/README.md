@@ -29,6 +29,7 @@ Two properties hold the design together:
 - **A save states its opinion by rebuilding.** Touched is inferred from the resulting document rather than declared by the screen, so an editor save that changes nothing reads as untouched and carries a scheduled change forward.
 - **The countdown length is the one field a late edit reaches.** It is not per-day, so it has no reset to ride in on; shortening it late takes effect that much sooner. Accepted — the exposure is a few seconds.
 - **Expiry restoration is verified at three minutes, not sixteen.** A session over fifteen minutes ends on a different callback, and only the shorter one has been observed. Tracked in [the roadmap](ROADMAP.md).
+- **The daily reset will be movable, and moving it refills the day.** Once the reset is a setting it applies the moment it is saved, and a session count rolls over whenever its day label changes — in either direction. Setting the reset a few minutes out therefore hands back the day's sessions, which makes the cap advisory. Accepted for the comparison logic it saves, with the guard that would close it named in [the design](design/configurable-daily-reset.md).
 
 ## Where things are
 

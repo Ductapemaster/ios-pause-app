@@ -1,11 +1,15 @@
-## Status — resume here
+## Status — resume here (2026-08-22)
 
-**State:** Phase 1 is accepted and closed, merged to `design/phased-project-plan`. The core action loop runs on the phone: authorization, selection, shielding, shield handoff, the pause countdown, session grants, the daily limit, and per-app judgment of a saved edit. [The acceptance record](archive/phase-1-core-action-loop/acceptance.md) states what that acceptance rests on and what it leaves unverified.
+**State:** Phase 1 is accepted, closed and merged. The configurable daily reset — half the Phase 2 gate — is designed and planned but no code is written. 263 tests pass at head, build warning-free. Blocking periods are the other half and are deliberately a separate effort, designed later (why: they are additive, while the reset changes what a day means).
 
-The four items the roadmap listed as ready to build are done, on `feat/roadmap-ready-items`: lock acquisition is bounded at two seconds rather than waiting forever, a transient overlay no longer abandons a pause, the countdown has a visible cancel, and the shield carries a "Not now" that closes the app. 263 tests pass and the unsigned build is warning-free. **None of the three interface changes has been seen on the phone** — they are unit-covered where a unit test can reach, which for a shield button and a scene phase is not far.
+**Next step:** Execute `docs/plans/configurable-daily-reset.md` from Task 1, one task at a time.
 
-**Next step:** Install a signed build and confirm the three interface changes on the device: a banner does not kill a countdown, the cancel returns without charging, and the shield's "Not now" closes the app. Then start Phase 2, time-based rules — design before code.
+**Blockers:** No git remote, so nothing can be pushed. Every commit is local only.
 
-**Blockers:** No git remote is configured, so nothing can be pushed. Every commit is local only.
+**Read first:** Before executing, the plan's spec `docs/design/configurable-daily-reset.md`. Before any scheduling or callback work, `docs/research/screen-time-platform-evidence.md`.
 
-**Read first:** Before shield work, `docs/research/shield-repair-variant.md`. Before scheduling or callback work, `docs/research/screen-time-platform-evidence.md`.
+## Open work
+
+- [ ] Build the configurable daily reset — six tasks in `docs/plans/configurable-daily-reset.md`. Task 4 opens with a simulator probe that settles whether iOS honours a schedule wrapping past midnight; both branches are written into the task.
+- [ ] Confirm on the phone the three interface changes shipped after Phase 1, and the reset once built. Both are on the roadmap with what to check.
+- [ ] Design blocking periods — the recurring stretches when an app cannot be entered at all. The activity-registration budget is the open question: the research note records a ceiling of 20 monitored activities, reported rather than measured, and one registration per weekday per period reaches it fast.
