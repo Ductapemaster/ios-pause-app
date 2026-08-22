@@ -45,7 +45,7 @@ struct RuleEditorView: View {
                     }
                 }
             } footer: {
-                Text("The daily allowance resets at local midnight.")
+                Text("The daily allowance renews at the day reset.")
             }
 
             Section {

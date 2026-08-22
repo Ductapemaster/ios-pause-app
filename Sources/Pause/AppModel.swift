@@ -86,7 +86,7 @@ enum AppModelError: LocalizedError, Equatable {
         case .invalidPauseDuration:
             "Pause duration must be between 1 and 120 seconds."
         case .invalidResetMinuteOfDay:
-            "The daily reset must fall on a quarter hour."
+            "The daily reset must be a quarter hour between 00:00 and 23:45."
         }
     }
 }
