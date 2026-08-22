@@ -63,7 +63,7 @@ The sixteen-minute row is not a longer copy of the three-minute one. A session u
 
 **This is the one gap Phase 1 carries knowingly.** The failure it would catch is silent and open-ended: if `intervalDidEnd` does not restore the shield, a session longer than fifteen minutes never ends and the target stays unblocked until something else reconciles. Any use of a session over fifteen minutes settles it, so it costs a single sixteen-minute wait to close whenever that is worth doing.
 
-**The five-second tier is not settled and is not being pursued.** [The design](../design/pause-app.md) tiers the criterion at five seconds to pass and thirty to block. The wall clock and the unified log both settle thirty. Five would need the stored `expiresAt` in the log alongside the callback, because both callbacks carry an unmeasured latency against the moments they name — an instrument worth building only if a restoration is ever seen to run late.
+**The five-second tier is not settled and is not being pursued.** [The design](../../design/pause-app.md) tiers the criterion at five seconds to pass and thirty to block. The wall clock and the unified log both settle thirty. Five would need the stored `expiresAt` in the log alongside the callback, because both callbacks carry an unmeasured latency against the moments they name — an instrument worth building only if a restoration is ever seen to run late.
 
 ## Settled by unit tests
 
@@ -86,7 +86,7 @@ Each of these was a row in an earlier, longer matrix. Dropping a row does not ma
 - **Multiple application selection as its own row.** Apple's picker rendering Apple's labels is Apple's behavior; step 2 depends on the selection working anyway, so a failure there stops the run regardless.
 - **Independent rule editing as its own row.** Per-rule persistence is unit-covered and folded into step 2, where it costs nothing to look.
 - **Wall-clock session while backgrounded**, **app termination during a session**, and **rule edit during an active session.** All three assert that the stored `expiresAt` stays authoritative through an interruption. That is accounting over stored values, which the unit suite covers directly and exactly.
-- **Daily count reset at local midnight** and **session crossing midnight.** Both need the tester awake at midnight or the device clock moved, which changes the thing being measured. The logical-day computation is unit-covered, and the device half — whether the `daily-reset` activity actually fires — was observed on 2026-08-20: `intervalDidStart for activity daily-reset` at 22:36:50, recorded in [the platform evidence note](../research/screen-time-platform-evidence.md).
+- **Daily count reset at local midnight** and **session crossing midnight.** Both need the tester awake at midnight or the device clock moved, which changes the thing being measured. The logical-day computation is unit-covered, and the device half — whether the `daily-reset` activity actually fires — was observed on 2026-08-20: `intervalDidStart for activity daily-reset` at 22:36:50, recorded in [the platform evidence note](../../research/screen-time-platform-evidence.md).
 - **Warning callback activity stop.** A choreographed seventeen-minute two-session sequence to confirm that a stale interval end does not cancel a live session. The same note establishes the `stopMonitoring` → `intervalDidEnd` semantics it rests on, and the 2026-08-20 run shows that exact callback pair arriving together and being handled without error.
 
 ## Automated checks

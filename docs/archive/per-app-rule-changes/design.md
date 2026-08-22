@@ -1,10 +1,10 @@
 # Per-app rule changes
 
-A saved edit is judged one app at a time. Adding an app to Pause takes effect at once even when the same trip through the picker drops another, and a change scheduled for one app survives a later decision about a different one. This replaces the rule in [deferred rule changes](deferred-rule-changes.md) that an edit is judged whole; everything else in that design stands, including what counts as loosening and when a deferred change lands.
+A saved edit is judged one app at a time. Adding an app to Pause takes effect at once even when the same trip through the picker drops another, and a change scheduled for one app survives a later decision about a different one. This replaces the rule in [deferred rule changes](../deferred-rule-changes/design.md) that an edit is judged whole; everything else in that design stands, including what counts as loosening and when a deferred change lands.
 
 ## Terms
 
-Carried over from [deferred rule changes](deferred-rule-changes.md): effective configuration, pending configuration, logical day, start day, in force, loosening. New here:
+Carried over from [deferred rule changes](../deferred-rule-changes/design.md): effective configuration, pending configuration, logical day, start day, in force, loosening. New here:
 
 - **Unit** — the thing a save is judged on: one rule together with the target naming its app, keyed by `AppRule.id`. Global settings are one further unit, because `pauseSeconds` belongs to no app.
 - **Touched** — a unit the candidate document states differently from the document in force. It is how a save's intent is read: a save rebuilds the whole document, so what it left alone is what it had no opinion about.
@@ -80,7 +80,7 @@ The test is one comparison. A save deferred part of itself exactly when the new 
 
 - **One pending slot.** The file holds one pending document, and this design keeps it. Carrying units forward is what makes the single slot behave, not a reason to add a second.
 - **Cancelling clears everything scheduled.** `cancelScheduledChange` writes the in-force document back over effective and clears the slot, even though the rules list presents a scheduled removal per row. Per-app cancel is coherent with this design and is deliberately left out of it: it is a change to what the screens offer rather than to how a save is judged.
-- **What counts as loosening**, the reset event, the read sites, and migration are all as [deferred rule changes](deferred-rule-changes.md) has them.
+- **What counts as loosening**, the reset event, the read sites, and migration are all as [deferred rule changes](../deferred-rule-changes/design.md) has them.
 
 ## Testing
 

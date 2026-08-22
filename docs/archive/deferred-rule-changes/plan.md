@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 6, iOS 26.5 minimum, XcodeGen, XCTest. FamilyControls, ManagedSettings, ManagedSettingsUI, DeviceActivity.
 
-**Spec:** `docs/design/deferred-rule-changes.md`
+**Spec:** [design.md](design.md)
 
 ## Global Constraints
 

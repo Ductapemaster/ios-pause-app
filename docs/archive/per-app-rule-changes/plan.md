@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 6, XCTest, XcodeGen, iOS 26.5 deployment target.
 
-**Spec:** `docs/design/per-app-rule-changes.md`
+**Spec:** [design.md](design.md)
 
 ## Global Constraints
 

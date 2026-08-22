@@ -8,9 +8,9 @@
 
 **Tech stack:** Swift 6, SwiftUI, FamilyControls, ManagedSettings, ManagedSettingsUI, DeviceActivity, XCTest, XcodeGen 2.46, Xcode 26.6, iOS 26.5+
 
-**Approved design:** [`docs/design/pause-app.md`](../design/pause-app.md)
+**Approved design:** [`docs/design/pause-app.md`](../../design/pause-app.md)
 
-**Product requirements:** [`docs/product-requirements.md`](../product-requirements.md)
+**Product requirements:** [`docs/product-requirements.md`](../../product-requirements.md)
 
 ## Scope guardrails
 
