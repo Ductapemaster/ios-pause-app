@@ -121,7 +121,11 @@ final class AppModel: ObservableObject {
     /// The whole saved file, kept beside the published `configuration` so a
     /// scheduled change is still reachable once the in-force document has been
     /// selected out of it.
-    private var configurationFile: ConfigurationFile?
+    ///
+    /// Published because the rules list reads it directly, to ask the file which
+    /// allowance day a scheduled change starts on rather than picking a reset
+    /// minute out of a document itself.
+    @Published private(set) var configurationFile: ConfigurationFile?
     private var runtimeRepository: RuntimeRepository?
     private var failedGrantBlockStore: FailedGrantBlockStore?
     private var stateLock: AppGroupFileLock?

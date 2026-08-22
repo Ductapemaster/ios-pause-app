@@ -137,11 +137,9 @@ struct RulesView: View {
     }
 
     private var removalPhrase: String {
-        guard let startDay = model.pendingChangeStartDay else { return "at the next reset" }
-        return ScheduledChangeWording.phrase(
-            for: startDay,
-            resetMinuteOfDay: model.configuration.settings.resetMinuteOfDay
-        )
+        guard let startDay = model.pendingChangeStartDay,
+              let file = model.configurationFile else { return "at the next reset" }
+        return ScheduledChangeWording.phrase(for: startDay, in: file)
     }
 
     private var pauseSeconds: Binding<Int> {
