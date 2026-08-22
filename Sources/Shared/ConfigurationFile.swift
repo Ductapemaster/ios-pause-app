@@ -54,4 +54,21 @@ public struct ConfigurationFile: Codable, Equatable {
     public func inForce(at instant: Date, calendar: Calendar = .current) -> ConfigurationDocument {
         inForce(on: logicalDay(at: instant, calendar: calendar))
     }
+
+    /// The allowance day after the one this instant falls in: the day a change
+    /// deferred now starts on.
+    ///
+    /// A start day is only ever compared against `logicalDay(at:)` of the file
+    /// holding it, so it has to be resolved from the same reset. Stamping it
+    /// here rather than at the call site is what keeps the two in one frame: a
+    /// save that moves the reset writes a file whose effective document already
+    /// carries the new one, and a label placed by the old reset would be read
+    /// back against a boundary that never placed it.
+    public func nextLogicalDay(after instant: Date, calendar: Calendar = .current) -> CalendarDay {
+        LogicalDay.next(
+            after: instant,
+            resetMinuteOfDay: effective.settings.resetMinuteOfDay,
+            calendar: calendar
+        )
+    }
 }

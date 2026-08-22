@@ -59,20 +59,16 @@ public enum ConfigurationSaveRouter {
         let immediate = try document(settings: immediateSettings, units: immediateUnits)
         let scheduledResult = try document(settings: targetSettings, units: scheduledResultUnits)
 
-        guard scheduledResult != immediate else {
-            return ConfigurationFile(effective: immediate, pending: nil)
-        }
-        return ConfigurationFile(
-            effective: immediate,
-            pending: PendingConfiguration(
-                document: scheduledResult,
-                startDay: LogicalDay.next(
-                    after: now,
-                    resetMinuteOfDay: existing.effective.settings.resetMinuteOfDay,
-                    calendar: calendar
-                )
-            )
+        var routed = ConfigurationFile(effective: immediate, pending: nil)
+        guard scheduledResult != immediate else { return routed }
+        // The start day is read out of the file being returned, not the one
+        // being replaced: a save that moves the reset changes the boundary the
+        // label will be compared against, and the two have to be the same one.
+        routed.pending = PendingConfiguration(
+            document: scheduledResult,
+            startDay: routed.nextLogicalDay(after: now, calendar: calendar)
         )
+        return routed
     }
 
     /// Rule order is user-visible in the rules list, so the documents this
