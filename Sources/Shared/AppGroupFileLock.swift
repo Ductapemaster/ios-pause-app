@@ -22,6 +22,26 @@ struct AppGroupFileLockSystemCalls: Sendable {
     let openFile: @Sendable (String, Int32, mode_t) -> Int32
     let flockFile: @Sendable (Int32, Int32) -> Int32
     let closeFile: @Sendable (Int32) -> Int32
+    /// Seconds on a monotonic clock. The wall clock is unusable for a deadline
+    /// because it can jump, and the device's is explicitly taken as given.
+    let now: @Sendable () -> TimeInterval
+    let sleepFor: @Sendable (TimeInterval) -> Void
+
+    init(
+        openFile: @escaping @Sendable (String, Int32, mode_t) -> Int32,
+        flockFile: @escaping @Sendable (Int32, Int32) -> Int32,
+        closeFile: @escaping @Sendable (Int32) -> Int32,
+        now: @escaping @Sendable () -> TimeInterval = {
+            Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
+        },
+        sleepFor: @escaping @Sendable (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
+    ) {
+        self.openFile = openFile
+        self.flockFile = flockFile
+        self.closeFile = closeFile
+        self.now = now
+        self.sleepFor = sleepFor
+    }
 
     static let live = AppGroupFileLockSystemCalls(
         openFile: { path, flags, mode in Darwin.open(path, flags, mode) },
@@ -64,6 +84,14 @@ private final class AppGroupFileLockState {
         return try bodyResult.get()
     }
 
+    /// How long an acquisition waits on a lock another process holds before it
+    /// gives up. A blocking `flock` has no deadline, so contention on the main
+    /// thread that crosses the scene-update watchdog's ten seconds is a crash.
+    /// Failing well inside that turns every such variant into an error a caller
+    /// can report.
+    private static let acquisitionTimeout: TimeInterval = 2
+    private static let retryInterval: TimeInterval = 0.01
+
     private func acquireFileLock() throws {
         let descriptor = systemCalls.openFile(
             url.path,
@@ -71,13 +99,27 @@ private final class AppGroupFileLockState {
             S_IRUSR | S_IWUSR
         )
         guard descriptor >= 0 else { throw posixError() }
-        while systemCalls.flockFile(descriptor, LOCK_EX) != 0 {
-            if errno == EINTR { continue }
-            let error = posixError()
-            _ = systemCalls.closeFile(descriptor)
-            throw error
+
+        let deadline = systemCalls.now() + Self.acquisitionTimeout
+        while true {
+            if systemCalls.flockFile(descriptor, LOCK_EX | LOCK_NB) == 0 {
+                fileDescriptor = descriptor
+                return
+            }
+            let code = errno
+            if code == EINTR { continue }
+            // Contention is the only condition a wait can resolve. Anything else
+            // is a descriptor-level failure that retrying cannot help.
+            guard code == EWOULDBLOCK else {
+                _ = systemCalls.closeFile(descriptor)
+                throw Self.posixError(code)
+            }
+            guard systemCalls.now() < deadline else {
+                _ = systemCalls.closeFile(descriptor)
+                throw POSIXError(.ETIMEDOUT)
+            }
+            systemCalls.sleepFor(Self.retryInterval)
         }
-        fileDescriptor = descriptor
     }
 
     private func releaseFileLock() {
@@ -97,7 +139,11 @@ private final class AppGroupFileLockState {
     }
 
     private func posixError() -> POSIXError {
-        POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        Self.posixError(errno)
+    }
+
+    private static func posixError(_ code: Int32) -> POSIXError {
+        POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
     }
 }
 

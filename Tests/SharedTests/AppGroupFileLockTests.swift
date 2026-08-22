@@ -243,6 +243,69 @@ final class AppGroupFileLockTests: XCTestCase {
         XCTAssertEqual(final.openSession?.activityName, "session.after-expiry")
     }
 
+    /// A lock held by another process must not stall a caller forever. The
+    /// production wait is bounded, so the clock and the sleep are injected and a
+    /// holder that never releases costs the suite nothing.
+    func testAcquisitionGivesUpWithTimedOutOnceTheDeadlinePasses() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let systemCalls = ScriptedSystemCalls(flockResults: .alwaysContended)
+        let lock = AppGroupFileLock(
+            directoryURL: directory,
+            systemCalls: systemCalls.dependencies
+        )
+
+        XCTAssertThrowsError(try lock.withLock {}) { error in
+            XCTAssertEqual(error as? POSIXError, POSIXError(.ETIMEDOUT))
+        }
+        XCTAssertEqual(
+            systemCalls.closeCount,
+            1,
+            "A descriptor opened for an acquisition that timed out must not leak."
+        )
+        XCTAssertGreaterThan(systemCalls.sleeps.count, 1, "A bounded wait still retries.")
+        XCTAssertEqual(
+            systemCalls.elapsed,
+            systemCalls.sleeps.reduce(0, +),
+            "The deadline is measured against the same clock the retries advance."
+        )
+    }
+
+    func testAcquisitionSucceedsOnceTheHolderReleasesInsideTheDeadline() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let systemCalls = ScriptedSystemCalls(flockResults: .contendedTimes(3))
+        let lock = AppGroupFileLock(
+            directoryURL: directory,
+            systemCalls: systemCalls.dependencies
+        )
+
+        var bodyRan = false
+        try lock.withLock { bodyRan = true }
+
+        XCTAssertTrue(bodyRan)
+        XCTAssertEqual(systemCalls.sleeps.count, 3, "One sleep per contended attempt, and no more.")
+    }
+
+    /// Contention is the only condition worth retrying. A descriptor-level failure
+    /// is not going to resolve itself, so it surfaces at once rather than after a
+    /// wait that cannot help.
+    func testAcquisitionSurfacesANonContentionFailureWithoutRetrying() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let systemCalls = ScriptedSystemCalls(flockResults: .fails(with: EBADF))
+        let lock = AppGroupFileLock(
+            directoryURL: directory,
+            systemCalls: systemCalls.dependencies
+        )
+
+        XCTAssertThrowsError(try lock.withLock {}) { error in
+            XCTAssertEqual(error as? POSIXError, POSIXError(.EBADF))
+        }
+        XCTAssertEqual(systemCalls.sleeps, [])
+        XCTAssertEqual(systemCalls.closeCount, 1)
+    }
+
     /// A directory under `/private`, which the process temporary directory is not.
     /// Only a `/private`-rooted path changes spelling once its contents exist.
     private func privateRootedTemporaryDirectory() throws -> URL {
@@ -286,7 +349,9 @@ private final class NonBlockingSystemCalls: @unchecked Sendable {
         AppGroupFileLockSystemCalls(
             openFile: { path, flags, mode in Darwin.open(path, flags, mode) },
             flockFile: { [self] _, operation in
-                if operation == LOCK_EX {
+                // The request carries LOCK_NB alongside LOCK_EX, so match the bit
+                // rather than the whole operation.
+                if operation & LOCK_EX != 0 {
                     counterLock.withLock { storedExclusiveAcquisitions += 1 }
                 }
                 return 0
@@ -333,5 +398,66 @@ private final class LockedEvents: @unchecked Sendable {
         lock.lock()
         storage.append(value)
         lock.unlock()
+    }
+}
+
+/// Real `open` and `close` so a descriptor genuinely exists, with `flock` scripted
+/// and both the clock and the sleep virtual so a bounded wait can be observed
+/// without spending the wait.
+private final class ScriptedSystemCalls: @unchecked Sendable {
+    enum FlockResults {
+        case alwaysContended
+        case contendedTimes(Int)
+        case fails(with: Int32)
+    }
+
+    private let lock = NSLock()
+    private let flockResults: FlockResults
+    private var attempts = 0
+    private var storedCloseCount = 0
+    private var storedSleeps: [TimeInterval] = []
+    private var storedElapsed: TimeInterval = 0
+
+    init(flockResults: FlockResults) {
+        self.flockResults = flockResults
+    }
+
+    var closeCount: Int { lock.withLock { storedCloseCount } }
+    var sleeps: [TimeInterval] { lock.withLock { storedSleeps } }
+    var elapsed: TimeInterval { lock.withLock { storedElapsed } }
+
+    var dependencies: AppGroupFileLockSystemCalls {
+        AppGroupFileLockSystemCalls(
+            openFile: { path, flags, mode in Darwin.open(path, flags, mode) },
+            flockFile: { [self] _, operation in
+                guard operation & LOCK_UN == 0 else { return 0 }
+                return lock.withLock {
+                    attempts += 1
+                    switch flockResults {
+                    case .alwaysContended:
+                        errno = EWOULDBLOCK
+                        return -1
+                    case let .contendedTimes(count):
+                        guard attempts <= count else { return 0 }
+                        errno = EWOULDBLOCK
+                        return -1
+                    case let .fails(code):
+                        errno = code
+                        return -1
+                    }
+                }
+            },
+            closeFile: { [self] descriptor in
+                lock.withLock { storedCloseCount += 1 }
+                return Darwin.close(descriptor)
+            },
+            now: { [self] in lock.withLock { storedElapsed } },
+            sleepFor: { [self] interval in
+                lock.withLock {
+                    storedSleeps.append(interval)
+                    storedElapsed += interval
+                }
+            }
+        )
     }
 }
