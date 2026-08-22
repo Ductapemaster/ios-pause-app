@@ -48,9 +48,7 @@ Accepted for what it saves: judging whether a reset-time change permits more use
 
 ## Waking up at the reset
 
-`DailyResetScheduler` registers one repeating monitored activity whose interval begins at the reset. Today that is `00:00` to `23:59`, a schedule that stays inside one civil day. A reset at any other time makes the interval wrap past midnight, and whether iOS resolves a wrapping start/end pair as a twenty-four hour interval is unmeasured.
-
-Settle it before building on it. `DeviceActivitySchedule.nextInterval` resolves on the schedule value itself, with no authorization, no registration and no device, so the question is a minute's work in the simulator ([the platform evidence note](../research/screen-time-platform-evidence.md) records the instrument and the validation order that makes it work).
+`DailyResetScheduler` registers one repeating monitored activity whose interval begins at the reset. Today that is `00:00` to `23:59`, a schedule that stays inside one civil day. A reset at any other time makes the interval wrap past midnight, and iOS resolves a wrapping `intervalStart`/`intervalEnd` pair as the ~24-hour interval it names: a schedule with `intervalStart` at 06:00 and `intervalEnd` at 05:59 read back through `DeviceActivitySchedule.nextInterval` as a 23h59m span beginning at 06:00, the same shape a same-day control schedule resolved to — measured in the simulator, where `nextInterval` resolves on the schedule value itself with no authorization, no registration and no device ([the platform evidence note](../research/screen-time-platform-evidence.md) records the reading and the instrument). The primary implementation was used; the midnight-anchored fallback was not needed.
 
 The risk fails safe whatever the answer. Reset reconciliation is idempotent and also runs whenever Pause opens, which is already the repair path for a phone that was switched off at the reset. A wrap that iOS refuses to honour costs a reset that lands late, not one that never lands.
 
