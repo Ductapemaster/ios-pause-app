@@ -58,7 +58,10 @@ final class ShieldConfigExtension: ShieldConfigurationDataSource {
                 color: UIColor(white: 0.1, alpha: 1)
             ),
             primaryButtonBackgroundColor: UIColor(white: 0.97, alpha: 1),
-            secondaryButtonLabel: nil
+            secondaryButtonLabel: ShieldConfiguration.Label(
+                text: presentation.secondaryButtonTitle,
+                color: .label
+            )
         )
     }
 }

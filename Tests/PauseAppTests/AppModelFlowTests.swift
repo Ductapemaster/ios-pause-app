@@ -150,7 +150,7 @@ final class AppModelFlowTests: XCTestCase {
         let probe = FlowProbe(status: .denied)
         probe.authorizationRequest = { probe.status = .approved }
         let model = makeModel(directory: directory, probe: probe, hasProtectedState: false)
-        model.sceneDidBecomeInactive()
+        model.sceneDidLeaveForeground()
 
         await model.requestAuthorization()
         XCTAssertEqual(probe.intentConsumptionCount, 0)
@@ -189,7 +189,7 @@ final class AppModelFlowTests: XCTestCase {
         let gate = AuthorizationGate()
         probe.authorizationRequest = { await gate.wait() }
         let model = makeModel(directory: directory, probe: probe, hasProtectedState: false)
-        model.sceneDidBecomeInactive()
+        model.sceneDidLeaveForeground()
 
         let request = Task { await model.requestAuthorization() }
         await Task.yield()

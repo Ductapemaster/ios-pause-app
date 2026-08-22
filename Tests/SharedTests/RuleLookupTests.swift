@@ -99,6 +99,22 @@ final class RuleLookupTests: XCTestCase {
         XCTAssertEqual(presentation.primaryButtonTitle, "Done for today")
     }
 
+    /// Every shield offers a way out that starts nothing. Without it the only
+    /// choices are the pause and the Home gesture, so a reflexive open has no
+    /// answer that acknowledges the user simply wants out.
+    func testEveryPresentationOffersTheSameWayOut() throws {
+        let rule = try AppRule(sessionsPerDay: 4, sessionLengthMinutes: 5)
+        let presentations = [
+            ShieldPresentation(rule: rule, decision: .allowed(sessionNumber: 1, lengthMinutes: 5)),
+            ShieldPresentation(rule: rule, decision: .refused(.dailyAllowanceExhausted(limit: 4))),
+            ShieldPresentation.repair,
+        ]
+
+        for presentation in presentations {
+            XCTAssertEqual(presentation.secondaryButtonTitle, "Not now")
+        }
+    }
+
     private func date(year: Int, month: Int, day: Int, hour: Int = 0) -> Date {
         calendar.date(from: DateComponents(year: year, month: month, day: day, hour: hour))!
     }

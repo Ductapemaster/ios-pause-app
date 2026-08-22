@@ -258,10 +258,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func sceneDidBecomeInactive() {
+    func sceneDidLeaveForeground() {
         isSceneActive = false
         authorizationStatusAtLastActivation = nil
-        activationCoordinator.sceneDidBecomeInactive()
+        activationCoordinator.sceneDidLeaveForeground()
         if activationCoordinator.foregroundState == .configuration, case .pause = entryRoute {
             entryRoute = .configuration
         }

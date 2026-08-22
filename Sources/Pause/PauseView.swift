@@ -6,6 +6,7 @@ struct PauseView: View {
     let entry: PauseEntryContext
     let isGrantRequested: Bool
     let onUseSession: () -> Void
+    let onCancel: () -> Void
 
     @State private var now = Date()
     private let timer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
@@ -48,6 +49,9 @@ struct PauseView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .disabled(!entry.countdown.isComplete(at: now) || isGrantRequested)
+
+            Button("Cancel", role: .cancel, action: onCancel)
+                .disabled(isGrantRequested)
 
             Spacer()
         }
