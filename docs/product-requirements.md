@@ -21,7 +21,7 @@ Optionally an app carries one or more **windows** — periods when it cannot be 
 
 Two global settings exist: 
 1. **pause duration**: how long the user must "pause" before being allowed to enter an app.
-2. **day reset**: when during each day the number of available sessions resets. The same time applies every day by default; weekdays and weekends can use different times.
+2. **day reset**: when during each day the number of available sessions resets, chosen in fifteen-minute steps. The same time applies every day.
 
 ## Entering a restricted app
 

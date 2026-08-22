@@ -81,7 +81,7 @@ AppRule
 
 GlobalSettings
   pauseSeconds: Int
-  resetMinuteByWeekday: [Int: Int]  // Phase 2; midnight for all days in Phase 1
+  resetMinuteOfDay: Int             // Phase 2; 0 (midnight) in Phase 1
 
 RuleRuntime
   logicalDay: CalendarDay
@@ -146,12 +146,7 @@ Phase 1 repeats the old three-minute and sixteen-minute device checks through th
 
 ## Daily Resets and Windows
 
-Phase 1 uses midnight for every day. Phase 2 exposes the approved reset model:
-
-- Seven weekdays always have a reset time.
-- Editing the daily value changes all seven.
-- Enabling the weekend override assigns one time to Monday–Friday and another to Saturday–Sunday.
-- The seven configured times produce one reset instant on every civil date. An instant belongs to the period beginning at the most recent reset: today's if that time has passed, otherwise yesterday's. Weekday/weekend transitions may therefore produce a day longer or shorter than 24 hours. A session is charged to the logical day in which it began and stays open across the next reset.
+Phase 1 uses midnight. Phase 2 makes the reset a setting, on a fifteen-minute grid, applying to all seven days — [its own design](configurable-daily-reset.md) carries the detail. An instant belongs to the period beginning at the most recent reset: today's if that time has passed, otherwise yesterday's, so every logical day runs twenty-four hours. A session is charged to the logical day in which it began and stays open across the next reset.
 
 A window has a start time, end time, and weekday set. Its start is inclusive and end exclusive. An overnight window's weekday names the day on which it begins.
 
@@ -203,7 +198,7 @@ Phase 1 is complete when the product UI can select multiple arbitrary apps, conf
 
 ### Phase 2 — Time-Based Rules
 
-Phase 2 is complete when daily resets support one all-days time plus an optional weekday/weekend split, rules support multiple blocking windows, and active sessions survive both kinds of boundary. The time-math test matrix and physical-device boundary checks pass.
+Phase 2 is complete when the daily reset is configurable to any fifteen-minute position, applying to all seven days, rules support multiple blocking windows, and active sessions survive both kinds of boundary. The time-math test matrix and physical-device boundary checks pass.
 
 ### Phase 3 — Observed Resilience and iOS 27
 
