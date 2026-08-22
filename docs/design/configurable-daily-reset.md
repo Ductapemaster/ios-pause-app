@@ -26,6 +26,18 @@ The product requirements previously offered a weekday/weekend split, and the Pha
 
 Labelling by the starting date rather than storing the period's bounds is what keeps this a change to one function. `CalendarDay` keeps its shape, every stored per-app record stays readable, and no migration is needed. With one reset time for all days the label never misleads: each allowance day begins on the date it is named for and runs twenty-four hours.
 
+## Which reset time defines the day
+
+The reset time lives in the configuration, and deciding which configuration is in force needs the allowance day, which needs the reset time. The circle breaks on one rule: **the effective document's reset time defines the allowance day.**
+
+That rule is not arbitrary. A reset change applies the moment it is saved, so the effective document always carries the current one. In the single case where a reset change is deferred — travelling with a tightening edit, the known limit below — the old reset governs until the scheduled change lands, which is what a deferred change is supposed to mean.
+
+Mechanically this stays in one place. `ConfigurationFile` gains `inForce(at:calendar:)`, taking an instant rather than a day: it reads its own effective settings, resolves the allowance day, and then selects. Every caller that today computes a day and passes it in switches to passing the instant, so no component outside this type ever handles a reset minute.
+
+## Storage compatibility
+
+`GlobalSettings` gains a field, and files written by the current build do not carry it. Decoding therefore supplies `0` — midnight — for a missing value, so an existing install reads back exactly the behaviour it already has. This is the only compatibility step the change needs: `CalendarDay` and every per-app runtime record keep their shape.
+
 ## Applying a change
 
 A reset-time change takes effect the moment it is saved. It does not defer.
