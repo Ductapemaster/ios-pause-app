@@ -36,7 +36,7 @@
 - Consumes: `RuleLookup.evaluate(rule:runtime:logicalDay:now:)`, `ConfigurationFile.inForce(at:calendar:)`, `ConfigurationFile.logicalDay(at:calendar:)`, `RuntimeReading` — all existing.
 - Produces: `RuleUsageReader.init(runtimeReader: any RuntimeReading)` and `RuleUsageReader.sessionsUsed(in:now:calendar:) -> [UUID: Int]`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `Tests/SharedTests/RuleUsageReaderTests.swift`:
 
@@ -270,11 +270,11 @@ private struct StubRuntimeReader: RuntimeReading {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `xcodegen generate && xcodebuild test -project Pause.xcodeproj -scheme PauseUnitTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:PauseSharedTests/RuleUsageReaderTests` Expected: FAIL — `RuleUsageReader` does not exist.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `Sources/Shared/RuleUsageReader.swift`:
 
@@ -329,15 +329,15 @@ public struct RuleUsageReader {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `xcodebuild test -project Pause.xcodeproj -scheme PauseUnitTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:PauseSharedTests/RuleUsageReaderTests` Expected: PASS, 9 tests.
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run the full suite command from Global Constraints. Expected: PASS, no new Swift warnings. Nothing existing changed.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add Sources/Shared/RuleUsageReader.swift Tests/SharedTests/RuleUsageReaderTests.swift
@@ -356,7 +356,7 @@ git commit -m "feat: read the day's charged sessions per rule"
 - Consumes: `RuleUsageReader.sessionsUsed(in:now:calendar:)` (Task 1).
 - Produces: `AppModel.sessionsUsedByRule: [UUID: Int]`, published and read-only from outside.
 
-- [ ] **Step 1: Add the published property**
+- [x] **Step 1: Add the published property**
 
 Beside the other published properties in `AppModel` (the block beginning `@Published private(set) var authorizationStatus`), add:
 
@@ -366,7 +366,7 @@ Beside the other published properties in `AppModel` (the block beginning `@Publi
     @Published private(set) var sessionsUsedByRule: [UUID: Int] = [:]
 ```
 
-- [ ] **Step 2: Add the refresh**
+- [x] **Step 2: Add the refresh**
 
 Add this private method beside `refreshInForceConfiguration(now:)`:
 
@@ -385,7 +385,7 @@ Add this private method beside `refreshInForceConfiguration(now:)`:
     }
 ```
 
-- [ ] **Step 3: Call it at the three points state changes**
+- [x] **Step 3: Call it at the three points state changes**
 
 **In `sceneDidBecomeActive(now:)`** — insert immediately after the line `authorizationStatusAtLastActivation = authorizationStatus`, so it reads:
 
@@ -415,7 +415,7 @@ A save can add a rule, remove one, or change a limit, so the snapshot has to be 
 
 Granting a session is the only event that raises a count.
 
-- [ ] **Step 4: Write the failing test**
+- [x] **Step 4: Write the failing test**
 
 `AppModelFlowTests` already seeds a rule and a runtime at a non-zero reset in `testEntryIsRefusedAfterMidnightWhileTheAllowanceDayStillRuns`. Read that test and reuse its seeding verbatim — same helpers, same fixture shape — then assert the published snapshot rather than the entry route:
 
@@ -441,7 +441,7 @@ Granting a session is the only event that raises a count.
 
 Fill the seeding in from that test; the assertion above is the whole of what is new. If its fixture uses a different rule limit, keep the limit and change the expected count to match what it charges.
 
-- [ ] **Step 5: Run to verify it fails, then passes**
+- [x] **Step 5: Run to verify it fails, then passes**
 
 Run: `xcodebuild test -project Pause.xcodeproj -scheme PauseUnitTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:PauseAppTests/AppModelFlowTests`
 
@@ -449,11 +449,11 @@ Before Steps 1-3 this fails to compile — `sessionsUsedByRule` does not exist. 
 
 Steps 1-3 and this test are one commit; the property cannot exist without its first reader. Task 1 covers the reader's correctness exhaustively against a stub. This test covers what only the model can prove: that activation actually runs the refresh, and that the number reaching the view survives midnight under a configured reset.
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run the full suite command. Expected: PASS, no new Swift warnings.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add Sources/Pause/AppModel.swift Tests/PauseAppTests/AppModelFlowTests.swift
@@ -471,7 +471,7 @@ git commit -m "feat: publish the day's session usage to the views"
 - Consumes: `AppModel.sessionsUsedByRule` (Task 2).
 - Produces: nothing other tasks rely on.
 
-- [ ] **Step 1: Replace the row's second line with a trailing count**
+- [x] **Step 1: Replace the row's second line with a trailing count**
 
 In the `Section("Apps")` block, the `NavigationLink`'s label is currently a `VStack` carrying the app label above `Text("\(rule.sessionsPerDay) × \(rule.sessionLengthMinutes) min")`. Replace that label with:
 
@@ -491,7 +491,7 @@ In the `Section("Apps")` block, the `NavigationLink`'s label is currently a `VSt
 
 Session length leaves the row. It stays in `RuleEditorView`, which is where it is set.
 
-- [ ] **Step 2: Add the helper**
+- [x] **Step 2: Add the helper**
 
 Beside the other private helpers in `RulesView`:
 
@@ -504,7 +504,7 @@ Beside the other private helpers in `RulesView`:
     }
 ```
 
-- [ ] **Step 3: Give the pending-removal row the same treatment**
+- [x] **Step 3: Give the pending-removal row the same treatment**
 
 In `pendingRemovalRow(rule:target:)`, replace:
 
@@ -524,13 +524,13 @@ with:
 
 A rule scheduled for removal is still in force until it goes, so its count is still the truth. This row keeps its vertical layout — it carries the removal sentence and a button, so it is not a one-line row.
 
-- [ ] **Step 4: Build and run the full suite**
+- [x] **Step 4: Build and run the full suite**
 
 Run the full suite command, then the generic-device build command. Expected: all PASS, BUILD SUCCEEDED, no Swift warnings.
 
 There is no unit test for this step. `RulesView` is a SwiftUI view with no logic beyond `usageText`, and the project has no view-snapshot harness; the value it renders is pinned in Tasks 1 and 2. This is one of the things the device check below is for.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/Pause/RulesView.swift
@@ -546,7 +546,7 @@ git commit -m "feat: show each app's charged sessions in the list"
 - Modify: `docs/status.md`
 - Modify: `docs/ROADMAP.md`
 
-- [ ] **Step 1: Verify the whole change**
+- [x] **Step 1: Verify the whole change**
 
 ```bash
 xcodegen generate
@@ -557,23 +557,23 @@ git status --short
 
 Record the passing test count.
 
-- [ ] **Step 2: Extend docs/README.md**
+- [x] **Step 2: Extend docs/README.md**
 
 The model section describes rules, shields, the countdown, and the allowance renewing at the daily reset. Add one sentence stating that the list shows each app's charged sessions against its limit for the day in progress, and that the same allowance is what the shield reports — the two cannot disagree because both resolve it the same way.
 
 Present tense, no dates, no history. Do not restate the design's reasoning; point at [the design](design/session-usage-display.md) for it.
 
-- [ ] **Step 3: Update the status block**
+- [x] **Step 3: Update the status block**
 
 Rewrite `## Status — resume here` in `docs/status.md` to state that the in-app session count is built and unverified on the phone, and keep the two device checks already owed — the configurable reset, and the three interface changes — plus the standing blocker that there is no git remote. Keep it to the block's four parts: state, next step, blockers, read first.
 
-- [ ] **Step 4: Note the device check on the roadmap**
+- [x] **Step 4: Note the device check on the roadmap**
 
 Add to `docs/ROADMAP.md` under Deferred: the in-app count is unverified on the phone. The check is to spend a session and confirm the app's number moves in step with the shield's, and that both renew at the configured reset rather than at midnight.
 
 This rides the same signed build as the reset check already listed, so say so — the two are one trip to the phone, not two.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
