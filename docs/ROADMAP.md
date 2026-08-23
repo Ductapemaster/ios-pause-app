@@ -4,17 +4,16 @@ Prioritized work not currently in flight. Phase 1 is accepted and closed; Phase 
 
 ## Next
 
-**A new app cannot be given its session length on the day it is added, and that blocks the sixteen-minute check.** Adding an app writes a rule with three sessions a day and five minutes (`AppModel.applyPickerSelection`), and the addition lands at once because covering an app is a tightening. Raising either value afterwards is a loosening (`ConfigurationComparison.isLoosening`), so it waits for the next daily reset. The default is therefore the only configuration a new app can have for the rest of the day, and no sixteen-minute session can exist until the day after the app is added.
+**The new-app configuration flow is unverified on the phone, and the sixteen-minute check waits behind it.** Adding an app now steps through a screen per app that takes its sessions per day and session length before anything is written, so a sixteen-minute session can exist on the day its app is added. Nothing in it can be reached by a unit test: the picker is an out-of-process view and the flow is SwiftUI sheet presentation.
 
-The fix Dan wants is a configuration flow at the moment an app is added: choose sessions per day and session length before the rule is written, so the first values are part of the addition rather than an edit that has to wait. That carries a second change with it — the picker has to add one app at a time, since a flow cannot configure an unbounded set.
+The check is one signed build:
+- Picking one app opens the setup screen, and the allowance chosen there is what the rules list shows — not three sessions of five minutes.
+- Picking two apps steps through both, and both arrive with their own allowances.
+- Cancelling the setup screen part-way adds nothing at all.
+- Cancelling or swiping away the picker itself changes nothing, including when apps were unchecked in it.
+- Unchecking one app while checking another leaves the removal scheduled for the next reset and the addition covered and shielded today.
 
-Apple's picker will not enforce that. `familyActivityPicker(title:footerText:isPresented:selection:)` binds a `FamilyActivitySelection`, a multi-select set with no single-selection option, so one-at-a-time has to be enforced by Pause once the sheet closes rather than by the picker itself.
-
-Open, and to be settled before any code:
-- What happens when a picker session returns more than one new app — refuse, queue them through the flow one by one, or take the first.
-- Whether removal stays multi-select, given the same sheet does both today.
-- Whether the flow also runs for an app being re-added after a removal.
-- Whether the flow pre-fills the current defaults or requires a deliberate choice.
+**`FamilyActivityPicker` in a sheet Pause owns is the one structural unknown.** The picker is presented as a view inside our own `NavigationStack` so that Save can be told apart from a dismissal, which the `.familyActivityPicker` modifier cannot express. Whether an out-of-process view composes correctly with a toolbar we supply is not knowable from source, and a failure here is visible immediately — missing buttons, a doubled navigation bar, or a picker that does not draw.
 
 ## Deferred
 
@@ -24,7 +23,7 @@ Open, and to be settled before any code:
 
 **The in-app session count is unverified on the phone.** Spend a session on a restricted app and confirm the rules list's number moves in step with the shield's, and that both renew at the configured reset rather than at midnight. This rides the same signed build as the configurable daily reset check — one trip to the phone, not two.
 
-**The sixteen-minute expiry restoration is unverified, and cannot be run yet.** It needs a sixteen-minute session, which no app can be given on the day it is added — see Next. A session over fifteen minutes carries no end warning, so it can only expire on `intervalDidEnd`. That is the untested path. The failure it would catch is silent and open-ended: a session that never ends leaves its target unblocked until something else reconciles. Phase 1 was accepted carrying it, on the reasoning in [the acceptance record](archive/phase-1-core-action-loop/acceptance.md) (why: it costs one sixteen-minute wait to close, and any real use of a session that long settles it).
+**The sixteen-minute expiry restoration is unverified.** It needs a sixteen-minute session, which an app can now be given as it is added, so it rides the same trip as the new-app flow check. A session over fifteen minutes carries no end warning, so it can only expire on `intervalDidEnd`. That is the untested path. The failure it would catch is silent and open-ended: a session that never ends leaves its target unblocked until something else reconciles. Phase 1 was accepted carrying it, on the reasoning in [the acceptance record](archive/phase-1-core-action-loop/acceptance.md) (why: it costs one sixteen-minute wait to close, and any real use of a session that long settles it).
 
 Short and long sessions do expire on different callbacks. A short session's `intervalDidEnd` arrives at expiry only because Pause's own `stopMonitoring` cancels the pending end alarm — the host holds the padded end where the schedule put it until then, measured 2026-08-23. So the long-session path, where the interval's own end is the only signal, is exercised by nothing.
 
