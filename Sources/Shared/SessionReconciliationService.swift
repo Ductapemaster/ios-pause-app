@@ -42,13 +42,33 @@ public final class SessionReconciliationService {
         now: Date,
         trigger: SessionReconciliationTrigger
     ) -> SessionReconciliationResult {
+        var result: SessionReconciliationResult
         do {
-            return try stateLock.withLock {
+            result = try stateLock.withLock {
                 reconcileUnlocked(now: now, trigger: trigger)
             }
         } catch {
             return lockFailure(error, ruleID: trigger.selectedRuleID)
         }
+
+        guard let activityName = result.pendingStopActivityName else { return result }
+        result.pendingStopActivityName = nil
+        // Deliberately outside the lock. `stopMonitoring` called from within a
+        // monitor callback does not return until the host tears the extension
+        // down, and it touches none of the state the lock protects, so holding
+        // the lock across it locks every other participant out for that long.
+        do {
+            try stopMonitoring(activityName)
+        } catch {
+            result.issues.append(
+                SessionReconciliationIssue(
+                    ruleID: trigger.selectedRuleID,
+                    operation: .stopMonitoring,
+                    underlyingError: error
+                )
+            )
+        }
+        return result
     }
 
     private func reconcileUnlocked(
@@ -90,8 +110,7 @@ public final class SessionReconciliationService {
                     runtimeRepository: runtimeRepository,
                     now: now
                 )
-            },
-            stopMonitoring: stopMonitoring
+            }
         )
     }
 

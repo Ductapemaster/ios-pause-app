@@ -57,7 +57,76 @@ final class SessionReconciliationServiceTests: XCTestCase {
         XCTAssertEqual(applied, [try token(seed: "instagram")])
     }
 
+    func testTheStateLockIsFreeWhileTheWarningStopsMonitoring() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedSingleRule(in: directory)
+        let secondParticipant = AppGroupFileLock(directoryURL: directory)
+        let acquired = DispatchSemaphore(value: 0)
+        var secondParticipantProgressed = false
+
+        // The second participant runs on another thread because the lock is
+        // recursive within one: a nested acquisition would succeed whether or
+        // not the reconciliation pass had released it.
+        let service = makeService(directory: directory, applyApplications: { _ in }, stopMonitoring: { _ in
+            DispatchQueue.global().async {
+                try? secondParticipant.withLock { acquired.signal() }
+            }
+            secondParticipantProgressed = acquired.wait(timeout: .now() + 2) == .success
+        })
+
+        _ = service.reconcile(
+            now: now,
+            trigger: .intervalWillEndWarning(ruleID: ruleID, activityName: "session.rule")
+        )
+
+        XCTAssertTrue(secondParticipantProgressed)
+    }
+
+    func testAFailedStopIsStillReportedAgainstTheReconciliation() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedSingleRule(in: directory)
+
+        let result = makeService(directory: directory, applyApplications: { _ in }, stopMonitoring: { _ in
+            throw TestError.stop
+        })
+        .reconcile(
+            now: now,
+            trigger: .intervalWillEndWarning(ruleID: ruleID, activityName: "session.rule")
+        )
+
+        XCTAssertEqual(result.issues.map(\.operation), [.stopMonitoring])
+    }
+
     // MARK: - Helpers
+
+    /// One rule in force with no open session — a warning callback for it
+    /// reconciles cleanly and leaves its activity to be stopped.
+    private func seedSingleRule(in directory: URL) throws {
+        try ConfigurationStore(directoryURL: directory).save(
+            file: ConfigurationFile(
+                effective: try ConfigurationDocument(
+                    settings: .phaseOneDefault,
+                    rules: [AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)],
+                    targets: [
+                        RuleTarget(
+                            ruleID: ruleID,
+                            applicationToken: try token(seed: "instagram"),
+                            launchRoute: nil
+                        )
+                    ]
+                )
+            )
+        )
+        try RuntimeRepository(directoryURL: directory).save(
+            RuleRuntime(
+                logicalDay: LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: calendar),
+                sessionsStarted: 0
+            ),
+            ruleID: ruleID
+        )
+    }
 
     /// One rule in force, and a pending document that removes it.
     private func seedRemovalPending(in directory: URL, startDay: CalendarDay) throws {
@@ -99,7 +168,8 @@ final class SessionReconciliationServiceTests: XCTestCase {
     /// reads what the reconcile decided.
     private func makeService(
         directory: URL,
-        applyApplications: @escaping (Set<ApplicationToken>) -> Void
+        applyApplications: @escaping (Set<ApplicationToken>) -> Void,
+        stopMonitoring: @escaping (String) throws -> Void = { _ in }
     ) -> SessionReconciliationService {
         SessionReconciliationService(
             directoryURL: directory,
@@ -109,7 +179,7 @@ final class SessionReconciliationServiceTests: XCTestCase {
                 failedGrantBlockIDs: { [] },
                 stateLock: AppGroupFileLock(directoryURL: directory)
             ),
-            stopMonitoring: { _ in }
+            stopMonitoring: stopMonitoring
         )
     }
 
@@ -127,4 +197,8 @@ final class SessionReconciliationServiceTests: XCTestCase {
             from: Data("{\"data\":\"\(data)\"}".utf8)
         )
     }
+}
+
+private enum TestError: Error {
+    case stop
 }
