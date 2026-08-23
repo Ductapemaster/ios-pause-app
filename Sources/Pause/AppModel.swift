@@ -241,6 +241,10 @@ final class AppModel: ObservableObject {
         }
         activationCoordinator = coordinator
         authorizationStatusAtLastActivation = authorizationStatus
+        // Must run after coordinator.activate: cleanup/reconcile can roll back
+        // provisional sessions and lower the count (unguarded by tests). Must run
+        // before switch outcome: .unchanged returns early. Pinned by
+        // testTheCountRefreshesOnEveryForegroundNotJustTheFirst.
         refreshUsage(now: now)
 
         switch outcome {
