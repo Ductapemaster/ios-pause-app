@@ -8,7 +8,7 @@ Prioritized work not currently in flight. Phase 1 is accepted and closed; Phase 
 
 **The configurable daily reset is unverified on the phone.** Move the reset to a quarter-hour a few minutes ahead, spend a session so the count is non-zero, wait for the reset to pass, and confirm the count renews at the new time rather than at midnight and that the shield reflects the renewed allowance.
 
-**The in-app session count is unverified on the phone.** Spend a session on a restricted app and confirm the rules list's number moves in step with the shield's, and that both renew at the configured reset rather than at midnight. This rides the same signed build as the reset check above — one trip to the phone, not two.
+**The in-app session count is unverified on the phone.** Spend a session on a restricted app and confirm the rules list's number moves in step with the shield's, and that both renew at the configured reset rather than at midnight. This rides the same signed build as the configurable daily reset check — one trip to the phone, not two.
 
 **The sixteen-minute expiry restoration is unverified.** A session over fifteen minutes expires on `intervalDidEnd`, where the observed three-minute case expires on `intervalWillEndWarning` — different callbacks, and only the shorter one has been seen restore the shield. The failure it would catch is silent and open-ended: a session that never ends leaves its target unblocked until something else reconciles. Phase 1 was accepted carrying it, on the reasoning in [the acceptance record](archive/phase-1-core-action-loop/acceptance.md) (why: it costs one sixteen-minute wait to close, and any real use of a session that long settles it).
 

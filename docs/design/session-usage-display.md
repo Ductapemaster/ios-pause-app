@@ -44,6 +44,8 @@ The snapshot is rebuilt where the app already re-syncs:
 
 The count is therefore correct whenever the list is reached. It does not tick while the screen is open; nothing it displays changes on a timer, because a session is charged at its start rather than as it runs.
 
+A daily reset is the one event that changes the count with no user action, and Pause held open across one shows the pre-reset count until the next foreground, grant, or save touches it: `registerDailyReset()` schedules a DeviceActivity callback for the shield configuration extension, not an in-app refresh. This is an accepted edge, not a fixed one — the app is rarely left open across a reset, and closing the gap would mean the timer this section otherwise avoids.
+
 ## What it costs
 
 Rebuilding the snapshot is one file read and one lock acquisition per rule, synchronously, on the main thread. For a handful of apps this is small, but it is the same class of cost as [applying a picker selection](../ROADMAP.md), which holds the interface for the same reason. Neither is measured. If either is taken up, both move off the main thread together — splitting them would leave the codebase with two conventions for reaching the same files.
