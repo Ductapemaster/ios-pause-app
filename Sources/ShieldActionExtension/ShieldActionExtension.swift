@@ -29,9 +29,12 @@ final class ShieldActionExtension: ShieldActionDelegate {
         // here would be evidence about the probe rather than about a sandbox.
         logger.notice("Shield action sandbox probe: \(AppGroupSandboxProbe.run().summary, privacy: .public)")
 
-        // A failure to reach the app group container is reported and then
+        // A failure to reach the app group container at all is reported and then
         // dismissed like any other refusal: the button says "Done for today",
-        // and leaving it dead is worse than closing the app it is covering.
+        // and a container this extension cannot reach is not a condition that
+        // clears on the next press, so leaving the shield up would leave the
+        // button permanently dead. A failure inside a reachable container is
+        // the transient case, and `.keepShield` covers that one.
         let outcome: ShieldPrimaryAction.Outcome
         do {
             outcome = try ShieldPrimaryAction().resolve(
@@ -49,6 +52,8 @@ final class ShieldActionExtension: ShieldActionDelegate {
             completionHandler(.openParentalControlsApp)
         case .dismiss:
             completionHandler(.close)
+        case .keepShield:
+            completionHandler(.none)
         }
     }
 
