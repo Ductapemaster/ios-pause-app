@@ -2,6 +2,20 @@
 
 Prioritized work not currently in flight. Phase 1 is accepted and closed; Phase 2 time-based rules are the next planned phase.
 
+## Next
+
+**A new app cannot be given its session length on the day it is added, and that blocks the sixteen-minute check.** Adding an app writes a rule with three sessions a day and five minutes (`AppModel.applyPickerSelection`), and the addition lands at once because covering an app is a tightening. Raising either value afterwards is a loosening (`ConfigurationComparison.isLoosening`), so it waits for the next daily reset. The default is therefore the only configuration a new app can have for the rest of the day, and no sixteen-minute session can exist until the day after the app is added.
+
+The fix Dan wants is a configuration flow at the moment an app is added: choose sessions per day and session length before the rule is written, so the first values are part of the addition rather than an edit that has to wait. That carries a second change with it — the picker has to add one app at a time, since a flow cannot configure an unbounded set.
+
+Apple's picker will not enforce that. `familyActivityPicker(title:footerText:isPresented:selection:)` binds a `FamilyActivitySelection`, a multi-select set with no single-selection option, so one-at-a-time has to be enforced by Pause once the sheet closes rather than by the picker itself.
+
+Open, and to be settled before any code:
+- What happens when a picker session returns more than one new app — refuse, queue them through the flow one by one, or take the first.
+- Whether removal stays multi-select, given the same sheet does both today.
+- Whether the flow also runs for an app being re-added after a removal.
+- Whether the flow pre-fills the current defaults or requires a deliberate choice.
+
 ## Deferred
 
 **Three interface changes are unverified on the phone.** The countdown cancel, the scene-interruption split so a banner no longer abandons a pause, and the shield's "Not now" that closes the app. Unit tests reach the model and the shield copy; they cannot reach a SwiftUI scene phase or a shield button. The check is one signed build: confirm a banner does not kill a countdown, the cancel returns without charging a session, and "Not now" closes the app.
@@ -10,7 +24,7 @@ Prioritized work not currently in flight. Phase 1 is accepted and closed; Phase 
 
 **The in-app session count is unverified on the phone.** Spend a session on a restricted app and confirm the rules list's number moves in step with the shield's, and that both renew at the configured reset rather than at midnight. This rides the same signed build as the configurable daily reset check — one trip to the phone, not two.
 
-**The sixteen-minute expiry restoration is unverified.** A session over fifteen minutes carries no end warning, so it can only expire on `intervalDidEnd`. That is the untested path. The failure it would catch is silent and open-ended: a session that never ends leaves its target unblocked until something else reconciles. Phase 1 was accepted carrying it, on the reasoning in [the acceptance record](archive/phase-1-core-action-loop/acceptance.md) (why: it costs one sixteen-minute wait to close, and any real use of a session that long settles it).
+**The sixteen-minute expiry restoration is unverified, and cannot be run yet.** It needs a sixteen-minute session, which no app can be given on the day it is added — see Next. A session over fifteen minutes carries no end warning, so it can only expire on `intervalDidEnd`. That is the untested path. The failure it would catch is silent and open-ended: a session that never ends leaves its target unblocked until something else reconciles. Phase 1 was accepted carrying it, on the reasoning in [the acceptance record](archive/phase-1-core-action-loop/acceptance.md) (why: it costs one sixteen-minute wait to close, and any real use of a session that long settles it).
 
 Short and long sessions do expire on different callbacks. A short session's `intervalDidEnd` arrives at expiry only because Pause's own `stopMonitoring` cancels the pending end alarm — the host holds the padded end where the schedule put it until then, measured 2026-08-23. So the long-session path, where the interval's own end is the only signal, is exercised by nothing.
 
