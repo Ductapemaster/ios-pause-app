@@ -192,17 +192,51 @@ Registering a schedule whose interval is already under way therefore still produ
 
 The corollary is what a monitor has to be written against: **an immediately arriving `intervalDidStart` or `intervalDidEnd` says nothing about whether a session began or expired.** The handler checks interval membership itself; it cannot read the callback as "the window just began" or "the window just ended".
 
-### Both end callbacks arrive together for a short session
+### The padded interval end is a separate alarm, and Pause's own stop cancels it
 
-Measured on device, 2026-08-23. A 3-minute session is registered with `intervalEnd` set 12 minutes past its expiry, so that `intervalWillEndWarning` marks the true expiry and `intervalDidEnd` is expected much later. Both arrived at expiry, 32 ms apart:
+Measured on device, 2026-08-23, from the host's log rather than from Pause's. A session registers a padded interval — `intervalEnd` set past the true expiry, with `warningTime` bringing `intervalWillEndWarning` back to it — and the DeviceActivity host, `UsageTrackingAgent`, turns that into **two named XPC alarms**, one per moment. A 5-minute session registered at 10:45:17:
 
 ```
-09:25:21.954  monitor  intervalDidStart          — session.dae32a7f
-09:28:24.319  monitor  intervalWillEndWarning    — session.dae32a7f
-09:28:24.351  monitor  intervalDidEnd            — session.dae32a7f, +32ms
+10:45:17.317  UserEventAgent  Registering job "…UsageTrackingAgent.alarm.end-…/p913" due in 900 seconds.
+10:45:17.317  UserEventAgent  Registering job "…UsageTrackingAgent.end-warning-…/p913" due in 300 seconds.
 ```
 
-They arrive on different threads of the same extension process, so a handler that takes any cross-process lock is contending with itself. **A monitor cannot assume the padded `intervalEnd` defers `intervalDidEnd`**, and the two handlers must be safe to run concurrently.
+300 s is the expiry; 900 s is the padded interval end. **The padding works.** When the warning fires, the host still holds the end where the schedule put it, and re-subscribes to that alarm:
+
+```
+10:50:20.334  UserEventAgent      Firing event "…end-warning-…/p913" which was due 2 sec ago.
+10:50:20.377  UsageTrackingAgent  (UsageTracking) Next end date is: Sun Aug 23 11:00:18 2026
+10:50:20.377  UsageTrackingAgent  Subscribed to event …alarm.end-…/p913 using token 221378
+10:50:20.379  UsageTrackingAgent  Notifying extension … that session.06c73ade… will end
+10:50:20.413  monitor             stopMonitoring began
+10:50:20.417  UserEventAgent      Received request to remove alarm "…alarm.end-…/p913" with token 221378
+10:50:20.418  UsageTrackingAgent  Notifying extension … that session.06c73ade… did end
+10:50:20.424  monitor             stopMonitoring returned, +0.011s
+```
+
+**`intervalDidEnd` at expiry is Pause's own doing.** The end alarm is removed 4 ms after `stopMonitoring` begins, on the token it was re-subscribed to 40 ms earlier, and the "did end" notification follows 1 ms after the removal — inside the stop, before it returns. The same sequence appears in the two earlier sessions of the day: at 09:28:24.270 the host re-armed the end alarm for 717 seconds later, and 79 ms after that Pause's stop removed it.
+
+That the removal is caused by `stopMonitoring` rather than merely following it is a reading of the ordering — the host logs the removal, not its reason — but the order, the shared token and the 4 ms gap repeat across all three sessions.
+
+This supersedes an earlier entry claiming both end callbacks arrive together for a short session, which read the second callback as the platform's and concluded that a padded `intervalEnd` cannot be relied on to defer `intervalDidEnd`. It can. What arrives at expiry is the echo of the stop.
+
+The consequence for a monitor is unchanged in one respect and reversed in another: the two handlers **do** run concurrently on different threads of one process, so anything taking a cross-process lock still contends with itself — but that concurrency is something the warning handler triggers, not something the schedule imposes.
+
+### The warning is delivered two to three seconds late
+
+Measured on device, 2026-08-23, across two sessions. `UserEventAgent` states the slip itself — `Firing event "…end-warning-…" which was due 2 sec ago` — and the callback reaches the extension a further ~50 ms later: an expiry of 09:28:21 was delivered at 09:28:24.319, and one of 10:50:17 at 10:50:20.383.
+
+The scheduler's five-second lateness check (`DeviceActivitySessionScheduler.register`) bounds the *representable* expiry — how faithfully the schedule can name the instant — and does not see this delivery slip, which lands on top of it. A session therefore runs two to three seconds past its stated length before the shield returns.
+
+### The monitor extension is launched once per session, not once per callback
+
+Measured on device, 2026-08-23. `launchd` spawned `MonitorExtension` at the session's `intervalDidStart` and the same process served the warning and the end five minutes later:
+
+```
+10:45:17.235  launchd  Successfully spawned MonitorExtension[59190] because launch job demand
+```
+
+Each callback takes a fresh RunningBoard `com.apple.extension.session` assertion against the live process rather than relaunching it. The host is `UsageTrackingAgent`, one process per install. What ends the extension's life is the host tearing it down — which is what bounded the 31-second deadlock rather than any timeout of Pause's own.
 
 ### `intervalWillStartWarning` fires at registration when its moment has already passed
 

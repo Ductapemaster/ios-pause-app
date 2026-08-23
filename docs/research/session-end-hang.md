@@ -13,9 +13,11 @@ For those 31 seconds every other participant was locked out. `AppGroupFileLock` 
 - The **shield action extension** failed with POSIX 60 `ETIMEDOUT` when the primary button was pressed, which is what made the button dead.
 - The **`intervalDidEnd` handler**, which arrives 32 ms after the warning on a second thread of the same process, blocked on the lock for the full 31 seconds before doing its own work.
 
-**It is a deadlock, not a slow framework call.** Off the lock the same call costs 11 ms, and [the platform evidence](screen-time-platform-evidence.md) carries both traces. The reading is that the stop cannot complete while a callback the host dispatched is still outstanding: `intervalDidEnd` was blocked on the lock the warning held, and the warning was inside the stop, so neither could move. That the stop waits on its sibling is inferred from the ordering — `intervalDidEnd` runs entirely inside the stop's 11 ms — rather than measured directly.
+**It is a deadlock, and Pause builds every side of it.** The host's own log shows the chain ([the platform evidence](screen-time-platform-evidence.md) carries the traces): the stop cancels the activity's pending end alarm, and cancelling it makes the host deliver `intervalDidEnd` — to a second thread of the same extension process, milliseconds later, while the warning handler still holds the lock. That callback blocks on the lock, and the stop does not return until it has been delivered and run. The warning cannot release the lock until the stop returns.
 
-Two platform behaviours set this up, both recorded in the platform evidence: both end callbacks arrive together for a short session, contrary to the scheduler's padding, and they arrive on different threads of one process, so a handler taking any cross-process lock contends with itself.
+Off the lock the same call costs 11 ms, because `intervalDidEnd` takes the lock immediately, finishes, and lets the stop complete.
+
+That the stop waits on the callback it triggers is a reading of the ordering rather than something the host states, but the sequence repeats across all three sessions of the day.
 
 ## The reproduction
 
