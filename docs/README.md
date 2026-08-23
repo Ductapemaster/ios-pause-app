@@ -15,6 +15,8 @@ Two properties hold the design together:
 
 **State lives in JSON files under one App Group lock.** Every process — app, monitor, shield config, shield action — coordinates through one lock file, and a compound operation holds it from first read through the final shield decision. SQLite was weighed and declined: its write-ahead journal coordinates through cross-process shared memory, which interacts badly with iOS file protection on a locked device, and that is exactly when the extensions run. The current design approximates the transactions SQLite would give by holding one lock across the whole operation.
 
+**No framework call happens while the lock is held.** The lock protects the JSON state and nothing else, so a `DeviceActivity` or `ManagedSettings` call belongs outside it. Holding one across `stopMonitoring` deadlocked the monitor for 31 seconds: both end callbacks arrive together on different threads of the one extension process, and the sibling blocked on the lock is what the stop was waiting on. Released first, the same call costs 11 ms. The mechanism is in [the session-end note](research/session-end-hang.md).
+
 **The shield configuration extension can read but not write.** Its sandbox refuses every write in the App Group container. The monitor extension is not so limited — file I/O from it is permitted, measured across all four callbacks of a live session. Repairs therefore run from the app or the monitor, never from the shield.
 
 **A session's stored expiry is authoritative.** Interruptions — backgrounding, termination, an edit mid-session — do not recompute it. That makes the accounting a pure function over stored values, which is why the unit suite can pin it exactly and the device is needed only for what iOS itself does.
