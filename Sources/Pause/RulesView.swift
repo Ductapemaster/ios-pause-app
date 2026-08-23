@@ -70,10 +70,11 @@ struct RulesView: View {
                                     applicationToken: target.applicationToken
                                 )
                             } label: {
-                                VStack(alignment: .leading, spacing: 6) {
+                                HStack {
                                     AppTokenLabel(applicationToken: target.applicationToken)
-                                    Text("\(rule.sessionsPerDay) × \(rule.sessionLengthMinutes) min")
-                                        .font(.system(.subheadline, design: .rounded).monospacedDigit())
+                                    Spacer()
+                                    Text(usageText(for: rule))
+                                        .font(.system(.body, design: .rounded).monospacedDigit())
                                         .foregroundStyle(.secondary)
                                 }
                             }
@@ -120,7 +121,7 @@ struct RulesView: View {
             AppTokenLabel(applicationToken: target.applicationToken)
                 .opacity(0.5)
 
-            Text("\(rule.sessionsPerDay) × \(rule.sessionLengthMinutes) min")
+            Text(usageText(for: rule))
                 .font(.system(.subheadline, design: .rounded).monospacedDigit())
                 .foregroundStyle(.tertiary)
 
@@ -140,6 +141,13 @@ struct RulesView: View {
         guard let startDay = model.pendingChangeStartDay,
               let file = model.configurationFile else { return "at the next reset" }
         return ScheduledChangeWording.phrase(for: startDay, in: file)
+    }
+
+    /// Empty when the rule has no count — a runtime that is missing or
+    /// unreadable shows nothing rather than a number that would be wrong.
+    private func usageText(for rule: AppRule) -> String {
+        guard let used = model.sessionsUsedByRule[rule.id] else { return "" }
+        return "\(used)/\(rule.sessionsPerDay)"
     }
 
     private var pauseSeconds: Binding<Int> {
