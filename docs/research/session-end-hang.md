@@ -1,64 +1,36 @@
-# The device hang when a session ends
+# The session-end lock-out
 
-Open investigation. The root cause is not established, and no fix for it has been written. A sysdiagnose from 2026-08-23 09:02 settled several questions and closed off two lines of enquiry.
+The defect behind two reported symptoms: a device that stops responding when a session ends, and a shield button that does nothing when pressed shortly afterwards. The mechanism is established and reproduced. No fix is written yet — [the plan](../plans/session-end-lock-contention.md) carries the work.
 
-## What was observed
+## The mechanism
 
-Reported on 2026-08-22, on the build from `feat/session-usage-display`. An Instagram session was in progress and reached its end near midnight. The shield should have reappeared at that moment. Instead the phone became unresponsive — not Instagram alone, the device. It recovered on its own after a delay, returning to the home screen. Opening Instagram again showed the shield present but still frozen. Pause then appeared to crash and the phone returned to the home screen.
+When a session expires, `intervalWillEndWarning` takes the app group state lock and reconciles. It restores the shield within about 26 ms, which is the part the user is waiting on and it works. It then calls `DeviceActivityCenter.stopMonitoring` — still inside `stateLock.withLock` — and that call does not return from inside its own callback. It blocks until the DeviceActivity host tears the extension down, roughly 31 seconds later, holding the lock the whole time.
 
-It happened twice, near midnight and again on the session that crossed it. Neither the hang nor the apparent crash had been seen before, and this was the first time the path had been exercised.
+For those 31 seconds every other participant is locked out. `AppGroupFileLock` gives up after 2 seconds by design, so each one fails rather than hanging forever, and what the user sees depends on which one asked:
 
-## What the system log establishes
+- The **shield action extension** fails with POSIX 60 `ETIMEDOUT` when the primary button is pressed. Before 2026-08-23 that produced `ShieldActionResponse.none` — a button that did nothing. It now closes the app, which is a different wrong answer and is itself on the fix list.
+- The **`intervalDidEnd` handler**, which arrives 32 ms after the warning on a second thread of the same process, blocks on the lock for the full 31 seconds before doing its own work.
 
-Pause never crashed. No Pause crash report exists in the incident window, on the Mac or inside the sysdiagnose, and no hang or spin report either — reports from 00:17, 00:41 and 01:04 all synced, so the window is covered. The 01:04 jetsam event lists 431 processes and neither Pause nor its extensions appear, so it was not a memory kill. The process itself, pid 56674, ran continuously from 23:51:12 until after 00:09, moving between `running-active` and `running-suspended` throughout.
+Two platform behaviours set this up, both recorded in [the platform evidence](screen-time-platform-evidence.md): both end callbacks arrive together for a short session, contrary to the scheduler's padding, and `stopMonitoring` does not return from within a callback.
 
-Whatever ended the app in view was therefore not a termination. What Dan saw as a crash has to be explained some other way — the shield dismissing, or the interface recovering — and the app's own continuity is the evidence against the obvious reading.
+## The reproduction
 
-The system-side timeline for the grant is intact:
+Reproduced deliberately on 2026-08-23 at 09:28, on a 3-minute Instagram session, with a sysdiagnose gathered two minutes later. Stay in the shielded app until the session expires, then press the primary button within 30 seconds of expiry. The full timeline sits in the platform evidence note.
 
-- **23:51:11** — `ShieldConfigExtension` launches under `ManagedSettingsAgent` and renders
-- **23:51:12** — `ShieldActionExtension` launches; SpringBoard launches Pause (pid 56674)
-- **23:51:33** — `MonitorExtension` launches under `UsageTrackingAgent` (pid 56679), and stays alive to 00:04:24
-- **23:58, 00:00, 00:04, 00:08** — Pause cycles active/suspended
-- **00:08:11** — `FamilyControls.ActivityPickerExtension` opens inside Pause, closing at about 00:09:11
+Session length is the lever: shortening it is a tightening and applies at once, so a 1-to-3-minute session makes the wait short. Raising sessions per day is a loosening and defers to the next reset, so the day's remaining sessions bound how many attempts are available.
 
-## What is ruled out
+## The original report
 
-**The reset boundary is not involved.** The daily reset is configured at **05:00**, not midnight: the archive shows the only `daily-reset` callbacks at 04:59:02 (`intervalDidEnd`) and 05:00:02 (`intervalDidStart`). Midnight is an ordinary civil-date boundary here, carrying no allowance renewal. Any explanation resting on the reset firing at midnight is therefore excluded.
+The first sighting, on 2026-08-22 at about 23:51, was described as the whole phone freezing, recovering, and then Pause appearing to crash. The lock-out explains the freeze and the dead button. It does not by itself explain a device-wide freeze, and the apparent crash was not one: no crash, hang, or jetsam record exists for that window, and the Pause process ran continuously across it. Whether the device-wide symptom is the same defect seen from the outside, or something additional, is not settled.
 
-The session-count work is not implicated. Its commits (`295a15c`, `a9c123a`, `003a273`, `54d17d3`) touch `AppModel.swift` and `RulesView.swift` only — the in-app views, nothing on the monitor or shield path.
+## Capturing evidence
 
-A wrapping `DeviceActivitySchedule` is not implicated. `DeviceActivitySessionScheduler.absoluteComponents` builds both `intervalStart` and `intervalEnd` from absolute components including era, year, month and day, so a session spanning midnight describes a real interval. The wrap-to-24-hours behaviour in [the platform evidence](screen-time-platform-evidence.md) applies to the daily reset's repeating schedule, registered from bare hour and minute — not to a session.
-
-No unbounded loop exists on the end-of-session path. `SessionReconciliationCoordinator.reconcile`, `SessionReconciliationService`, `ShieldReconciler.reconcile` and `RuleLookup` are all bounded by the configured rule count, and `AppGroupFileLock` bounds its own acquisition at two seconds.
-
-## What the archive cannot show, and why
-
-Pause's own logging for the incident is unrecoverable. The archive retains **no third-party subsystem entries at all** in that window: a count of every non-Apple subsystem between 23:45 and 00:15 returns zero, against 220,606 total lines. The `MonitorExtension` process is visible there only through Apple's own `containermanager` subsystem, which records app-group lookups at 23:51, 23:56, 23:57, 23:58, 00:03 and 00:04.
-
-This matters for how the evidence is read. The monitor's `Monitor callback …` lines are absent from that window, and the temptation is to conclude the callbacks never fired — the extension logs at `notice` on entry, before any container work, and that logging was present in the build that was running. But the retention gap explains the absence on its own, so it is not evidence either way. The same gap explains why the container lookups appear without them.
-
-Retention is short for non-Apple subsystems, so **an archive gathered hours later cannot answer this**. The capture has to happen close to the event.
-
-## What to do at the next occurrence
-
-Gather a sysdiagnose **promptly** — within the hour, not the next morning:
+A sysdiagnose is the only route that works, and it must be gathered **within the hour** — the log archive retains no third-party subsystem entries beyond a short window, which is why a capture taken the next morning showed nothing of Pause at all:
 
 ```
 xcrun devicectl device sysdiagnose --device <device-id> --destination <dir>
 ```
 
-It needs no root, but it does need the phone **unlocked and awake**; against a locked phone it waits indefinitely without producing an archive. The on-device equivalent is Volume Up + Volume Down + Side held for about a second, which syncs to the Mac by itself.
+It needs no root, but the phone must be **unlocked and awake**; against a locked phone it waits indefinitely and produces nothing. `log collect --device-udid` is not an option — it needs root and then fails with `Device not configured` (ENXIO) even with the phone wired and `transportType: wired` confirmed.
 
-`log collect --device-udid` is not an option: it needs root and then fails with `Device not configured` (ENXIO) even with the phone wired and `transportType: wired` confirmed. It is not the cable and not the password.
-
-Then read, in the fresh archive:
-
-- `Shield render began` against `Shield render returned` — an entry without its exit identifies a hung render. This pair exists only in builds from 2026-08-23 onward and is confirmed working (08:45:11, resolving in 10 ms).
-- `Monitor callback … for activity` against `… returned for activity`.
-
-## The open lead
-
-The FamilyControls picker opened inside Pause at 00:08:11, minutes after the reported hang. [The roadmap](../ROADMAP.md) already records that applying a picker selection blocks the main thread — each added app takes a file-lock cycle plus a JSON encode and atomic write, `configurationStore.save` takes another, and `ShieldReconciler.reconcile` holds the lock while re-reading every target's runtime — and notes that measuring it is the cheap first move if a hang is ever reported. One now has been.
-
-This is a lead, not a conclusion, and the timing is against it as an explanation of the *first* hang: Dan describes the freeze as beginning when a session ended, which the log places around 23:51, not 00:08. It is worth measuring on its own merits regardless.
+Read `Shield render began` against `Shield render returned`, and `Monitor callback … for activity` against `… returned for activity`. An entry without its exit names what hung.

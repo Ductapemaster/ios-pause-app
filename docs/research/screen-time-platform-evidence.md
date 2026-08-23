@@ -51,21 +51,26 @@ Across the whole run no entry at error level appeared from any `com.koubalabs.pa
 
 **Which sandbox profile the monitor extension point is assigned is not recorded.** The `runningboardd` extension-overlay entries that named the shield extensions' profiles are absent from this archive. The permission is measured; the profile that grants it is not, so the finding stands on behavior alone.
 
-### Open: an expiry callback ran for thirty-one seconds
+### `stopMonitoring` does not return from inside its own callback
 
-The two callbacks that arrive at expiry returned long after the work the user sees was finished:
+Measured on device, 2026-08-23, on a 3-minute session. Calling `DeviceActivityCenter.stopMonitoring` from within `intervalWillEndWarning` blocks for the rest of the extension's life: the call returns only when the DeviceActivity host tears the extension down, 31 seconds later.
 
 ```
-22:40:39.290  monitor  intervalWillEndWarning — begins
-22:40:39.315  monitor  intervalDidEnd — begins
-22:40:39.376  shield   rendered "That's all for today."
-22:41:10.296  monitor  intervalWillEndWarning — returns, +31.006s
-22:41:10.325  monitor  intervalDidEnd — returns, +31.010s
+09:28:24.319  monitor  intervalWillEndWarning — begins, takes the app group state lock
+09:28:24.345  monitor  shield.applications written — "Successfully set"
+09:28:24.351  monitor  intervalDidEnd — begins on a second thread, blocks on the lock
+09:28:31.904  shield   action extension asks for the lock
+09:28:33.909  shield   action fails, POSIX 60 ETIMEDOUT, at the lock's 2s deadline
+09:28:55.307  monitor  XPC connection invalidated by the host (pid 58340)
+09:28:55.309  monitor  intervalWillEndWarning — returns, +30.990s
+09:28:55.338  monitor  intervalDidEnd — returns, having waited out the lock
 ```
 
-The shield was applied inside the first 86 ms — the configuration extension could not have rendered the exhausted variant otherwise — so nothing the user waits on was delayed. What consumed the following 31 seconds is unmeasured. The two handlers ran on different threads and returned 29 ms apart, which fits both being serialized behind one blocking call rather than each spending the time separately. A sysdiagnose began collecting at 22:41:03, so the collection itself is not ruled out as the cause.
+The shield itself was applied in 26 ms, so nothing the user waits on depends on the 31 seconds. What the wait costs is exclusion: the warning handler holds the app group state lock throughout, and every other participant that needs it fails at its own deadline.
 
-It matters because an app extension runs on a runtime budget the system enforces. Instrumenting the reconcile's own stages would locate the wait; nothing here does that yet.
+That `stopMonitoring` is the blocking call is inferred rather than measured — it is the only remaining step on the warning path after the shield write, and the return lands 2 ms after the host's invalidation. Logging its entry and exit would settle it.
+
+This supersedes an earlier reading of the same 31-second gap, which could not separate the wait from a sysdiagnose that happened to be collecting at the time. Here collection began at 09:30:18, after the window closed.
 
 ## DeviceActivity scheduling
 
@@ -148,6 +153,18 @@ The start callback arrived at the interval's start — 46 seconds after the `sta
 Registering a schedule whose interval is already under way therefore still produces an immediate `intervalDidStart` — the interval has begun, as far as the system is concerned. `stopMonitoring` behaves symmetrically: it is followed by `intervalDidEnd` within milliseconds, seen across six start/stop pairs on one activity and again when a rebuild tore an activity down.
 
 The corollary is what a monitor has to be written against: **an immediately arriving `intervalDidStart` or `intervalDidEnd` says nothing about whether a session began or expired.** The handler checks interval membership itself; it cannot read the callback as "the window just began" or "the window just ended".
+
+### Both end callbacks arrive together for a short session
+
+Measured on device, 2026-08-23. A 3-minute session is registered with `intervalEnd` set 12 minutes past its expiry, so that `intervalWillEndWarning` marks the true expiry and `intervalDidEnd` is expected much later. Both arrived at expiry, 32 ms apart:
+
+```
+09:25:21.954  monitor  intervalDidStart          — session.dae32a7f
+09:28:24.319  monitor  intervalWillEndWarning    — session.dae32a7f
+09:28:24.351  monitor  intervalDidEnd            — session.dae32a7f, +32ms
+```
+
+They arrive on different threads of the same extension process, so a handler that takes any cross-process lock is contending with itself. **A monitor cannot assume the padded `intervalEnd` defers `intervalDidEnd`**, and the two handlers must be safe to run concurrently.
 
 ### `intervalWillStartWarning` fires at registration when its moment has already passed
 
