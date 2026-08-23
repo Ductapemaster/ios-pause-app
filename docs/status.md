@@ -1,12 +1,13 @@
 ## Status — resume here (2026-08-22)
 
-**State:** The in-app session count is built: the rules list shows each app's charged sessions against its limit for the day in progress, on `feat/session-usage-display`, green at 303 tests. Nothing about it has run on a phone yet. Three device checks are owed, all reachable from one signed build: this count moving in step with the shield's and renewing at the configured reset, the configurable daily reset itself renewing at the configured time rather than at midnight, and the three interface changes that shipped after Phase 1 (countdown cancel, the scene-interruption split, the shield's "Not now").
+**State:** The in-app session count is built and reviewed: the rules list shows each app's charged sessions against its limit for the day in progress, on `feat/session-usage-display`, green at 307 tests. The list and the shield resolve the same allowance the same way. Nothing about it has run on a phone yet. Three device checks are owed, all reachable from one signed build: this count moving in step with the shield's and renewing at the configured reset, the configurable daily reset itself renewing at the configured time rather than at midnight, and the three interface changes that shipped after Phase 1 (countdown cancel, the scene-interruption split, the shield's "Not now").
 
-**Next step:** Build and sign `feat/session-usage-display` for the phone, then work the device checks listed on `docs/ROADMAP.md` under Deferred.
+**Next step:** Merge `feat/session-usage-display` into `design/phased-project-plan`, then build and sign for the phone to work the device checks.
 
 **Blockers:** No git remote, so nothing can be pushed. Every commit is local only.
 
 **Read first:** `docs/ROADMAP.md` for the device checks. Before any scheduling or callback work, `docs/research/screen-time-platform-evidence.md`.
+
 
 ## Open work
 
