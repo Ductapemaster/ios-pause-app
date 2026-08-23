@@ -10,6 +10,26 @@ Three rigs stand behind everything below:
 - **Simulator** — iPhone 17 Pro, iOS 26.5, unauthorized. Runs of 2026-08-13 and 08-23. The frameworks do not function there: authorization never completes (below) and the picker shows categories with no apps. Some questions are answerable anyway — see the validation ordering below. iOS 26.5 is the newest simulator runtime this toolchain has: Xcode 26.6 ships the iOS 26.5 SDK, and `xcodebuild -downloadPlatform iOS -buildVersion 26.6` answers "iOS 26.6 is not available for download", so the simulator sits one minor version behind the device.
 - **SDK reading** — `.swiftinterface` files shipped with Xcode 26.6, under `.../SDKs/iPhoneOS.sdk/System/Library/Frameworks/<framework>.framework/Modules/<framework>.swiftmodule/arm64e-apple-ios.swiftinterface`. Never executed. What a declaration does is inference; the name is suggestive, not evidence.
 
+## What the simulator can and cannot exercise
+
+Measured 2026-08-23, iPhone 17 Pro / iOS 26.5, from a probe running inside the app's own bundle so it carries the app group entitlement. Each surface was tried independently, so one refusal does not hide the next answer.
+
+| Surface | Result |
+|---|---|
+| App group container — write then read | ok |
+| `ApplicationToken` decoded from JSON, as the unit tests mint one | ok |
+| `ManagedSettingsStore` — category shield written, read back, read back through a second handle, cleared | ok |
+| `ManagedSettingsStore` — application shield set to a synthetic token | **silently dropped**, reads back as an empty set |
+| `DeviceActivitySchedule.nextInterval` | resolves |
+| `DeviceActivityCenter.startMonitoring`, 16-minute interval | throws `unauthorized` |
+| `DeviceActivityCenter.startMonitoring`, 3-minute interval | throws `intervalTooShort` |
+| `DeviceActivityCenter.activities` | empty |
+| `AuthorizationCenter.authorizationStatus` | `notDetermined`, and the request never completes (above) |
+
+Two things are worth separating here. **`ManagedSettingsStore` is not broken in the simulator** — a category shield writes, survives a second handle on the same named store, and clears. What fails is the token: assigning a fabricated `ApplicationToken` leaves the set empty, so the store accepts the write and keeps nothing. A real token comes only from the picker, and the picker needs an authorization that never completes.
+
+That is the wall, and it is one wall rather than several. Everything that does not need a real token or a registered activity runs in the simulator: the rules engine, the runtimes, the JSON stores, the app group file lock and its contention, reconciliation ordering, and the shield's decision logic. Everything downstream of a token — a rendered shield, a shield button press, a `DeviceActivity` callback, and therefore any of the three extensions, which only launch when the system has a shield or an activity to hand them — is device-only. That last step is reasoned from the measurements above rather than attempted directly.
+
 ## Authorization presents its consent alert in the simulator and then never completes
 
 Measured 2026-08-23, iPhone 17 Pro / iOS 26.5, through the app's own authorization gate driven by a UI test.
