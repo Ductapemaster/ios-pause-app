@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xcrun devicectl list devices:*)",
+      "Bash(xcrun devicectl device info:*)",
+      "Bash(xcrun devicectl device sysdiagnose:*)",
+      "Read(~/Library/Logs/CrashReporter/**)"
+    ]
+  }
+}

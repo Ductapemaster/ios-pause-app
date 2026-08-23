@@ -8,6 +8,13 @@ private let logger = Logger(subsystem: "com.koubalabs.pause.shieldconfig", categ
 
 final class ShieldConfigExtension: ShieldConfigurationDataSource {
     override func configuration(shielding application: Application) -> ShieldConfiguration {
+        // Entry and exit both at notice, for the same reason the monitor
+        // extension logs at notice: only notice and above reach the log data
+        // store, so an entry with no matching exit is the only way to see from
+        // an archive that a render began and never finished.
+        logger.notice("Shield render began")
+        defer { logger.notice("Shield render returned") }
+
         let presentation: ShieldPresentation
         do {
             guard let applicationToken = application.token else {
@@ -18,7 +25,7 @@ final class ShieldConfigExtension: ShieldConfigurationDataSource {
                 )
             }
             presentation = try ShieldStateReader().presentation(for: applicationToken, now: Date())
-            logger.info("Shield resolved: \(presentation.subtitle, privacy: .public)")
+            logger.notice("Shield resolved: \(presentation.subtitle, privacy: .public)")
         } catch {
             logger.error("Shield fell back to repair: \(String(describing: error), privacy: .public)")
             presentation = .repair

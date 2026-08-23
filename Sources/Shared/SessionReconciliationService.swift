@@ -1,5 +1,6 @@
 import DeviceActivity
 import Foundation
+import OSLog
 import PauseCore
 
 public final class SessionReconciliationService {
@@ -16,11 +17,23 @@ public final class SessionReconciliationService {
         activityCenter: DeviceActivityCenter = DeviceActivityCenter()
     ) throws {
         let directoryURL = try appGroupContainer.directoryURL()
+        let logger = Logger(subsystem: "com.koubalabs.pause.monitor", category: "reconciliation")
         self.init(
             directoryURL: directoryURL,
             shieldReconciler: shieldReconciler,
             stopMonitoring: { activityName in
+                // Entry and exit are both logged because this call is known not
+                // to return from inside a monitor callback. An entry without its
+                // exit in the archive names it as the call that blocked, and the
+                // elapsed time says how long the host waited before tearing the
+                // extension down.
+                let began = Date()
+                logger.notice("stopMonitoring began for activity \(activityName, privacy: .public)")
                 activityCenter.stopMonitoring([DeviceActivityName(activityName)])
+                let elapsed = String(format: "%.3f", Date().timeIntervalSince(began))
+                logger.notice(
+                    "stopMonitoring returned for activity \(activityName, privacy: .public), +\(elapsed, privacy: .public)s"
+                )
             }
         )
     }
@@ -42,13 +55,33 @@ public final class SessionReconciliationService {
         now: Date,
         trigger: SessionReconciliationTrigger
     ) -> SessionReconciliationResult {
+        var result: SessionReconciliationResult
         do {
-            return try stateLock.withLock {
+            result = try stateLock.withLock {
                 reconcileUnlocked(now: now, trigger: trigger)
             }
         } catch {
             return lockFailure(error, ruleID: trigger.selectedRuleID)
         }
+
+        guard let activityName = result.pendingStopActivityName else { return result }
+        result.pendingStopActivityName = nil
+        // Deliberately outside the lock. `stopMonitoring` called from within a
+        // monitor callback does not return until the host tears the extension
+        // down, and it touches none of the state the lock protects, so holding
+        // the lock across it locks every other participant out for that long.
+        do {
+            try stopMonitoring(activityName)
+        } catch {
+            result.issues.append(
+                SessionReconciliationIssue(
+                    ruleID: trigger.selectedRuleID,
+                    operation: .stopMonitoring,
+                    underlyingError: error
+                )
+            )
+        }
+        return result
     }
 
     private func reconcileUnlocked(
@@ -90,8 +123,7 @@ public final class SessionReconciliationService {
                     runtimeRepository: runtimeRepository,
                     now: now
                 )
-            },
-            stopMonitoring: stopMonitoring
+            }
         )
     }
 

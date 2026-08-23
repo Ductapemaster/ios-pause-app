@@ -1051,8 +1051,7 @@ final class AppModel: ObservableObject {
                         runtimeRepository: runtimeRepository,
                         now: now
                     )
-                },
-                stopMonitoring: { _ in }
+                }
             )
         }
         let result: SessionReconciliationResult
