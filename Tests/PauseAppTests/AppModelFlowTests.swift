@@ -396,6 +396,126 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertTrue(model.lastSaveDeferredPart)
     }
 
+    func testAPickerSaveThatAddsAndDropsStillReconcilesShields() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let probe = FlowProbe(status: .approved)
+        let model = makeModel(directory: directory, probe: probe, hasProtectedState: false)
+        model.pickerSelection.applicationTokens = [try token(seed: "threads")]
+
+        try model.applyPickerSelection(now: now)
+
+        // The addition is in force today, so it needs its shield now even
+        // though the drop in the same save waits for the reset.
+        XCTAssertEqual(probe.reconciliationCount, 1)
+    }
+
+    func testCancellingAMixedSaveDropsTheRemovalAndKeepsTheAddedApp() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        model.pickerSelection.applicationTokens = [try token(seed: "threads")]
+        try model.applyPickerSelection(now: now)
+
+        model.cancelScheduledChange(now: now)
+
+        XCTAssertEqual(
+            Set(model.configuration.targets.map(\.applicationToken)),
+            [try token(seed: "instagram"), try token(seed: "threads")]
+        )
+        XCTAssertEqual(model.ruleIDsPendingRemoval, [])
+        XCTAssertNil(model.pendingChangeStartDay)
+        XCTAssertNil(model.presentedError)
+        // The cancellation is durable, not just in memory.
+        let stored = try ConfigurationStore(directoryURL: directory).loadFile()
+        XCTAssertNil(stored?.pending)
+        XCTAssertEqual(
+            Set(stored?.effective.targets.map(\.applicationToken) ?? []),
+            [try token(seed: "instagram"), try token(seed: "threads")]
+        )
+    }
+
+    func testAnAddedAppTakesTheChosenAllowance() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeEmptyConfiguration(to: directory)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        let added = try token(seed: "threads")
+        model.pickerSelection.applicationTokens = [added]
+
+        try model.applyPickerSelection(
+            newAppAllowances: [added: AppRule.Allowance(sessionsPerDay: 7, sessionLengthMinutes: 45)],
+            now: now
+        )
+
+        XCTAssertEqual(model.configuration.rules.count, 1)
+        XCTAssertEqual(model.configuration.rules.first?.sessionsPerDay, 7)
+        XCTAssertEqual(model.configuration.rules.first?.sessionLengthMinutes, 45)
+    }
+
+    func testAnAddedAppWithoutAChosenAllowanceTakesTheDefault() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeEmptyConfiguration(to: directory)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        model.pickerSelection.applicationTokens = [try token(seed: "threads")]
+
+        try model.applyPickerSelection(now: now)
+
+        XCTAssertEqual(model.configuration.rules.first?.sessionsPerDay, AppRuleLimits.defaultSessionsPerDay)
+        XCTAssertEqual(
+            model.configuration.rules.first?.sessionLengthMinutes,
+            AppRuleLimits.defaultSessionLengthMinutes
+        )
+    }
+
+    func testAnOutOfRangeAllowanceIsRefusedBeforeAnyRuntimeIsWritten() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeEmptyConfiguration(to: directory)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        let added = try token(seed: "threads")
+        model.pickerSelection.applicationTokens = [added]
+
+        XCTAssertThrowsError(
+            try model.applyPickerSelection(
+                newAppAllowances: [added: AppRule.Allowance(sessionsPerDay: 21, sessionLengthMinutes: 5)],
+                now: now
+            )
+        ) { error in
+            XCTAssertEqual(error as? AppModelError, .invalidSessionsPerDay)
+        }
+        XCTAssertThrowsError(
+            try model.applyPickerSelection(
+                newAppAllowances: [added: AppRule.Allowance(sessionsPerDay: 3, sessionLengthMinutes: 121)],
+                now: now
+            )
+        ) { error in
+            XCTAssertEqual(error as? AppModelError, .invalidSessionLength)
+        }
+
+        XCTAssertTrue(model.configuration.rules.isEmpty)
+        XCTAssertEqual(try runtimeFileNames(in: directory), [])
+    }
+
     func testTheAddedAppSurvivesTheDropWhenItLands() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -759,6 +879,12 @@ final class AppModelFlowTests: XCTestCase {
             ApplicationToken.self,
             from: Data("{\"data\":\"\(data)\"}".utf8)
         )
+    }
+
+    private func runtimeFileNames(in directory: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { $0.hasPrefix("runtime-") }
+            .sorted()
     }
 
     private func writeEmptyConfiguration(to directory: URL) throws {

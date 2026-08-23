@@ -432,7 +432,15 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func applyPickerSelection(now: Date = Date()) throws {
+    /// Saves the picker's tap, creating a rule for each newly covered app.
+    ///
+    /// `newAppAllowances` carries the values chosen for the apps being added;
+    /// an added app the caller says nothing about starts from the defaults, so
+    /// a save that only drops apps needs no allowances at all.
+    func applyPickerSelection(
+        newAppAllowances: [ApplicationToken: AppRule.Allowance] = [:],
+        now: Date = Date()
+    ) throws {
         guard configurationStore != nil, let runtimeRepository else {
             throw AppModelError.storageUnavailable
         }
@@ -443,10 +451,6 @@ final class AppModel: ObservableObject {
         let existingTokens = Set(existingTargets.map(\.applicationToken))
         let addedTokens = selectedTokens.subtracting(existingTokens)
         let retainedTokens = selectedTokens.intersection(existingTokens)
-        let removedTokens = existingTokens.subtracting(selectedTokens)
-        let removedRuleIDs = existingTargets.compactMap { target in
-            removedTokens.contains(target.applicationToken) ? target.ruleID : nil
-        }
         let rulesByID = Dictionary(uniqueKeysWithValues: configuration.rules.map { ($0.id, $0) })
         let applicationsByToken = Dictionary(
             uniqueKeysWithValues: pickerSelection.applications.compactMap { application in
@@ -471,10 +475,28 @@ final class AppModel: ObservableObject {
             )
         }
 
+        // Every chosen value is checked before the loop below writes anything,
+        // so a value out of range cannot leave a runtime behind for a rule the
+        // save never creates.
+        let allowances = try addedTokens.reduce(into: [ApplicationToken: AppRule.Allowance]()) { result, token in
+            let allowance = newAppAllowances[token] ?? .default
+            guard AppRuleLimits.sessionsPerDay.contains(allowance.sessionsPerDay) else {
+                throw AppModelError.invalidSessionsPerDay
+            }
+            guard AppRuleLimits.sessionLengthMinutes.contains(allowance.sessionLengthMinutes) else {
+                throw AppModelError.invalidSessionLength
+            }
+            result[token] = allowance
+        }
+
         let today = logicalDay(at: now)
         do {
             for token in addedTokens {
-                let rule = try AppRule(sessionsPerDay: 3, sessionLengthMinutes: 5)
+                let allowance = allowances[token] ?? .default
+                let rule = try AppRule(
+                    sessionsPerDay: allowance.sessionsPerDay,
+                    sessionLengthMinutes: allowance.sessionLengthMinutes
+                )
                 let launchRoute = applicationsByToken[token].flatMap(LaunchRoute.detected)
                 nextRules.append(rule)
                 nextTargets.append(
@@ -522,13 +544,12 @@ final class AppModel: ObservableObject {
         inForceSelection.applicationTokens = Set(configuration.targets.map(\.applicationToken))
         pickerSelection = inForceSelection
 
-        guard removedRuleIDs.isEmpty else {
-            // Dropping an app always loosens the rules, so the edit is
-            // scheduled for the next reset and only the pending document is
-            // written. Every rule in the save is still in force until then, so
-            // their runtimes, shields and monitoring stay as they are.
-            return
-        }
+        // Dropping an app loosens the rules, so that part of the save is
+        // scheduled for the next reset: an app on its way out keeps its
+        // runtime, its shield and its monitoring until then. Shields are still
+        // reconciled here, because the same save can add an app that is covered
+        // today and needs its shield now. Reconciliation reads `configuration`,
+        // the document in force, which still carries the app being dropped.
         reconcileShieldsIfAuthorized(title: "Apps updated, but shields need repair")
     }
 
@@ -539,10 +560,10 @@ final class AppModel: ObservableObject {
         now: Date = Date()
     ) throws {
         try requireConfigurationMutation(.ruleEdit)
-        guard (1...20).contains(sessionsPerDay) else {
+        guard AppRuleLimits.sessionsPerDay.contains(sessionsPerDay) else {
             throw AppModelError.invalidSessionsPerDay
         }
-        guard (1...120).contains(sessionLengthMinutes) else {
+        guard AppRuleLimits.sessionLengthMinutes.contains(sessionLengthMinutes) else {
             throw AppModelError.invalidSessionLength
         }
         guard configurationStore != nil else {
