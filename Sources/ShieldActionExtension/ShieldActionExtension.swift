@@ -29,34 +29,26 @@ final class ShieldActionExtension: ShieldActionDelegate {
         // here would be evidence about the probe rather than about a sandbox.
         logger.notice("Shield action sandbox probe: \(AppGroupSandboxProbe.run().summary, privacy: .public)")
 
+        // A failure to reach the app group container is reported and then
+        // dismissed like any other refusal: the button says "Done for today",
+        // and leaving it dead is worse than closing the app it is covering.
+        let outcome: ShieldPrimaryAction.Outcome
         do {
-            let now = Date()
-            let directoryURL = try AppGroupContainer().directoryURL()
-            let stateLock = AppGroupFileLock(directoryURL: directoryURL)
-            let canOpen = try stateLock.withLock {
-                guard let file = try ConfigurationStore(directoryURL: directoryURL).loadFile() else {
-                    return false
-                }
-                let resolvedRule = try RuleLookup.resolve(
-                    applicationToken: application,
-                    configurationFile: file,
-                    runtimeRepository: RuntimeRepository(directoryURL: directoryURL),
-                    now: now
-                )
-                guard case .allowed = resolvedRule.evaluation.decision else {
-                    return false
-                }
-
-                try ShieldIntentStore().write(
-                    ShieldIntent(applicationToken: application, createdAt: now)
-                )
-                return true
-            }
-            logger.notice("Shield action resolved: canOpen=\(canOpen, privacy: .public)")
-            completionHandler(canOpen ? .openParentalControlsApp : .none)
+            outcome = try ShieldPrimaryAction().resolve(
+                applicationToken: application,
+                now: Date(),
+                errorSink: { logger.error("\($0, privacy: .public)") }
+            )
         } catch {
-            logger.error("Shield action failed: \(String(describing: error), privacy: .public)")
-            completionHandler(.none)
+            logger.error("Shield action could not start: \(String(describing: error), privacy: .public)")
+            outcome = .dismiss
+        }
+        logger.notice("Shield action resolved: \(String(describing: outcome), privacy: .public)")
+        switch outcome {
+        case .openPause:
+            completionHandler(.openParentalControlsApp)
+        case .dismiss:
+            completionHandler(.close)
         }
     }
 
