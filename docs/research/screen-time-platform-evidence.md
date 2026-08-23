@@ -7,8 +7,18 @@ Every entry names how it was established. Anything that was not run says so — 
 Three rigs stand behind everything below:
 
 - **Device** — iPhone 16 Pro, iOS 26.6, Family Controls authorized. Runs of 2026-08-12, 08-13 and 08-14.
-- **Simulator** — iPhone 17 Pro, iOS 26.5, unauthorized, 2026-08-13. The frameworks do not function there: authorization fails and the picker shows categories with no apps. Some questions are answerable anyway — see the validation ordering below.
+- **Simulator** — iPhone 17 Pro, iOS 26.5, unauthorized. Runs of 2026-08-13 and 08-23. The frameworks do not function there: authorization never completes (below) and the picker shows categories with no apps. Some questions are answerable anyway — see the validation ordering below. iOS 26.5 is the newest simulator runtime this toolchain has: Xcode 26.6 ships the iOS 26.5 SDK, and `xcodebuild -downloadPlatform iOS -buildVersion 26.6` answers "iOS 26.6 is not available for download", so the simulator sits one minor version behind the device.
 - **SDK reading** — `.swiftinterface` files shipped with Xcode 26.6, under `.../SDKs/iPhoneOS.sdk/System/Library/Frameworks/<framework>.framework/Modules/<framework>.swiftmodule/arm64e-apple-ios.swiftinterface`. Never executed. What a declaration does is inference; the name is suggestive, not evidence.
+
+## Authorization presents its consent alert in the simulator and then never completes
+
+Measured 2026-08-23, iPhone 17 Pro / iOS 26.5, through the app's own authorization gate driven by a UI test.
+
+`AuthorizationCenter.shared.authorizationStatus` reads `notDetermined`, and `requestAuthorization(for: .individual)` presents the genuine system alert — `"Pause" Would Like to Access Screen Time`, offering Continue and Don't Allow. Tapping Continue leaves the app on its authorization gate, no error is presented, and a relaunch shows the gate again. The same call from a hosted unit test, where nothing exists to tap the alert, ran past a two-minute allowance without returning.
+
+**The call does not fail — it does not come back.** That distinction matters for anything written against it: a caller waiting on `requestAuthorization` in the simulator waits forever rather than taking an error path. What holds the request open is not established; that it is still open is, from the gate's unlabelled button and the absent error.
+
+This supersedes the earlier reading of "authorization fails", which named an error path that was never observed.
 
 ## The shield configuration extension's sandbox
 
