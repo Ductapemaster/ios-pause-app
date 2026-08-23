@@ -16,6 +16,24 @@ Dan is the user and product manager; Claude is the engineering manager and engin
 - Treat `docs/product-requirements.md` as the product source of truth.
 - Keep Apple platform and tooling choices explicit in implementation plans; none have been established in this fresh repository.
 
+## Testing on the device
+
+**When a change is built and ready to try on the phone, install it — don't stop at "here's the command."** The paired iPhone 16 Pro is `<device-id>`, `Local.xcconfig` carries the team ID, and the `Pause` scheme builds the app with all three extensions:
+
+```bash
+xcodegen generate
+xcodebuild -project Pause.xcodeproj -scheme Pause \
+  -destination 'id=<device-id>' \
+  -derivedDataPath /tmp/pause-dd build
+xcrun devicectl device install app \
+  --device <device-id> \
+  /tmp/pause-dd/Build/Products/Debug-iphoneos/Pause.app
+```
+
+Reinstalling over the existing build keeps the app-group container, so rules and runtimes survive. Confirm first only when something would actually be destroyed — a bundle ID change or a signing change that forces a delete.
+
+Device checks are batched deliberately: `docs/ROADMAP.md` under Deferred lists what is owed on the current build, and they ride one trip to the phone. Name the ones the new build unblocks when handing it over.
+
 ## Where things go
 
 Create each doc straight into its home by what it is — the folder *is* its role, and it exists as soon as its first file does (don't pre-create `docs/`; a fresh repo is just this file + README.md):
