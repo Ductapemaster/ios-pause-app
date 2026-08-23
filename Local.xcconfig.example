@@ -1,2 +1,16 @@
 // Copy to Local.xcconfig (gitignored) and set your Apple Developer Team ID.
+//
+// The Team ID is the certificate's OU, not the identifier in its common name.
+// `security find-identity -v -p codesigning` prints something like
+// "Apple Development: Your Name (ABCDE12345)" — that parenthesised value is NOT
+// the team. Read the OU instead:
+//
+//   security find-identity -v -p codesigning        # note the SHA-1 hash
+//   security find-certificate -c "Apple Development: Your Name" -p \
+//     | openssl x509 -noout -subject                # OU=... is the Team ID
+//
+// Setting the common-name value here fails in a way that names the wrong cause:
+// Xcode finds no provisioning profile for a team that has none, then reports
+// "No Accounts: Add a new account in Accounts settings" — which looks like a
+// missing Apple ID rather than a wrong team.
 DEVELOPMENT_TEAM = YOUR_TEAM_ID
