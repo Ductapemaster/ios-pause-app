@@ -1,12 +1,14 @@
 # The session-end lock-out
 
-The defect behind two reported symptoms: a device that stops responding when a session ends, and a shield button that does nothing when pressed shortly afterwards. The mechanism is established and reproduced. No fix is written yet — [the plan](../plans/session-end-lock-contention.md) carries the work.
+The defect behind two reported symptoms: a device that stops responding when a session ends, and a shield button that does nothing when pressed shortly afterwards. The mechanism is established and reproduced.
 
-## The mechanism
+The lock-out itself is closed: the stop now runs outside the state lock, and the reproduction on 2026-08-23 confirmed the shield's primary button acts during the window that used to swallow it. What remains is in [the plan](../plans/session-end-lock-contention.md) — the call still blocks the handler for the extension's remaining life (task 2), and a lock timeout still closes the app as though the allowance were spent (task 3).
 
-When a session expires, `intervalWillEndWarning` takes the app group state lock and reconciles. It restores the shield within about 26 ms, which is the part the user is waiting on and it works. It then calls `DeviceActivityCenter.stopMonitoring` — still inside `stateLock.withLock` — and that call does not return from inside its own callback. It blocks until the DeviceActivity host tears the extension down, roughly 31 seconds later, holding the lock the whole time.
+## The mechanism as found
 
-For those 31 seconds every other participant is locked out. `AppGroupFileLock` gives up after 2 seconds by design, so each one fails rather than hanging forever, and what the user sees depends on which one asked:
+When a session expires, `intervalWillEndWarning` takes the app group state lock and reconciles. It restores the shield within about 26 ms, which is the part the user is waiting on and it works. It then called `DeviceActivityCenter.stopMonitoring` — still inside `stateLock.withLock` — and that call does not return from inside its own callback. It blocked until the DeviceActivity host tore the extension down, roughly 31 seconds later, holding the lock the whole time.
+
+For those 31 seconds every other participant was locked out. `AppGroupFileLock` gives up after 2 seconds by design, so each one fails rather than hanging forever, and what the user sees depends on which one asked:
 
 - The **shield action extension** fails with POSIX 60 `ETIMEDOUT` when the primary button is pressed. Before 2026-08-23 that produced `ShieldActionResponse.none` — a button that did nothing. It now closes the app, which is a different wrong answer and is itself on the fix list.
 - The **`intervalDidEnd` handler**, which arrives 32 ms after the warning on a second thread of the same process, blocks on the lock for the full 31 seconds before doing its own work.

@@ -10,11 +10,11 @@ The lock protects the JSON state in the app group container. `stopMonitoring` to
 
 Move the `stopMonitoring` call in `SessionReconciliationCoordinator.reconcile` (the `intervalWillEndWarning` branch, currently after `applyShields`) outside the locked region, so the lock is released once the shield write has committed. The coordinator does not own the lock — `SessionReconciliationService.reconcile` wraps the whole pass in `stateLock.withLock` — so the split has to happen at the service boundary: the coordinator returns what still needs stopping, and the service stops it after the lock is dropped.
 
-- [ ] Test: a reconciliation whose trigger is `intervalWillEndWarning` releases the state lock before `stopMonitoring` is invoked. Assert on ordering with a lock whose acquisition is observable, not on a timing threshold.
-- [ ] Test: a second participant can take the lock while `stopMonitoring` is still blocked.
-- [ ] Move the call; keep the existing behaviour that it runs only when shields applied and the callback could stop.
+- [x] Test: a reconciliation whose trigger is `intervalWillEndWarning` releases the state lock before `stopMonitoring` is invoked. Assert on ordering with a lock whose acquisition is observable, not on a timing threshold.
+- [x] Test: a second participant can take the lock while `stopMonitoring` is still blocked.
+- [x] Move the call; keep the existing behaviour that it runs only when shields applied and the callback could stop.
 
-**Verification is on the device, not in tests.** Repeat the reproduction and confirm the shield action succeeds during the 31-second window instead of failing at 2 seconds.
+**Verification is on the device, not in tests.** Repeat the reproduction and confirm the shield action succeeds during the 31-second window instead of failing at 2 seconds. Done on 2026-08-23: the primary button acts during the window.
 
 ## Task 2 — stop calling `stopMonitoring` from inside its own callback
 
