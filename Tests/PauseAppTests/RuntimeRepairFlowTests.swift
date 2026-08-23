@@ -199,6 +199,28 @@ final class RuntimeRepairFlowTests: XCTestCase {
         }
     }
 
+    /// `resetRuntime` writes `sessionsStarted: 0` and routes straight back to
+    /// the rules list; without its own refresh, the published count would
+    /// still be whatever the last activation or grant resolved.
+    func testAResetPublishesTheClearedCountInsteadOfLeavingThePreResetCountOnScreen() throws {
+        let harness = try makeHarness(corruptSelectedRuntime: false)
+        let repository = RuntimeRepository(directoryURL: harness.directory)
+        try repository.save(
+            RuleRuntime(logicalDay: CalendarDay(date: now, calendar: .current), sessionsStarted: 3),
+            ruleID: selectedRuleID
+        )
+        harness.model.sceneDidBecomeActive(now: now)
+        XCTAssertEqual(harness.model.sessionsUsedByRule[selectedRuleID], 3)
+
+        harness.model.resetRuntime(ruleID: selectedRuleID, now: now)
+
+        XCTAssertEqual(
+            harness.model.sessionsUsedByRule[selectedRuleID],
+            0,
+            "a reset must publish the cleared count instead of leaving the pre-reset count on screen"
+        )
+    }
+
     func testRuleRemovalSchedulesTheChangeAndKeepsEveryMarkerUntilItLands() throws {
         let harness = try makeHarness(corruptSelectedRuntime: false)
         let markers = FailedGrantBlockStore(directoryURL: harness.directory)

@@ -241,10 +241,9 @@ final class AppModel: ObservableObject {
         }
         activationCoordinator = coordinator
         authorizationStatusAtLastActivation = authorizationStatus
-        // Must run after coordinator.activate: cleanup/reconcile can roll back
-        // provisional sessions and lower the count (unguarded by tests). Must run
-        // before switch outcome: .unchanged returns early. Pinned by
-        // testTheCountRefreshesOnEveryForegroundNotJustTheFirst.
+        // Must run before switch outcome: .unchanged returns early on an
+        // ordinary foreground, which is the common case once the app has been
+        // active. Pinned by testTheCountRefreshesOnEveryForegroundNotJustTheFirst.
         refreshUsage(now: now)
 
         switch outcome {
@@ -352,6 +351,10 @@ final class AppModel: ObservableObject {
             activationCoordinator.returnedToConfiguration()
             entryRoute = .configuration
             presentedError = AppError(title: "Couldn't start session", error: error)
+            // A repair failure can still leave the session charged (reserve
+            // succeeded even though activation or a later repair step threw),
+            // so the list's count must be re-read here too.
+            refreshUsage(now: now)
         }
     }
 
@@ -415,6 +418,7 @@ final class AppModel: ObservableObject {
             }
             return
         }
+        refreshUsage(now: now)
         returnToConfiguration()
     }
 

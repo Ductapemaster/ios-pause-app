@@ -204,6 +204,36 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(probe.startedCountdown?.remainingSeconds(at: activeAt), 10)
     }
 
+    /// `updateRule` persists through `persist(_:now:)`, which refreshes the
+    /// published usage itself rather than waiting for the next activation -
+    /// the rule editor never leaves and re-enters the scene around a save.
+    func testSavingARuleEditPublishesTheCurrentChargeWithoutARefreshTrigger() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        try RuntimeRepository(directoryURL: directory).save(
+            RuleRuntime(
+                logicalDay: LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: .current),
+                sessionsStarted: 2
+            ),
+            ruleID: ruleID
+        )
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        XCTAssertNil(model.sessionsUsedByRule[ruleID])
+
+        try model.updateRule(id: ruleID, sessionsPerDay: 5, sessionLengthMinutes: 5, now: now)
+
+        XCTAssertEqual(
+            model.sessionsUsedByRule[ruleID],
+            2,
+            "a save must publish the current charge, since nothing else refreshes it before the next activation"
+        )
+    }
+
     func testRaisingAnAllowanceLeavesTodaysRuleInPlace() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
