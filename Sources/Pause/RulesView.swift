@@ -1,10 +1,12 @@
 import FamilyControls
+import ManagedSettings
 import PauseCore
 import SwiftUI
 
 struct RulesView: View {
     @ObservedObject var model: AppModel
     @State private var isPickerPresented = false
+    @State private var pendingAddition: PendingAddition?
 
     var body: some View {
         Group {
@@ -15,15 +17,17 @@ struct RulesView: View {
             }
         }
         .navigationTitle("Pause")
-        .familyActivityPicker(
-            title: "Choose apps",
-            footerText: pickerExplanation,
-            isPresented: $isPickerPresented,
-            selection: $model.pickerSelection
-        )
-        .onChange(of: isPickerPresented) { wasPresented, isPresented in
-            guard wasPresented, !isPresented else { return }
-            applyPickerSelection()
+        .sheet(isPresented: $isPickerPresented) {
+            AppPickerSheet(
+                initialSelection: model.pickerSelection,
+                explanation: pickerExplanation,
+                onSave: savePickerSelection
+            )
+        }
+        .sheet(item: $pendingAddition) { addition in
+            NewAppSetupSheet(applicationTokens: addition.applicationTokens) { allowances in
+                commit(addition.selection, newAppAllowances: allowances)
+            }
         }
     }
 
@@ -188,10 +192,45 @@ struct RulesView: View {
         "Pause saves only individual apps. Category and website selections are not saved."
     }
 
-    private func applyPickerSelection() {
+    /// A picker save that adds apps, held while the user gives each of them an
+    /// allowance. The whole selection is carried along so the save that finally
+    /// runs is the one the user pressed Save on.
+    private struct PendingAddition: Identifiable {
+        let id = UUID()
+        let selection: FamilyActivitySelection
+        let applicationTokens: [ApplicationToken]
+    }
+
+    /// Routes a saved picker selection: apps being added need an allowance
+    /// before anything is written, so the save waits for the setup sheet.
+    /// A selection that only drops apps has nothing to choose and goes straight
+    /// through.
+    private func savePickerSelection(_ selection: FamilyActivitySelection) {
+        let existingTokens = Set(model.configuration.targets.map(\.applicationToken))
+        let addedTokens = selection.applicationTokens.subtracting(existingTokens)
+
+        guard !addedTokens.isEmpty else {
+            commit(selection, newAppAllowances: [:])
+            return
+        }
+        pendingAddition = PendingAddition(
+            selection: selection,
+            applicationTokens: Array(addedTokens)
+        )
+    }
+
+    private func commit(
+        _ selection: FamilyActivitySelection,
+        newAppAllowances: [ApplicationToken: AppRule.Allowance]
+    ) {
+        let restoreSelection = model.pickerSelection
+        model.pickerSelection = selection
         do {
-            try model.applyPickerSelection()
+            try model.applyPickerSelection(newAppAllowances: newAppAllowances)
         } catch {
+            // The save never happened, so the picker must not keep showing the
+            // selection that failed.
+            model.pickerSelection = restoreSelection
             model.present(error, title: "Couldn't update apps")
         }
     }
