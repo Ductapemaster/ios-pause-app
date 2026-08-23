@@ -104,6 +104,9 @@ final class AppModel: ObservableObject {
     @Published var presentedError: AppError?
     @Published private(set) var entryRoute: AppEntryRoute = .configuration
     @Published private(set) var isGrantRequested = false
+    /// Sessions charged against the current allowance day, per rule, for the
+    /// list. Empty until a configuration file and runtime repository exist.
+    @Published private(set) var sessionsUsedByRule: [UUID: Int] = [:]
 
     private let authorizationStatusProvider: () -> AuthorizationStatus
     private let authorizationRequester: () async throws -> Void
@@ -238,6 +241,7 @@ final class AppModel: ObservableObject {
         }
         activationCoordinator = coordinator
         authorizationStatusAtLastActivation = authorizationStatus
+        refreshUsage(now: now)
 
         switch outcome {
         case .unchanged:
@@ -326,6 +330,7 @@ final class AppModel: ObservableObject {
             let result = try await coordinator.grant(rule: rule, now: now)
             isGrantRequested = false
             activationCoordinator.returnedToConfiguration()
+            refreshUsage(now: now)
             switch result {
             case .openedAutomatically:
                 entryRoute = .configuration
@@ -920,6 +925,7 @@ final class AppModel: ObservableObject {
         configurationFile = routed
         configuration = routed.inForce(at: now)
         pendingChangeStartDay = Self.scheduledStartDay(in: routed, now: now)
+        refreshUsage(now: now)
         lastSaveDeferredPart = routed.effective != candidate
     }
 
@@ -954,6 +960,19 @@ final class AppModel: ObservableObject {
         configuration = configurationFile.inForce(at: now)
         pendingChangeStartDay = Self.scheduledStartDay(in: configurationFile, now: now)
         pickerSelection.applicationTokens = Set(configuration.targets.map(\.applicationToken))
+    }
+
+    /// Rebuilt rather than tracked. The stored count rolls over lazily, so the
+    /// only correct answer is the one resolved against the allowance day now —
+    /// a cached number would be wrong for exactly as long as nobody opened the
+    /// app, which is when it is most likely to be read.
+    private func refreshUsage(now: Date) {
+        guard let configurationFile, let runtimeRepository else {
+            sessionsUsedByRule = [:]
+            return
+        }
+        sessionsUsedByRule = RuleUsageReader(runtimeReader: runtimeRepository)
+            .sessionsUsed(in: configurationFile, now: now)
     }
 
     private func reconcileShieldsIfAuthorized(

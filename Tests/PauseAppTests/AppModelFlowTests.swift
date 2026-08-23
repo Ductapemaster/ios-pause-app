@@ -521,6 +521,70 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(content.title, "No sessions left today")
     }
 
+    /// The list reads this snapshot, so activation must populate it with the
+    /// count resolved against the allowance day — not the civil date, and not
+    /// whatever the record happened to carry on disk.
+    func testActivationPublishesTheCountResolvedAgainstTheAllowanceDay() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let calendar = Calendar(identifier: .gregorian)
+        let spentAt = calendar.date(from: DateComponents(year: 2026, month: 8, day: 20, hour: 9))!
+        let afterMidnight = calendar.date(from: DateComponents(year: 2026, month: 8, day: 21, hour: 2))!
+        let applicationToken = try token(seed: "instagram")
+        try ConfigurationStore(directoryURL: directory).save(
+            file: ConfigurationFile(
+                effective: try ConfigurationDocument(
+                    settings: GlobalSettings(pauseSeconds: 10, resetMinuteOfDay: 6 * 60),
+                    rules: [AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)],
+                    targets: [
+                        RuleTarget(
+                            ruleID: ruleID,
+                            applicationToken: applicationToken,
+                            launchRoute: nil
+                        )
+                    ]
+                ),
+                pending: nil
+            )
+        )
+        try RuntimeRepository(directoryURL: directory).save(
+            RuleRuntime(
+                logicalDay: LogicalDay.containing(
+                    spentAt,
+                    resetMinuteOfDay: 6 * 60,
+                    calendar: calendar
+                ),
+                sessionsStarted: 3
+            ),
+            ruleID: ruleID
+        )
+        let suiteName = "pause-allowance-day-defaults-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        try ShieldIntentStore(defaults: defaults).write(
+            ShieldIntent(applicationToken: applicationToken, createdAt: afterMidnight)
+        )
+        let model = AppModel(
+            shieldReconciler: ShieldReconciler(
+                currentApplications: { [] },
+                applyApplications: { _ in },
+                failedGrantBlockIDs: { [] }
+            ),
+            shieldIntentStore: ShieldIntentStore(defaults: defaults),
+            storageDirectoryURL: directory,
+            authorizationStatusProvider: { .approved },
+            authorizationRequester: {}
+        )
+
+        model.sceneDidBecomeActive(now: afterMidnight)
+
+        XCTAssertEqual(
+            model.sessionsUsedByRule[ruleID],
+            3,
+            "midnight passing must not renew the count when the reset is later"
+        )
+    }
+
     private func makeModel(
         directory: URL,
         probe: FlowProbe,
