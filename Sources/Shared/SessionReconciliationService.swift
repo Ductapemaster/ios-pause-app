@@ -1,5 +1,6 @@
 import DeviceActivity
 import Foundation
+import OSLog
 import PauseCore
 
 public final class SessionReconciliationService {
@@ -16,11 +17,23 @@ public final class SessionReconciliationService {
         activityCenter: DeviceActivityCenter = DeviceActivityCenter()
     ) throws {
         let directoryURL = try appGroupContainer.directoryURL()
+        let logger = Logger(subsystem: "com.koubalabs.pause.monitor", category: "reconciliation")
         self.init(
             directoryURL: directoryURL,
             shieldReconciler: shieldReconciler,
             stopMonitoring: { activityName in
+                // Entry and exit are both logged because this call is known not
+                // to return from inside a monitor callback. An entry without its
+                // exit in the archive names it as the call that blocked, and the
+                // elapsed time says how long the host waited before tearing the
+                // extension down.
+                let began = Date()
+                logger.notice("stopMonitoring began for activity \(activityName, privacy: .public)")
                 activityCenter.stopMonitoring([DeviceActivityName(activityName)])
+                let elapsed = String(format: "%.3f", Date().timeIntervalSince(began))
+                logger.notice(
+                    "stopMonitoring returned for activity \(activityName, privacy: .public), +\(elapsed, privacy: .public)s"
+                )
             }
         )
     }
