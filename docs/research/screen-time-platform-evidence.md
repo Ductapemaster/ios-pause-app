@@ -81,26 +81,34 @@ Across the whole run no entry at error level appeared from any `com.koubalabs.pa
 
 **Which sandbox profile the monitor extension point is assigned is not recorded.** The `runningboardd` extension-overlay entries that named the shield extensions' profiles are absent from this archive. The permission is measured; the profile that grants it is not, so the finding stands on behavior alone.
 
-### `stopMonitoring` does not return from inside its own callback
+### `stopMonitoring` returns from inside its own callback in about 10 ms
 
-Measured on device, 2026-08-23, on a 3-minute session. Calling `DeviceActivityCenter.stopMonitoring` from within `intervalWillEndWarning` blocks for the rest of the extension's life: the call returns only when the DeviceActivity host tears the extension down, 31 seconds later.
+Measured on device, 2026-08-23, with the call's entry and exit logged. From within `intervalWillEndWarning`, `DeviceActivityCenter.stopMonitoring` returned in 11 ms and the whole handler finished in 41 ms:
+
+```
+10:50:20.383  monitor  intervalWillEndWarning — begins
+10:50:20.413  monitor  stopMonitoring — began
+10:50:20.419  monitor  intervalDidEnd — begins on a second thread, takes the lock
+10:50:20.424  monitor  intervalDidEnd — returns
+10:50:20.424  monitor  stopMonitoring — returned, +0.011s
+10:50:20.424  monitor  intervalWillEndWarning — returns, +0.041s
+```
+
+**What blocks is not the call.** An earlier run the same morning, from the same log archive, held the app group state lock across the call and took 31 seconds:
 
 ```
 09:28:24.319  monitor  intervalWillEndWarning — begins, takes the app group state lock
-09:28:24.345  monitor  shield.applications written — "Successfully set"
 09:28:24.351  monitor  intervalDidEnd — begins on a second thread, blocks on the lock
-09:28:31.904  shield   action extension asks for the lock
 09:28:33.909  shield   action fails, POSIX 60 ETIMEDOUT, at the lock's 2s deadline
-09:28:55.307  monitor  XPC connection invalidated by the host (pid 58340)
 09:28:55.309  monitor  intervalWillEndWarning — returns, +30.990s
 09:28:55.338  monitor  intervalDidEnd — returns, having waited out the lock
 ```
 
-The shield itself was applied in 26 ms, so nothing the user waits on depends on the 31 seconds. What the wait costs is exclusion: the warning handler holds the app group state lock throughout, and every other participant that needs it fails at its own deadline.
+The two runs differ in one thing: whether the lock was still held when `stopMonitoring` was called. Released first, the stop costs 11 ms; held across it, nothing moves until the host tears the extension down.
 
-That `stopMonitoring` is the blocking call is inferred rather than measured — it is the only remaining step on the warning path after the shield write, and the return lands 2 ms after the host's invalidation. Logging its entry and exit would settle it.
+That the stop *waits on* the sibling callback is the reading, not a measurement. What supports it: `intervalDidEnd` runs entirely inside the stop's 11 ms, and the stop returns in the same millisecond that `intervalDidEnd` does. What would settle it is a run where the sibling callback is delayed by something other than the lock.
 
-This supersedes an earlier reading of the same 31-second gap, which could not separate the wait from a sysdiagnose that happened to be collecting at the time. Here collection began at 09:30:18, after the window closed.
+This supersedes the earlier entry claiming the call does not return from inside a callback, which was inferred from the code path and a 2 ms gap rather than measured.
 
 ## DeviceActivity scheduling
 

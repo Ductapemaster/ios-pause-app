@@ -16,15 +16,13 @@ Move the `stopMonitoring` call in `SessionReconciliationCoordinator.reconcile` (
 
 **Verification is on the device, not in tests.** Repeat the reproduction and confirm the shield action succeeds during the 31-second window instead of failing at 2 seconds. Done on 2026-08-23: the primary button acts during the window.
 
-## Task 2 — stop calling `stopMonitoring` from inside its own callback
+## Task 2 — closed: the call is cheap, and the stop stays
 
-Even off the lock, the call still blocks the handler for the extension's remaining life, and an app extension runs on a runtime budget the system enforces.
+This task assumed that off the lock the call still blocks the handler for the extension's remaining life. It does not. Instrumented and measured on device, 2026-08-23: `stopMonitoring` returns in 11 ms from inside `intervalWillEndWarning`, and the whole handler finishes in 41 ms. The 31 seconds was the deadlock task 1 removed, not a cost the call carries — [the platform evidence](../research/screen-time-platform-evidence.md) has both traces.
 
-The open question is what to do instead, and it should be settled before code is written: whether the activity needs an explicit stop at all once its interval has ended, or whether the stop can be deferred to the app's next foreground pass. `docs/research/screen-time-platform-evidence.md` records that `stopMonitoring` is followed by `intervalDidEnd` within milliseconds, which is a reason to be careful — a stop issued from the end-of-interval path may be re-entering the same callback.
-
-- [ ] Confirm by instrumenting `stopMonitoring`'s entry and exit that it is in fact the blocking call. The current attribution is inferred from the code path and the 2 ms gap between the host's invalidation and the handler's return, not measured.
-- [ ] Decide whether the stop is needed at all, and record the reasoning in the platform evidence note.
-- [ ] Implement whatever that decides.
+- [x] Confirm by instrumenting `stopMonitoring`'s entry and exit that it is in fact the blocking call. It is not: 11 ms, off the lock.
+- [x] Decide whether the stop is needed at all. It stays. The reason to remove it was its cost, and the cost is 11 ms against an extension budget measured in seconds. Removing it would trade a measured, bounded call for an unmeasured question — whether an unstopped activity lingers, and what it does at its padded interval end.
+- [x] Implement whatever that decides. Nothing to implement; the entry and exit logging stays, since it is what would catch the cost changing.
 
 ## Task 3 — separate a failure from a refusal in the shield action
 

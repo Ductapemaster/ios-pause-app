@@ -1,19 +1,21 @@
 # The session-end lock-out
 
-The defect behind two reported symptoms: a device that stops responding when a session ends, and a shield button that does nothing when pressed shortly afterwards. The mechanism is established and reproduced.
+The defect behind two reported symptoms: a device that stops responding when a session ends, and a shield button that does nothing when pressed shortly afterwards. The mechanism is established, reproduced, and fixed.
 
-The lock-out itself is closed: the stop now runs outside the state lock, and the reproduction on 2026-08-23 confirmed the shield's primary button acts during the window that used to swallow it. What remains is in [the plan](../plans/session-end-lock-contention.md) — the call still blocks the handler for the extension's remaining life (task 2), and a lock timeout still closes the app as though the allowance were spent (task 3).
+The fix released the app group state lock before the expiry callback calls `DeviceActivityCenter.stopMonitoring`. Measured on 2026-08-23 after the change, the stop returns in 11 ms and the whole handler finishes in 41 ms, against 31 seconds before it. The shield's primary button acts during the window that used to swallow it.
 
-## The mechanism as found
+## The mechanism
 
-When a session expires, `intervalWillEndWarning` takes the app group state lock and reconciles. It restores the shield within about 26 ms, which is the part the user is waiting on and it works. It then called `DeviceActivityCenter.stopMonitoring` — still inside `stateLock.withLock` — and that call does not return from inside its own callback. It blocked until the DeviceActivity host tore the extension down, roughly 31 seconds later, holding the lock the whole time.
+When a session expires, `intervalWillEndWarning` takes the app group state lock and reconciles, restoring the shield within about 26 ms. It then calls `stopMonitoring`. While that call was made with the lock still held, the handler did not return for 31 seconds — the DeviceActivity host tore the extension down before it finished — and the lock stayed held throughout.
 
-For those 31 seconds every other participant was locked out. `AppGroupFileLock` gives up after 2 seconds by design, so each one fails rather than hanging forever, and what the user sees depends on which one asked:
+For those 31 seconds every other participant was locked out. `AppGroupFileLock` gives up after 2 seconds by design, so each one failed rather than hanging forever, and what the user saw depended on which one asked:
 
-- The **shield action extension** fails with POSIX 60 `ETIMEDOUT` when the primary button is pressed. Before 2026-08-23 that produced `ShieldActionResponse.none` — a button that did nothing. It now closes the app, which is a different wrong answer and is itself on the fix list.
-- The **`intervalDidEnd` handler**, which arrives 32 ms after the warning on a second thread of the same process, blocks on the lock for the full 31 seconds before doing its own work.
+- The **shield action extension** failed with POSIX 60 `ETIMEDOUT` when the primary button was pressed, which is what made the button dead.
+- The **`intervalDidEnd` handler**, which arrives 32 ms after the warning on a second thread of the same process, blocked on the lock for the full 31 seconds before doing its own work.
 
-Two platform behaviours set this up, both recorded in [the platform evidence](screen-time-platform-evidence.md): both end callbacks arrive together for a short session, contrary to the scheduler's padding, and `stopMonitoring` does not return from within a callback.
+**It is a deadlock, not a slow framework call.** Off the lock the same call costs 11 ms, and [the platform evidence](screen-time-platform-evidence.md) carries both traces. The reading is that the stop cannot complete while a callback the host dispatched is still outstanding: `intervalDidEnd` was blocked on the lock the warning held, and the warning was inside the stop, so neither could move. That the stop waits on its sibling is inferred from the ordering — `intervalDidEnd` runs entirely inside the stop's 11 ms — rather than measured directly.
+
+Two platform behaviours set this up, both recorded in the platform evidence: both end callbacks arrive together for a short session, contrary to the scheduler's padding, and they arrive on different threads of one process, so a handler taking any cross-process lock contends with itself.
 
 ## The reproduction
 
