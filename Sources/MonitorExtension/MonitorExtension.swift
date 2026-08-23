@@ -31,7 +31,6 @@ final class MonitorExtension: DeviceActivityMonitor {
         // back. An entry that never reaches the archive is indistinguishable
         // from an extension that never launched.
         logger.notice("Monitor callback \(callback, privacy: .public) for activity \(activityName, privacy: .public)")
-        logger.notice("Monitor sandbox probe: \(AppGroupSandboxProbe.run().summary, privacy: .public)")
 
         let runner = SessionMonitorReconciliationRunner(
             makeReconcile: {

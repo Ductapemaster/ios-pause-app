@@ -59,7 +59,7 @@ Two consequences worth carrying:
 
 **File operations in the app group container succeed inside the DeviceActivity monitor extension.** Measured on device, 2026-08-20. This is the opposite of the shield configuration extension's result above, against the same container from a sibling bundle.
 
-The instrument is `AppGroupSandboxProbe` (`Sources/Shared/AppGroupSandboxProbe.swift`). It runs the sequence `AppGroupFileLock` depends on — `open(O_CREAT|O_RDWR|O_CLOEXEC)`, `flock(LOCK_EX)`, `write`, `flock(LOCK_UN)` — against a file of its own, and names the step and the errno of a refusal rather than the fact that one happened. It runs on every monitor callback ahead of any other work, so no missing configuration or unmatched rule can short-circuit it.
+The instrument was `AppGroupSandboxProbe`, removed once this question was settled and recoverable from git history. It ran the sequence `AppGroupFileLock` depends on — `open(O_CREAT|O_RDWR|O_CLOEXEC)`, `flock(LOCK_EX)`, `write`, `flock(LOCK_UN)` — against a file of its own, and named the step and the errno of a refusal rather than the fact that one happened. It ran on every monitor callback ahead of any other work, so no missing configuration or unmatched rule could short-circuit it.
 
 Four monitor readings across one three-minute session, from `sysdiagnose_2026.08.20_22-41-03-0700`:
 
@@ -75,7 +75,7 @@ Four monitor readings across one three-minute session, from `sysdiagnose_2026.08
 22:40:39.315  monitor  app group file I/O permitted
 ```
 
-The shield action extension's reading is the control: that extension already does container file I/O successfully, so a refusal there would have been evidence about the probe rather than about a sandbox. The other half of the control is in `AppGroupSandboxProbeTests`, which establishes that the probe reports `permitted` only where the operations genuinely succeed, and names the step and errno where they do not.
+The shield action extension's reading is the control: that extension already does container file I/O successfully, so a refusal there would have been evidence about the probe rather than about a sandbox. The other half of the control was a unit test establishing that the probe reported `permitted` only where the operations genuinely succeeded, and named the step and errno where they did not.
 
 Across the whole run no entry at error level appeared from any `com.koubalabs.pause` subsystem, and no `SessionReconciliationIssue` was logged for any operation. The monitor reached its shield work rather than failing at the lock.
 

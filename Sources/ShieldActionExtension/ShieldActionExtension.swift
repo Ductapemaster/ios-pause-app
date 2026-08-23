@@ -24,11 +24,6 @@ final class ShieldActionExtension: ShieldActionDelegate {
             return
         }
 
-        // The control reading for the monitor extension's probe: this extension
-        // is known to do app group file I/O successfully, so a refusal logged
-        // here would be evidence about the probe rather than about a sandbox.
-        logger.notice("Shield action sandbox probe: \(AppGroupSandboxProbe.run().summary, privacy: .public)")
-
         // A failure to reach the app group container at all is reported and then
         // dismissed like any other refusal: the button says "Done for today",
         // and a container this extension cannot reach is not a condition that
