@@ -86,9 +86,18 @@ struct RulesView: View {
 
             Section {
                 Stepper(value: pauseSeconds, in: 1...120) {
-                    LabeledContent("Pause duration") {
+                    LabeledContent {
                         Text("\(model.configuration.settings.pauseSeconds) sec")
                             .font(.system(.body, design: .rounded).monospacedDigit())
+                    } label: {
+                        HStack {
+                            Text("Pause duration")
+                            if model.pendingSettingsChange() != nil {
+                                Image(systemName: "calendar.badge.clock")
+                                    .foregroundStyle(.tint)
+                                    .accessibilityLabel("Allowance changing")
+                            }
+                        }
                     }
                 }
                 .disabled(model.pendingSettingsChange() != nil)
