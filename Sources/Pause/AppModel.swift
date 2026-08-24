@@ -753,6 +753,15 @@ final class AppModel: ObservableObject {
     /// question — and answer it wrongly for any caller working at a fixed
     /// instant. It is also `nil` once the change has landed, which is exactly
     /// when there is nothing left to report.
+    ///
+    /// This compares only `sessionsPerDay` and `sessionLengthMinutes`, unlike
+    /// `ConfigurationComparison.isLoosening`, which also treats a re-pointed
+    /// target as a loosening. The gap is deliberate but unreachable today: the
+    /// picker mints a new `ruleID` for every app it adds, so no pending change
+    /// can ever re-point an existing rule's target. If that ever changes,
+    /// widen this lookup alongside `isLoosening` — otherwise a re-pointed
+    /// target would show no marker and leave the editor unlocked, which is
+    /// exactly the silent overwrite the lock exists to close.
     func pendingChange(forRuleID ruleID: UUID) -> PendingRuleChange? {
         guard let pending = configurationFile?.pending,
               let startDay = pendingChangeStartDay else { return nil }
