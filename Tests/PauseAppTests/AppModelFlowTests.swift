@@ -283,7 +283,7 @@ final class AppModelFlowTests: XCTestCase {
         )
 
         try model.updateRule(id: ruleID, sessionsPerDay: 5, sessionLengthMinutes: 5, now: now)
-        model.cancelScheduledChange(now: now)
+        model.cancelScheduledChange(ruleID: ruleID, now: now)
 
         XCTAssertEqual(model.configuration.rules[0].sessionsPerDay, 3)
         XCTAssertNil(model.pendingChangeStartDay)
@@ -348,7 +348,7 @@ final class AppModelFlowTests: XCTestCase {
 
         XCTAssertEqual(model.pickerSelection.applicationTokens, [try token(seed: "instagram")])
         XCTAssertEqual(model.configuration.rules.map(\.id), [ruleID])
-        XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
+        XCTAssertEqual(model.pendingChange(forRuleID: ruleID)?.kind, .removal)
         XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
     }
 
@@ -369,7 +369,7 @@ final class AppModelFlowTests: XCTestCase {
 
         XCTAssertTrue(model.configuration.rules.isEmpty)
         XCTAssertTrue(model.pickerSelection.applicationTokens.isEmpty)
-        XCTAssertEqual(model.ruleIDsPendingRemoval, [])
+        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
         XCTAssertNil(model.pendingChangeStartDay)
     }
 
@@ -391,9 +391,9 @@ final class AppModelFlowTests: XCTestCase {
             Set(model.configuration.targets.map(\.applicationToken)),
             [try token(seed: "instagram"), try token(seed: "threads")]
         )
-        XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
+        XCTAssertEqual(model.pendingChange(forRuleID: ruleID)?.kind, .removal)
         XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
-        XCTAssertTrue(model.lastSaveDeferredPart)
+        XCTAssertNotNil(model.pendingChange(forRuleID: ruleID))
     }
 
     func testAPickerSaveThatAddsAndDropsStillReconcilesShields() throws {
@@ -423,13 +423,13 @@ final class AppModelFlowTests: XCTestCase {
         model.pickerSelection.applicationTokens = [try token(seed: "threads")]
         try model.applyPickerSelection(now: now)
 
-        model.cancelScheduledChange(now: now)
+        model.cancelScheduledChange(ruleID: ruleID, now: now)
 
         XCTAssertEqual(
             Set(model.configuration.targets.map(\.applicationToken)),
             [try token(seed: "instagram"), try token(seed: "threads")]
         )
-        XCTAssertEqual(model.ruleIDsPendingRemoval, [])
+        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
         XCTAssertNil(model.pendingChangeStartDay)
         XCTAssertNil(model.presentedError)
         // The cancellation is durable, not just in memory.
@@ -535,7 +535,7 @@ final class AppModelFlowTests: XCTestCase {
             model.configuration.targets.map(\.applicationToken),
             [try token(seed: "threads")]
         )
-        XCTAssertEqual(model.ruleIDsPendingRemoval, [])
+        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
         XCTAssertNil(model.pendingChangeStartDay)
     }
 
@@ -552,15 +552,14 @@ final class AppModelFlowTests: XCTestCase {
         // that says nothing about Instagram.
         model.pickerSelection.applicationTokens = []
         try model.applyPickerSelection(now: now)
-        XCTAssertTrue(model.lastSaveDeferredPart)
+        XCTAssertNotNil(model.pendingChange(forRuleID: ruleID))
 
         try model.updatePauseSeconds(20, now: now)
 
         XCTAssertEqual(model.configuration.settings.pauseSeconds, 20)
-        XCTAssertFalse(model.lastSaveDeferredPart)
         // The removal is still scheduled; only this save deferred nothing.
         XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
-        XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
+        XCTAssertEqual(model.pendingChange(forRuleID: ruleID)?.kind, .removal)
     }
 
     func testSettingTheResetTimePersistsItAndKeepsThePauseDuration() throws {

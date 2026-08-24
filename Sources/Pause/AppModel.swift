@@ -96,10 +96,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var authorizationStatus: AuthorizationStatus
     @Published private(set) var configuration: ConfigurationDocument
     @Published private(set) var pendingChangeStartDay: CalendarDay?
-    /// Whether the last save deferred part of itself, as opposed to leaving a
-    /// change scheduled that it never touched. The rule editor stays open only
-    /// for the former: the wait it shows should be the one just chosen.
-    @Published private(set) var lastSaveDeferredPart = false
     @Published var pickerSelection: FamilyActivitySelection
     @Published var presentedError: AppError?
     @Published private(set) var entryRoute: AppEntryRoute = .configuration
@@ -641,26 +637,6 @@ final class AppModel: ObservableObject {
         registerDailyReset()
     }
 
-    /// Drops a scheduled change, leaving the rules in force today standing.
-    func cancelScheduledChange(now: Date = Date()) {
-        guard let configurationStore,
-              let file = configurationFile,
-              file.pending != nil else { return }
-        // Cancelling a loosening leaves the stricter rule standing, which is a
-        // tightening, so it applies at once.
-        let kept = file.inForce(at: now)
-        do {
-            let cleared = ConfigurationFile(effective: kept, pending: nil)
-            try configurationStore.save(file: cleared)
-            configurationFile = cleared
-            configuration = kept
-            pendingChangeStartDay = nil
-            lastSaveDeferredPart = false
-        } catch {
-            presentedError = AppError(title: "Couldn't cancel the change", error: error)
-        }
-    }
-
     /// Drops what is scheduled for one app, leaving every other app's scheduled
     /// change exactly as it was.
     ///
@@ -767,23 +743,6 @@ final class AppModel: ObservableObject {
 
     var configurationLoadState: ConfigurationLoadState {
         activationCoordinator.configurationState
-    }
-
-    /// Unused now that the notice names its own start day rather than
-    /// collapsing every change into one sentence. `ScheduledChangeNotice`
-    /// still declares the type this returns; Task 6 removes both together.
-    var scheduledChanges: [ScheduledChange] {
-        []
-    }
-
-    /// Rules the in-force document still covers that a scheduled change drops.
-    ///
-    /// Once the change lands, `configuration` is the pending document, so this
-    /// is empty and the rows stop being marked without a flag to clear.
-    var ruleIDsPendingRemoval: Set<UUID> {
-        guard let pending = configurationFile?.pending else { return [] }
-        let pendingRuleIDs = Set(pending.document.rules.map(\.id))
-        return Set(configuration.rules.map(\.id)).subtracting(pendingRuleIDs)
     }
 
     /// What is scheduled for one app, or nothing.
@@ -1070,7 +1029,6 @@ final class AppModel: ObservableObject {
         configuration = routed.inForce(at: now)
         pendingChangeStartDay = Self.scheduledStartDay(in: routed, now: now)
         refreshUsage(now: now)
-        lastSaveDeferredPart = routed.effective != candidate
     }
 
     /// The start day of a change that has not arrived yet. A pending document is
