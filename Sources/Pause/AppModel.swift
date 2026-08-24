@@ -661,6 +661,76 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Drops what is scheduled for one app, leaving every other app's scheduled
+    /// change exactly as it was.
+    ///
+    /// The unit to revert to is always still there: the in-force document keeps
+    /// the full unit for any app whose change is only pending, and nothing is
+    /// purged until its own reset lands.
+    func cancelScheduledChange(ruleID: UUID, now: Date = Date()) {
+        guard let file = configurationFile, let pending = file.pending else { return }
+        let inForce = file.inForce(at: now)
+
+        var document = pending.document
+        document.rules.removeAll { $0.id == ruleID }
+        document.targets.removeAll { $0.ruleID == ruleID }
+        if let rule = inForce.rules.first(where: { $0.id == ruleID }) {
+            document.rules.append(rule)
+            if let target = inForce.targets.first(where: { $0.ruleID == ruleID }) {
+                document.targets.append(target)
+            }
+        }
+
+        writeScheduled(document, keeping: inForce, startDay: pending.startDay, now: now)
+    }
+
+    /// Drops a scheduled pause duration, leaving every app's scheduled change
+    /// alone. Settings are one unit with no rule id, so they cancel by their own
+    /// door rather than through a key invented to make the cases look alike.
+    func cancelScheduledSettingsChange(now: Date = Date()) {
+        guard let file = configurationFile, let pending = file.pending else { return }
+        let inForce = file.inForce(at: now)
+
+        var document = pending.document
+        document.settings = inForce.settings
+
+        writeScheduled(document, keeping: inForce, startDay: pending.startDay, now: now)
+    }
+
+    /// Saves a rebuilt scheduled document, collapsing it away when it no longer
+    /// differs from what is in force.
+    ///
+    /// The comparison is by unit rather than by document: restoring a removed
+    /// app appends it, so two documents with identical content can differ in the
+    /// order of their arrays.
+    private func writeScheduled(
+        _ document: ConfigurationDocument,
+        keeping inForce: ConfigurationDocument,
+        startDay: CalendarDay,
+        now: Date
+    ) {
+        guard let configurationStore else { return }
+        let isUnchanged = ConfigurationComparison.units(of: document)
+            == ConfigurationComparison.units(of: inForce)
+            && document.settings == inForce.settings
+
+        let next = ConfigurationFile(
+            effective: inForce,
+            pending: isUnchanged
+                ? nil
+                : PendingConfiguration(document: document, startDay: startDay)
+        )
+        do {
+            try configurationStore.save(file: next)
+            configurationFile = next
+            configuration = next.inForce(at: now)
+            pendingChangeStartDay = Self.scheduledStartDay(in: next, now: now)
+            refreshUsage(now: now)
+        } catch {
+            presentedError = AppError(title: "Couldn't cancel the change", error: error)
+        }
+    }
+
     func removeRule(id: UUID, now: Date = Date()) throws {
         try requireConfigurationMutation(.ruleRemoval)
         guard configurationStore != nil else {
