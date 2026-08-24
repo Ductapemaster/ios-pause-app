@@ -100,6 +100,13 @@ struct RulesView: View {
                 } label: {
                     Text("Day reset")
                 }
+                // Settings are judged as one unit: a save that only moves the
+                // reset still rebuilds `candidate.settings` from the in-force
+                // pause duration, and the router reads that whole unit as
+                // touched, discarding a pending shorter pause. Locking this
+                // picker alongside the stepper is what keeps a pending change
+                // from being overwritten by an edit to its neighbor.
+                .disabled(model.pendingSettingsChange() != nil)
             } footer: {
                 if let change = model.pendingSettingsChange(), let file = model.configurationFile {
                     VStack(alignment: .leading, spacing: 8) {
