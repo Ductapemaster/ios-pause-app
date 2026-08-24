@@ -333,56 +333,21 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(probe.reconciliationCount, 0)
     }
 
-    func testDroppingAnAppFromThePickerKeepsItSelectedUntilTheRemovalLands() throws {
+    func testAPickerSaveThatAddsAnAppLeavesEveryExistingRuleTargetAndRuntimeUntouched() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try seedOneRule(in: directory, sessionsPerDay: 3)
+        let runtimeURL = directory.appendingPathComponent(
+            "runtime-\(ruleID.uuidString.lowercased()).json"
+        )
+        let runtimeBefore = try Data(contentsOf: runtimeURL)
         let model = makeModel(
             directory: directory,
             probe: FlowProbe(status: .approved),
             hasProtectedState: false
         )
-        model.pickerSelection.applicationTokens = []
-
-        try model.applyPickerSelection(now: now)
-
-        XCTAssertEqual(model.pickerSelection.applicationTokens, [try token(seed: "instagram")])
-        XCTAssertEqual(model.configuration.rules.map(\.id), [ruleID])
-        XCTAssertEqual(model.pendingChange(forRuleID: ruleID)?.kind, .removal)
-        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
-    }
-
-    func testTheRemovalTakesTheAppAndItsSelectionWhenItLands() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        try seedOneRule(in: directory, sessionsPerDay: 3)
-        let model = makeModel(
-            directory: directory,
-            probe: FlowProbe(status: .approved),
-            hasProtectedState: false
-        )
-        model.pickerSelection.applicationTokens = []
-        try model.applyPickerSelection(now: now)
-
-        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: now)!
-        model.sceneDidBecomeActive(now: tomorrow)
-
-        XCTAssertTrue(model.configuration.rules.isEmpty)
-        XCTAssertTrue(model.pickerSelection.applicationTokens.isEmpty)
-        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
-        XCTAssertNil(model.pendingChangeStartDay)
-    }
-
-    func testAPickerSaveThatAddsAndDropsCoversTheAddedAppToday() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        try seedOneRule(in: directory, sessionsPerDay: 3)
-        let model = makeModel(
-            directory: directory,
-            probe: FlowProbe(status: .approved),
-            hasProtectedState: false
-        )
-        // One trip through the picker: Instagram dropped, Threads added.
+        // Instagram's removal is already scheduled when Threads is added.
+        try model.removeRule(id: ruleID, now: now)
         model.pickerSelection.applicationTokens = [try token(seed: "threads")]
 
         try model.applyPickerSelection(now: now)
@@ -391,11 +356,34 @@ final class AppModelFlowTests: XCTestCase {
             Set(model.configuration.targets.map(\.applicationToken)),
             [try token(seed: "instagram"), try token(seed: "threads")]
         )
+        XCTAssertTrue(model.configuration.rules.map(\.id).contains(ruleID))
         XCTAssertEqual(model.pendingChange(forRuleID: ruleID)?.kind, .removal)
         XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
+        XCTAssertEqual(try Data(contentsOf: runtimeURL), runtimeBefore)
     }
 
-    func testAPickerSaveThatAddsAndDropsStillReconcilesShields() throws {
+    func testAPickerSaveCannotDropAnAppOmittedFromTheSelection() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        // The picker is add-only: an empty selection names no additions, and
+        // says nothing about Instagram either way.
+        model.pickerSelection.applicationTokens = []
+
+        try model.applyPickerSelection(now: now)
+
+        XCTAssertEqual(model.configuration.targets.map(\.applicationToken), [try token(seed: "instagram")])
+        XCTAssertEqual(model.configuration.rules.map(\.id), [ruleID])
+        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
+        XCTAssertNil(model.pendingChangeStartDay)
+    }
+
+    func testAPickerSaveThatOnlyAddsStillReconcilesShields() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try seedOneRule(in: directory, sessionsPerDay: 3)
@@ -405,12 +393,10 @@ final class AppModelFlowTests: XCTestCase {
 
         try model.applyPickerSelection(now: now)
 
-        // The addition is in force today, so it needs its shield now even
-        // though the drop in the same save waits for the reset.
         XCTAssertEqual(probe.reconciliationCount, 1)
     }
 
-    func testCancellingAMixedSaveDropsTheRemovalAndKeepsTheAddedApp() throws {
+    func testCancellingAScheduledRemovalKeepsAnAppAddedInTheMeantime() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try seedOneRule(in: directory, sessionsPerDay: 3)
@@ -419,6 +405,7 @@ final class AppModelFlowTests: XCTestCase {
             probe: FlowProbe(status: .approved),
             hasProtectedState: false
         )
+        try model.removeRule(id: ruleID, now: now)
         model.pickerSelection.applicationTokens = [try token(seed: "threads")]
         try model.applyPickerSelection(now: now)
 
@@ -438,6 +425,42 @@ final class AppModelFlowTests: XCTestCase {
             Set(stored?.effective.targets.map(\.applicationToken) ?? []),
             [try token(seed: "instagram"), try token(seed: "threads")]
         )
+    }
+
+    func testClassifyingAPickerSelectionNamesAlreadyCoveredTokensSeparately() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        var selection = FamilyActivitySelection()
+        selection.applicationTokens = [try token(seed: "instagram"), try token(seed: "threads")]
+
+        let outcome = model.classifyPickerSelection(selection)
+
+        XCTAssertEqual(outcome.added, [try token(seed: "threads")])
+        XCTAssertEqual(outcome.alreadyCovered, [try token(seed: "instagram")])
+    }
+
+    func testClassifyingAPickerSelectionOfOnlyAlreadyCoveredTokensAddsNothing() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        var selection = FamilyActivitySelection()
+        selection.applicationTokens = [try token(seed: "instagram")]
+
+        let outcome = model.classifyPickerSelection(selection)
+
+        XCTAssertTrue(outcome.added.isEmpty)
+        XCTAssertEqual(outcome.alreadyCovered, [try token(seed: "instagram")])
     }
 
     func testAnAddedAppTakesTheChosenAllowance() throws {
@@ -515,7 +538,7 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(try runtimeFileNames(in: directory), [])
     }
 
-    func testTheAddedAppSurvivesTheDropWhenItLands() throws {
+    func testTheAddedAppSurvivesAnotherAppsRemovalWhenItLands() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try seedOneRule(in: directory, sessionsPerDay: 3)
@@ -524,6 +547,8 @@ final class AppModelFlowTests: XCTestCase {
             probe: FlowProbe(status: .approved),
             hasProtectedState: false
         )
+        // Instagram's removal is scheduled, then Threads is added.
+        try model.removeRule(id: ruleID, now: now)
         model.pickerSelection.applicationTokens = [try token(seed: "threads")]
         try model.applyPickerSelection(now: now)
 
@@ -549,8 +574,7 @@ final class AppModelFlowTests: XCTestCase {
         )
         // Schedule Instagram's removal, then lengthen the pause — a tightening
         // that says nothing about Instagram.
-        model.pickerSelection.applicationTokens = []
-        try model.applyPickerSelection(now: now)
+        try model.removeRule(id: ruleID, now: now)
         XCTAssertNotNil(model.pendingChange(forRuleID: ruleID))
 
         try model.updatePauseSeconds(20, now: now)
