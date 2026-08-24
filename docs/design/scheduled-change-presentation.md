@@ -77,6 +77,8 @@ Disabling closes a hazard rather than guarding against it. The editor saves a do
 
 The Pause duration row is a stepper, not a link, so it has no detail view to hold the words and the button. Its settings section's footer carries both: the sentence naming the shorter pause and when it starts, and a *Cancel change* button beside it.
 
+**The stepper is disabled while that change is pending**, and cancelling frees it. It commits on each nudge rather than behind a Save, so there is no save to block — locking the control is what the rule amounts to here. One rule covers every row that can carry a marker, apps and settings alike.
+
 This keeps the rule — the change lives where the thing it changes lives — without inventing a screen for one control. The footer is already where that section explains itself.
 
 ## Cancelling one app's change
@@ -125,6 +127,7 @@ Alongside those:
 
 - A rule with a pending change reports one; a rule without reports none. The Pause duration row reports one only for a shorter pause, and the Day reset row never does.
 - Cancelling a pending pause duration leaves every app's pending change intact, and cancelling an app's change leaves a pending pause duration intact.
+- A pending pause duration disables the Pause duration stepper, and cancelling it frees the stepper at the value in force.
 
 The editor's lock needs pinning both ways:
 
