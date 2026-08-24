@@ -717,6 +717,52 @@ final class AppModel: ObservableObject {
         return Set(configuration.rules.map(\.id)).subtracting(pendingRuleIDs)
     }
 
+    /// What is scheduled for one app, or nothing.
+    ///
+    /// The start day is the one already stamped on the model, not one resolved
+    /// from the clock here: it was placed against the reset of the file that
+    /// holds it, and re-deriving it against `Date()` would answer a different
+    /// question — and answer it wrongly for any caller working at a fixed
+    /// instant. It is also `nil` once the change has landed, which is exactly
+    /// when there is nothing left to report.
+    func pendingChange(forRuleID ruleID: UUID) -> PendingRuleChange? {
+        guard let pending = configurationFile?.pending,
+              let startDay = pendingChangeStartDay else { return nil }
+
+        let scheduled = pending.document
+        guard let before = configuration.rules.first(where: { $0.id == ruleID }) else { return nil }
+
+        guard let after = scheduled.rules.first(where: { $0.id == ruleID }) else {
+            return PendingRuleChange(kind: .removal, startDay: startDay)
+        }
+
+        let sessionsPerDay = after.sessionsPerDay == before.sessionsPerDay
+            ? nil
+            : after.sessionsPerDay
+        let sessionLengthMinutes = after.sessionLengthMinutes == before.sessionLengthMinutes
+            ? nil
+            : after.sessionLengthMinutes
+        guard sessionsPerDay != nil || sessionLengthMinutes != nil else { return nil }
+
+        return PendingRuleChange(
+            kind: .allowance(
+                sessionsPerDay: sessionsPerDay,
+                sessionLengthMinutes: sessionLengthMinutes
+            ),
+            startDay: startDay
+        )
+    }
+
+    /// A scheduled change to the global settings, or nothing. Only a shorter
+    /// pause is ever scheduled; the day reset applies on save.
+    func pendingSettingsChange() -> PendingSettingsChange? {
+        guard let pending = configurationFile?.pending,
+              let startDay = pendingChangeStartDay else { return nil }
+        let scheduled = pending.document.settings
+        guard scheduled.pauseSeconds != configuration.settings.pauseSeconds else { return nil }
+        return PendingSettingsChange(pauseSeconds: scheduled.pauseSeconds, startDay: startDay)
+    }
+
     var rootRoute: AppRootRoute {
         if requiresConfigurationRepair {
             return .configurationRepair

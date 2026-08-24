@@ -810,6 +810,87 @@ final class AppModelFlowTests: XCTestCase {
         )
     }
 
+    func testARuleWithAScheduledLooseningReportsItsPendingChange() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updateRule(id: ruleID, sessionsPerDay: 5, sessionLengthMinutes: 5, now: now)
+
+        XCTAssertEqual(
+            model.pendingChange(forRuleID: ruleID),
+            PendingRuleChange(
+                kind: .allowance(sessionsPerDay: 5, sessionLengthMinutes: nil),
+                startDay: LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current)
+            )
+        )
+    }
+
+    func testARuleBeingRemovedReportsARemovalRatherThanAnAllowanceChange() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.removeRule(id: ruleID, now: now)
+
+        XCTAssertEqual(model.pendingChange(forRuleID: ruleID)?.kind, .removal)
+    }
+
+    func testARuleWithNothingScheduledReportsNoPendingChange() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updateRule(id: ruleID, sessionsPerDay: 2, sessionLengthMinutes: 5, now: now)
+
+        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
+    }
+
+    func testAShorterPauseIsReportedAsAPendingSettingsChange() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updatePauseSeconds(5, now: now)
+
+        XCTAssertEqual(model.pendingSettingsChange()?.pauseSeconds, 5)
+    }
+
+    func testALongerPauseAppliesAtOnceAndIsNotReportedAsPending() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updatePauseSeconds(30, now: now)
+
+        XCTAssertNil(model.pendingSettingsChange())
+    }
+
     private func makeModel(
         directory: URL,
         probe: FlowProbe,
