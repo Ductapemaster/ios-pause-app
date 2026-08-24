@@ -62,7 +62,7 @@ Nothing in the list is multi-line, and nothing in the list carries a button.
 
 ## What the editor shows
 
-The controls read the **in-force** values, because that is what governs the user now. A pending change is an annotation on that, never a substitute for it.
+The controls read the values in force. Nothing pending can reach them, because a pending change locks them, so there is no second value they could be showing.
 
 Below the controls, a section names the change in words and carries a cancel scoped to this app alone:
 
@@ -112,6 +112,18 @@ The router is untouched. The gap recorded in [the overview](../README.md) as *a 
 - `ScheduledChangeNotice` — the banner view.
 - `ScheduledChangeSentence`, and `ScheduledChangeWording.sentence(for:starting:)` with its "and N other changes" collapsing. Every change now has its own row, so nothing needs summarising into one line.
 - `RulesView.pendingRemovalRow`, and the `removalPhrase` helper that served it.
+- `AppModel.lastSaveDeferredPart`. It is a document-scoped flag — `routed.effective != candidate` — consulted for an app-scoped decision, whether the editor stays open after a deferred save. The editor asks whether *this* rule came out pending instead, which is the lookup it already needs.
+
+## The model's pending surface
+
+Four accessors describe one fact today: `pendingChangeStartDay`, `scheduledChanges`, `ruleIDsPendingRemoval`, and `lastSaveDeferredPart`. The first three exist to feed a banner and a removal row that are both being deleted, and each is document-shaped while every question the interface asks is per row.
+
+They collapse to two lookups:
+
+- `pendingChange(forRuleID:)` — the kind of change scheduled for one app and the day it starts, or nothing.
+- `pendingSettingsChange()` — the same for the pause duration.
+
+Every consumer then asks the question it actually has. The marker picks its symbol from the kind; the editor locks its controls, writes its section and decides whether to dismiss from one call; the settings footer uses the twin. Keeping two things in sync replaces keeping four.
 
 `ScheduledChangeWording.changes` and `ScheduledChangeWording.phrase` both survive: the diff and the day-naming are still needed, now per app rather than per document.
 
