@@ -14,12 +14,12 @@ Moving the work off the main actor would rework the locking design and the unit 
 
 **Per-app scheduled-change presentation is unverified on the phone.** `RulesView` and `RuleEditorView` have no snapshot harness, so the marker's presence and the editor's locked state are pinned on the model's per-rule lookup rather than on a rendered row. Owed on the next trip to the phone:
 
-- Both markers read correctly at a glance in a list of several apps, and the removal marker is tellable from the allowance one.
+- Both markers read correctly at a glance in a list of several apps, and the removal marker — a filled circle with a minus — is tellable from the allowance marker's calendar-and-clock badge by outline shape, not just by colour.
 - An app with a pending change opens to locked controls and a section naming the change, and cancelling frees the controls at the values in force.
 - Cancelling one app's change leaves another's marker standing — the fault that motivated the redesign, and the one thing that cannot be seen in a single-app test.
 - The rule editor shows the in-force allowance, not a discarded proposed one, across a raise, save, and cancel cycle: raising an app's allowance and saving leaves the controls locked and showing the value already in force, while the section below names the new value as scheduled; cancelling unlocks the controls at that same in-force value, not the one just typed.
-
-**The app picker can silently no-op a scheduled removal.** With an app pending removal, opening the picker and re-ticking that app saves a candidate whose unit for it matches what is already in force. The router reads a matching unit as no opinion, so the scheduled removal survives and the re-add does nothing — the picker gives no sign that the app is still on its way out. The rule editor and the settings controls close the same class of gap by locking while a change is pending; extending that lock to the picker is a behavior change to its separately-shipped configuration flow and needs its own decision.
+- `Cancel removal` renders in the platform's full destructive red while the same screen's `Remove app` renders greyed out, disabled while a change is pending, so the screen never shows two active red buttons with opposite meanings — this confirms an inference read from the code and SwiftUI's documented disabled-button styling, not yet seen rendered on a device.
+- A picker save that adds an app leaves every other app untouched: one with a scheduled removal keeps its marker, and an app already covered that is ticked again is named as already in Pause rather than silently ignored or duplicated.
 
 ## Not planned
 

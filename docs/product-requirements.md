@@ -10,7 +10,7 @@ Reaching for a distracting app is usually reflex rather than decision. The app i
 
 ## Choosing which apps are restricted
 
-Any eligible installed app can be picked from the system's own picker. Pause uses Apple's label and icon for the selected app. Restricted apps are blocked by default.
+Any eligible installed app can be added from the system's own picker. Pause uses Apple's label and icon for the selected app. Restricted apps are blocked by default. An app leaves Pause from its own entry, not by being deselected in the picker.
 
 ## Configuring an app
 
