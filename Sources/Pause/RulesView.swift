@@ -55,32 +55,29 @@ struct RulesView: View {
 
     private var configuredView: some View {
         Form {
-            if let startDay = model.pendingChangeStartDay {
-                Section {
-                    ScheduledChangeNotice(model: model, startDay: startDay)
-                }
-            }
-
             Section("Apps") {
                 ForEach(model.configuration.rules) { rule in
                     if let target = model.configuration.targets.first(where: { $0.ruleID == rule.id }) {
-                        if model.ruleIDsPendingRemoval.contains(rule.id) {
-                            pendingRemovalRow(rule: rule, target: target)
-                        } else {
-                            NavigationLink {
-                                RuleEditorView(
-                                    model: model,
-                                    rule: rule,
-                                    applicationToken: target.applicationToken
-                                )
-                            } label: {
-                                HStack {
-                                    AppTokenLabel(applicationToken: target.applicationToken)
-                                    Spacer()
-                                    Text(usageText(for: rule))
-                                        .font(.system(.body, design: .rounded).monospacedDigit())
-                                        .foregroundStyle(.secondary)
+                        NavigationLink {
+                            RuleEditorView(
+                                model: model,
+                                rule: rule,
+                                applicationToken: target.applicationToken
+                            )
+                        } label: {
+                            HStack {
+                                AppTokenLabel(applicationToken: target.applicationToken)
+
+                                if let kind = model.pendingChange(forRuleID: rule.id)?.kind {
+                                    Image(systemName: kind.symbolName)
+                                        .foregroundStyle(.tint)
+                                        .accessibilityLabel(kind.accessibilityLabel)
                                 }
+
+                                Spacer()
+                                Text(usageText(for: rule))
+                                    .font(.system(.body, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -94,6 +91,7 @@ struct RulesView: View {
                             .font(.system(.body, design: .rounded).monospacedDigit())
                     }
                 }
+                .disabled(model.pendingSettingsChange() != nil)
 
                 Picker(selection: resetMinuteOfDay) {
                     ForEach(Array(stride(from: 0, through: 1425, by: 15)), id: \.self) { minute in
@@ -103,7 +101,16 @@ struct RulesView: View {
                     Text("Day reset")
                 }
             } footer: {
-                Text("The pause shown before every allowed session, and the time each day's sessions renew.")
+                if let change = model.pendingSettingsChange(), let file = model.configurationFile {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(ScheduledChangeWording.settingsDescription(of: change, in: file))
+                        Button("Cancel change") {
+                            model.cancelScheduledSettingsChange()
+                        }
+                    }
+                } else {
+                    Text("The pause shown before every allowed session, and the time each day's sessions renew.")
+                }
             }
 
             Section {
@@ -114,37 +121,6 @@ struct RulesView: View {
                 Text(pickerExplanation)
             }
         }
-    }
-
-    /// A rule on its way out: still in force, still shielding, so it keeps its
-    /// row. It is drawn faded and marked with the day it goes, and it is not a
-    /// link — the editor saves a document built from the rules in force, which
-    /// would write over the scheduled removal and quietly cancel it.
-    private func pendingRemovalRow(rule: AppRule, target: RuleTarget) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            AppTokenLabel(applicationToken: target.applicationToken)
-                .opacity(0.5)
-
-            Text(usageText(for: rule))
-                .font(.system(.subheadline, design: .rounded).monospacedDigit())
-                .foregroundStyle(.tertiary)
-
-            Text("Removing \(removalPhrase)")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-            Button("Cancel removal") {
-                model.cancelScheduledChange()
-            }
-            .buttonStyle(.borderless)
-            .font(.footnote)
-        }
-    }
-
-    private var removalPhrase: String {
-        guard let startDay = model.pendingChangeStartDay,
-              let file = model.configurationFile else { return "at the next reset" }
-        return ScheduledChangeWording.phrase(for: startDay, in: file)
     }
 
     /// Empty when the rule has no count — a runtime that is missing or
