@@ -190,7 +190,6 @@ final class AppModel: ObservableObject {
                 configurationFile = savedFile
                 configuration = savedConfiguration
                 pendingChangeStartDay = Self.scheduledStartDay(in: savedFile, now: openedAt)
-                pickerSelection.applicationTokens = Set(savedConfiguration.targets.map(\.applicationToken))
                 activationCoordinator.configurationBecameKnownGood()
             } else {
                 activationCoordinator.configurationWasMissing(
@@ -428,11 +427,38 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Classifies a picker's tap against what Pause already covers, without
+    /// writing anything.
+    ///
+    /// The picker is add-only: its selection is read as a set of additions, not
+    /// as the complete set of covered apps. A token already covered is named
+    /// rather than folded silently into the additions, so the caller can report
+    /// it and, when every pick is already covered, skip the save entirely
+    /// rather than commit a no-op write.
+    func classifyPickerSelection(
+        _ selection: FamilyActivitySelection
+    ) -> (added: [ApplicationToken], alreadyCovered: [ApplicationToken]) {
+        let existingTokens = Set(configuration.targets.map(\.applicationToken))
+        let selectedTokens = selection.applicationTokens
+        return (
+            Array(selectedTokens.subtracting(existingTokens)),
+            Array(selectedTokens.intersection(existingTokens))
+        )
+    }
+
     /// Saves the picker's tap, creating a rule for each newly covered app.
     ///
-    /// `newAppAllowances` carries the values chosen for the apps being added;
-    /// an added app the caller says nothing about starts from the defaults, so
-    /// a save that only drops apps needs no allowances at all.
+    /// The picker is add-only: every existing rule and target is kept
+    /// unconditionally, and a rule is created for each selected token not
+    /// already covered. There is no path here by which a save can drop an app
+    /// — that only happens through `removeRule`. `newAppAllowances` carries the
+    /// values chosen for the apps being added; an added app the caller says
+    /// nothing about starts from the defaults.
+    ///
+    /// A retained target's launch route is not re-detected here: the picker's
+    /// selection no longer carries existing apps, so there is nothing to
+    /// re-detect it from. A route is detected once, when its app is added, and
+    /// kept thereafter.
     func applyPickerSelection(
         newAppAllowances: [ApplicationToken: AppRule.Allowance] = [:],
         now: Date = Date()
@@ -446,30 +472,14 @@ final class AppModel: ObservableObject {
         let existingTargets = configuration.targets
         let existingTokens = Set(existingTargets.map(\.applicationToken))
         let addedTokens = selectedTokens.subtracting(existingTokens)
-        let retainedTokens = selectedTokens.intersection(existingTokens)
-        let rulesByID = Dictionary(uniqueKeysWithValues: configuration.rules.map { ($0.id, $0) })
         let applicationsByToken = Dictionary(
             uniqueKeysWithValues: pickerSelection.applications.compactMap { application in
                 application.token.map { ($0, application) }
             }
         )
 
-        var nextRules: [AppRule] = []
-        var nextTargets: [RuleTarget] = []
-
-        for target in existingTargets {
-            guard retainedTokens.contains(target.applicationToken) else { continue }
-            guard let rule = rulesByID[target.ruleID] else { continue }
-            let detectedRoute = applicationsByToken[target.applicationToken].flatMap(LaunchRoute.detected)
-            nextRules.append(rule)
-            nextTargets.append(
-                RuleTarget(
-                    ruleID: target.ruleID,
-                    applicationToken: target.applicationToken,
-                    launchRoute: detectedRoute ?? target.launchRoute
-                )
-            )
-        }
+        var nextRules = configuration.rules
+        var nextTargets = existingTargets
 
         // Every chosen value is checked before the loop below writes anything,
         // so a value out of range cannot leave a runtime behind for a rule the
@@ -533,19 +543,10 @@ final class AppModel: ObservableObject {
             throw changeError
         }
 
-        // The picker mirrors the document in force today rather than the raw
-        // tap: an app whose removal is scheduled is still shielded, so it is
-        // still selected.
-        var inForceSelection = FamilyActivitySelection()
-        inForceSelection.applicationTokens = Set(configuration.targets.map(\.applicationToken))
-        pickerSelection = inForceSelection
+        // The picker is add-only, so it always reopens with nothing selected —
+        // there is no covered set for it to mirror.
+        pickerSelection = FamilyActivitySelection()
 
-        // Dropping an app loosens the rules, so that part of the save is
-        // scheduled for the next reset: an app on its way out keeps its
-        // runtime, its shield and its monitoring until then. Shields are still
-        // reconciled here, because the same save can add an app that is covered
-        // today and needs its shield now. Reconciliation reads `configuration`,
-        // the document in force, which still carries the app being dropped.
         reconcileShieldsIfAuthorized(title: "Apps updated, but shields need repair")
     }
 
@@ -1070,7 +1071,6 @@ final class AppModel: ObservableObject {
         guard let configurationFile else { return }
         configuration = configurationFile.inForce(at: now)
         pendingChangeStartDay = Self.scheduledStartDay(in: configurationFile, now: now)
-        pickerSelection.applicationTokens = Set(configuration.targets.map(\.applicationToken))
     }
 
     /// Rebuilt rather than tracked. The stored count rolls over lazily, so the
