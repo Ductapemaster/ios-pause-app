@@ -66,10 +66,12 @@ The controls read the **in-force** values, because that is what governs the user
 
 Below the controls, a section names the change in words and carries a cancel scoped to this app alone:
 
-- **Allowance loosening** — the controls stay live. The section names what the allowance becomes and when, and the button reads *Cancel change*.
-- **Removal** — the controls are disabled. The section says the app leaves Pause at the reset and is shielded as normal until then, and the button reads *Cancel removal*.
+The controls are disabled whenever a change is pending, whichever kind:
 
-Disabling the controls under a pending removal also closes a hazard rather than guarding against it. The editor saves a document built from the rules in force, which would write over a scheduled removal and cancel it silently; that is why the row is not a link today. An editor that cannot save cannot do it.
+- **Allowance loosening** — the section names what the allowance becomes and when, and the button reads *Cancel change*.
+- **Removal** — the section says the app leaves Pause at the reset and is shielded as normal until then, and the button reads *Cancel removal*.
+
+Disabling closes a hazard rather than guarding against it. The editor saves a document built from the rules in force, which would write over whatever is scheduled and cancel it silently; that is why a row with a pending removal is not a link today. An editor that cannot save cannot do it.
 
 ## Where a pending pause duration is cancelled
 
@@ -93,20 +95,15 @@ Shield reconciliation, the monitor extension, and `registerDailyReset` consume t
 
 ## Editing an app that already has a change pending
 
-A new edit supersedes the old one. With 2 sessions in force and 4 pending, the stepper reads 2; nudging it to 3 makes 3 the pending value.
+**A pending change must be cancelled before the app can be edited again.** While one is scheduled, the editor's controls are disabled and the pending section's button is the only thing to press.
 
-Nudging up and back down to 2 and saving **cancels the pending 4**. Setting a value back to what is in force is the most obvious way to undo a scheduled change, so it undoes it.
+Cancelling reverts the app to the values in force and frees the controls, so superseding a scheduled change is cancel-then-edit rather than edit-over. With 2 in force and 4 pending, changing course means cancelling back to 2 and choosing again.
 
-That requires a save to declare which rules it has an opinion about, rather than the router inferring it from what changed. Today a unit whose candidate equals the in-force unit is read as silent, and keeps whatever was already scheduled for it (`ConfigurationSaveRouter.swift:33-45`). That inference cannot be dropped: `applyPickerSelection` rebuilds the whole document on every save, so most units on any save are equal to what is in force and must keep their pending state — otherwise one app's edit would wipe every other app's scheduled change.
+This makes one rule out of what were two. The spec already disabled the controls under a pending removal, because an editor save builds from the rules in force and would write over a scheduled removal, cancelling it silently. The same hazard exists for a pending allowance change, and the same guard closes it.
 
-So intent becomes explicit. A save carries the set of rule IDs it speaks for:
+It also removes the trap where setting a value back to what is in force appears to undo a scheduled change and does not: the router reads a candidate equal to the in-force unit as having no opinion, so the pending value survives (`ConfigurationSaveRouter.swift:33-45`). An editor that cannot save while a change is pending cannot reach that case.
 
-- A **declared** unit equal to the in-force unit means *cancel what is scheduled for this one*. Its pending state is dropped.
-- An **undeclared** unit behaves exactly as it does now, keeping whatever is scheduled for it.
-
-The rule editor declares the one rule it edits. A picker save declares the rules it added or removed, and stays silent about every retained app — which is what preserves their pending changes.
-
-This retires the gap recorded in [the overview](../README.md) as *a save states its opinion by rebuilding*: an editor save that changes nothing no longer reads as untouched, because it declares the rule either way. The same mechanism closes both.
+The router is untouched. The gap recorded in [the overview](../README.md) as *a save states its opinion by rebuilding* stays in the router as a mechanism, but nothing in the interface can reach it any more — it is closed by construction rather than fixed, and the overview should say so rather than claim the inference is gone.
 
 ## What is deleted
 
@@ -127,14 +124,12 @@ The case nothing covers today is two independent pending changes, one cancelled:
 Alongside those:
 
 - A rule with a pending change reports one; a rule without reports none. The Pause duration row reports one only for a shorter pause, and the Day reset row never does.
-- A pending removal leaves the editor unable to save.
 - Cancelling a pending pause duration leaves every app's pending change intact, and cancelling an app's change leaves a pending pause duration intact.
 
-Declared intent needs its own cases, because it changes what a save means:
+The editor's lock needs pinning both ways:
 
-- An editor save setting a value back to the in-force value cancels that rule's pending change, and collapses `pending` to `nil` if it was the only one.
-- The same save leaves every other app's pending change untouched.
-- A picker save that adds or removes an app leaves a retained app's pending change untouched — the case that would break if declaration were inferred rather than carried.
+- A rule with any pending change — allowance or removal — leaves the editor unable to save.
+- Cancelling frees the controls, and the values they return to are the ones in force.
 
 The router already supports pending changes coexisting (`ConfigurationSaveRouterTests.swift:105`, `testAScheduledRemovalSurvivesASaveAboutAnotherApp`); what is new is cancelling one of them.
 
