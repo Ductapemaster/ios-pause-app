@@ -921,9 +921,30 @@ final class AppModelFlowTests: XCTestCase {
 
         XCTAssertNil(model.pendingChange(forRuleID: ruleID))
         XCTAssertEqual(
-            model.pendingChange(forRuleID: secondRuleID)?.kind,
-            .allowance(sessionsPerDay: 7, sessionLengthMinutes: nil)
+            model.pendingChange(forRuleID: secondRuleID),
+            PendingRuleChange(
+                kind: .allowance(sessionsPerDay: 7, sessionLengthMinutes: nil),
+                startDay: LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current)
+            )
         )
+    }
+
+    func testCancellingAnAppsChangeLeavesAPendingPauseStanding() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        try model.updateRule(id: ruleID, sessionsPerDay: 6, sessionLengthMinutes: 5, now: now)
+        try model.updatePauseSeconds(5, now: now)
+
+        model.cancelScheduledChange(ruleID: ruleID, now: now)
+
+        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
+        XCTAssertEqual(model.pendingSettingsChange()?.pauseSeconds, 5)
     }
 
     func testCancellingTheOnlyPendingChangeLeavesNothingScheduled() throws {
