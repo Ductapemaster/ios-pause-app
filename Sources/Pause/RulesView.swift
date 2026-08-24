@@ -25,7 +25,10 @@ struct RulesView: View {
             )
         }
         .sheet(item: $pendingAddition) { addition in
-            NewAppSetupSheet(applicationTokens: addition.applicationTokens) { allowances in
+            NewAppSetupSheet(
+                addedApplicationTokens: addition.addedApplicationTokens,
+                alreadyCoveredApplicationTokens: addition.alreadyCoveredApplicationTokens
+            ) { allowances in
                 commit(addition.selection, newAppAllowances: allowances)
             }
         }
@@ -184,30 +187,31 @@ struct RulesView: View {
         "Pause saves only individual apps. Category and website selections are not saved."
     }
 
-    /// A picker save that adds apps, held while the user gives each of them an
-    /// allowance. The whole selection is carried along so the save that finally
-    /// runs is the one the user pressed Save on.
+    /// A picker save, held while the user is shown what it means: apps already
+    /// covered are named, and apps genuinely being added each get an allowance.
+    /// The whole selection is carried along so the save that finally runs is
+    /// the one the user pressed Save on.
     private struct PendingAddition: Identifiable {
         let id = UUID()
         let selection: FamilyActivitySelection
-        let applicationTokens: [ApplicationToken]
+        let addedApplicationTokens: [ApplicationToken]
+        let alreadyCoveredApplicationTokens: [ApplicationToken]
     }
 
-    /// Routes a saved picker selection: apps being added need an allowance
-    /// before anything is written, so the save waits for the setup sheet.
-    /// A selection that only drops apps has nothing to choose and goes straight
-    /// through.
+    /// Routes a saved picker selection. The picker is add-only, so an empty
+    /// selection means nothing was picked and there is nothing to do. Anything
+    /// else opens the setup sheet: apps already covered are named there,
+    /// apps genuinely being added each get an allowance, and the save itself
+    /// only happens when the sheet reports something to add — a selection that
+    /// names only already-covered apps closes the sheet without writing
+    /// anything.
     private func savePickerSelection(_ selection: FamilyActivitySelection) {
-        let existingTokens = Set(model.configuration.targets.map(\.applicationToken))
-        let addedTokens = selection.applicationTokens.subtracting(existingTokens)
-
-        guard !addedTokens.isEmpty else {
-            commit(selection, newAppAllowances: [:])
-            return
-        }
+        guard !selection.applicationTokens.isEmpty else { return }
+        let (added, alreadyCovered) = model.classifyPickerSelection(selection)
         pendingAddition = PendingAddition(
             selection: selection,
-            applicationTokens: Array(addedTokens)
+            addedApplicationTokens: added,
+            alreadyCoveredApplicationTokens: alreadyCovered
         )
     }
 
