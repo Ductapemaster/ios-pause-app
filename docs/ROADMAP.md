@@ -4,24 +4,13 @@ Prioritized work not currently in flight. Phase 1 is accepted and closed; Phase 
 
 ## Next
 
-**The new-app configuration flow is unverified on the phone, and the sixteen-minute check waits behind it.** Adding an app now steps through a screen per app that takes its sessions per day and session length before anything is written, so a sixteen-minute session can exist on the day its app is added. Nothing in it can be reached by a unit test: the picker is an out-of-process view and the flow is SwiftUI sheet presentation.
+**Two device checks gate merging `feat/new-app-configuration-flow` and `feat/session-usage-display` into `design/phased-project-plan`.** Both are listed under Deferred: the sixteen-minute expiry restoration, which the new-app flow unblocked, and the scene-interruption split. Neither is a timestamp question, so both need a person on the phone.
 
-The check is one signed build:
-- Picking one app opens the setup screen, and the allowance chosen there is what the rules list shows — not three sessions of five minutes.
-- Picking two apps steps through both, and both arrive with their own allowances.
-- Cancelling the setup screen part-way adds nothing at all.
-- Cancelling or swiping away the picker itself changes nothing, including when apps were unchecked in it.
-- Unchecking one app while checking another leaves the removal scheduled for the next reset and the addition covered and shielded today.
-
-**`FamilyActivityPicker` in a sheet Pause owns is the one structural unknown.** The picker is presented as a view inside our own `NavigationStack` so that Save can be told apart from a dismissal, which the `.familyActivityPicker` modifier cannot express. Whether an out-of-process view composes correctly with a toolbar we supply is not knowable from source, and a failure here is visible immediately — missing buttons, a doubled navigation bar, or a picker that does not draw.
+**Then Phase 2: blocking periods** — the recurring stretches when an app cannot be entered at all. The activity-registration budget was thought to be the constraint; reading the requirements against the shield decision path suggests it is not, since a window only refuses entry and entry is decided when the button is pressed. That is reasoning, not a measurement, and building one window would settle it.
 
 ## Deferred
 
-**Three interface changes are unverified on the phone.** The countdown cancel, the scene-interruption split so a banner no longer abandons a pause, and the shield's "Not now" that closes the app. Unit tests reach the model and the shield copy; they cannot reach a SwiftUI scene phase or a shield button. The check is one signed build: confirm a banner does not kill a countdown, the cancel returns without charging a session, and "Not now" closes the app.
-
-**The configurable daily reset is unverified on the phone.** Move the reset to a quarter-hour a few minutes ahead, spend a session so the count is non-zero, wait for the reset to pass, and confirm the count renews at the new time rather than at midnight and that the shield reflects the renewed allowance.
-
-**The in-app session count is unverified on the phone.** Spend a session on a restricted app and confirm the rules list's number moves in step with the shield's, and that both renew at the configured reset rather than at midnight. This rides the same signed build as the configurable daily reset check — one trip to the phone, not two.
+**One interface change is unverified on the phone.** The scene-interruption split, so a banner no longer abandons a pause. Unit tests reach the model; they cannot reach a SwiftUI scene phase. The check is to start a countdown, raise a notification banner over it, and confirm the pause survives.
 
 **The sixteen-minute expiry restoration is unverified.** It needs a sixteen-minute session, which an app can now be given as it is added, so it rides the same trip as the new-app flow check. A session over fifteen minutes carries no end warning, so it can only expire on `intervalDidEnd`. That is the untested path. The failure it would catch is silent and open-ended: a session that never ends leaves its target unblocked until something else reconciles. Phase 1 was accepted carrying it, on the reasoning in [the acceptance record](archive/phase-1-core-action-loop/acceptance.md) (why: it costs one sixteen-minute wait to close, and any real use of a session that long settles it).
 

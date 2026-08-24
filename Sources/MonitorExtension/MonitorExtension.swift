@@ -27,9 +27,13 @@ final class MonitorExtension: DeviceActivityMonitor {
         let logger = Logger(subsystem: "com.koubalabs.pause.monitor", category: "reconciliation")
 
         // Notice, not info: only notice and above are written to the log data
-        // store, and a sysdiagnose archive is the only way these lines are read
-        // back. An entry that never reaches the archive is indistinguishable
-        // from an extension that never launched.
+        // store, and these lines are read back off the device later rather than
+        // watched live. An entry that never reaches the store is
+        // indistinguishable from an extension that never launched.
+        //
+        // `log collect --device-udid` pulls them over the cable, which is what
+        // makes a callback's timing checkable after the fact — see the device
+        // logs section of CLAUDE.md.
         logger.notice("Monitor callback \(callback, privacy: .public) for activity \(activityName, privacy: .public)")
 
         let runner = SessionMonitorReconciliationRunner(
