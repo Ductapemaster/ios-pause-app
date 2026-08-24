@@ -30,11 +30,9 @@ struct RuleEditorView: View {
                 isEnabled: pendingChange == nil
             )
 
-            if let change = pendingChange {
+            if let change = pendingChange, let file = model.configurationFile {
                 Section {
-                    if let file = model.configurationFile {
-                        Text(ScheduledChangeWording.description(of: change, in: file))
-                    }
+                    Text(ScheduledChangeWording.description(of: change, in: file))
                     Button(change.kind.cancelTitle) {
                         model.cancelScheduledChange(ruleID: ruleID)
                     }

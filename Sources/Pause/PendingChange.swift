@@ -1,5 +1,4 @@
 import PauseCore
-import SwiftUI
 
 /// What is scheduled for one app, and the day it starts.
 ///

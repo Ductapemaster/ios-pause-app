@@ -393,7 +393,6 @@ final class AppModelFlowTests: XCTestCase {
         )
         XCTAssertEqual(model.pendingChange(forRuleID: ruleID)?.kind, .removal)
         XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
-        XCTAssertNotNil(model.pendingChange(forRuleID: ruleID))
     }
 
     func testAPickerSaveThatAddsAndDropsStillReconcilesShields() throws {
