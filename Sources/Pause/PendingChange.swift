@@ -1,4 +1,5 @@
 import PauseCore
+import SwiftUI
 
 /// What is scheduled for one app, and the day it starts.
 ///
@@ -20,8 +21,18 @@ extension PendingRuleChange.Kind {
     /// what gets scanned to see what is about to happen.
     var symbolName: String {
         switch self {
-        case .removal: "calendar.badge.minus"
+        case .removal: "minus.circle.fill"
         case .allowance: "calendar.badge.clock"
+        }
+    }
+
+    /// The two kinds must read apart by outline shape as well as by colour,
+    /// so the distinction survives greyscale and red/green colourblindness
+    /// rather than resting on colour alone.
+    var tint: Color {
+        switch self {
+        case .removal: .red
+        case .allowance: .accentColor
         }
     }
 

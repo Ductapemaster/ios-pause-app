@@ -70,7 +70,7 @@ struct RulesView: View {
 
                                 if let kind = model.pendingChange(forRuleID: rule.id)?.kind {
                                     Image(systemName: kind.symbolName)
-                                        .foregroundStyle(.tint)
+                                        .foregroundStyle(kind.tint)
                                         .accessibilityLabel(kind.accessibilityLabel)
                                 }
 
