@@ -769,12 +769,11 @@ final class AppModel: ObservableObject {
         activationCoordinator.configurationState
     }
 
-    /// What a scheduled change does, for the notice to name. Empty once the
-    /// change lands, because `configuration` is then the pending document and
-    /// there is nothing between the two.
+    /// Unused now that the notice names its own start day rather than
+    /// collapsing every change into one sentence. `ScheduledChangeNotice`
+    /// still declares the type this returns; Task 6 removes both together.
     var scheduledChanges: [ScheduledChange] {
-        guard let pending = configurationFile?.pending else { return [] }
-        return ScheduledChangeWording.changes(from: configuration, to: pending.document)
+        []
     }
 
     /// Rules the in-force document still covers that a scheduled change drops.
