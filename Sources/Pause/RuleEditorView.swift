@@ -20,25 +20,32 @@ struct RuleEditorView: View {
 
     var body: some View {
         Form {
-            if let startDay = model.pendingChangeStartDay {
-                Section {
-                    ScheduledChangeNotice(model: model, startDay: startDay)
-                }
-            }
-
             Section {
                 AppTokenLabel(applicationToken: applicationToken)
             }
 
             AllowanceSection(
                 sessionsPerDay: $sessionsPerDay,
-                sessionLengthMinutes: $sessionLengthMinutes
+                sessionLengthMinutes: $sessionLengthMinutes,
+                isEnabled: pendingChange == nil
             )
+
+            if let change = pendingChange {
+                Section {
+                    if let file = model.configurationFile {
+                        Text(ScheduledChangeWording.description(of: change, in: file))
+                    }
+                    Button(change.kind.cancelTitle) {
+                        model.cancelScheduledChange(ruleID: ruleID)
+                    }
+                }
+            }
 
             Section {
                 Button("Remove app", role: .destructive) {
                     removeRule()
                 }
+                .disabled(pendingChange != nil)
             }
         }
         .navigationTitle("Allowance")
@@ -48,11 +55,18 @@ struct RuleEditorView: View {
                 Button("Save") {
                     save()
                 }
+                .disabled(pendingChange != nil)
             }
         }
     }
 
     private let ruleID: UUID
+
+    /// What is scheduled for this app, if anything. Everything the screen does
+    /// differently under a pending change comes from this one lookup.
+    private var pendingChange: PendingRuleChange? {
+        model.pendingChange(forRuleID: ruleID)
+    }
 
     private func save() {
         do {
@@ -61,9 +75,10 @@ struct RuleEditorView: View {
                 sessionsPerDay: sessionsPerDay,
                 sessionLengthMinutes: sessionLengthMinutes
             )
-            // A save that waits stays on screen under its notice, so the wait is
-            // visible where it was chosen. One that applied at once is done.
-            if !model.lastSaveDeferredPart {
+            // A save that waits stays on screen, so the wait is visible where it
+            // was chosen, under the section that can cancel it. One that applied
+            // at once is done.
+            if pendingChange == nil {
                 dismiss()
             }
         } catch {
