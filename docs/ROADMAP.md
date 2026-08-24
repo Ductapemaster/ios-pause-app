@@ -19,6 +19,8 @@ Moving the work off the main actor would rework the locking design and the unit 
 - Cancelling one app's change leaves another's marker standing — the fault that motivated the redesign, and the one thing that cannot be seen in a single-app test.
 - The rule editor shows the in-force allowance, not a discarded proposed one, across a raise, save, and cancel cycle: raising an app's allowance and saving leaves the controls locked and showing the value already in force, while the section below names the new value as scheduled; cancelling unlocks the controls at that same in-force value, not the one just typed.
 
+**The app picker can silently no-op a scheduled removal.** With an app pending removal, opening the picker and re-ticking that app saves a candidate whose unit for it matches what is already in force. The router reads a matching unit as no opinion, so the scheduled removal survives and the re-add does nothing — the picker gives no sign that the app is still on its way out. The rule editor and the settings controls close the same class of gap by locking while a change is pending; extending that lock to the picker is a behavior change to its separately-shipped configuration flow and needs its own decision.
+
 ## Not planned
 
 **A picker Pause owns.** Apple's picker shows no running count and nothing can be added to it: `familyActivityPicker` takes `title`, `headerText`, and `footerText` as plain strings, reads them once at presentation, and ignores later changes. Measured on an iPhone 16 Pro running iOS 26.6 — all three surfaces held their entry values while apps were tapped. The same interface offers no way to hide the Categories or Web Domains sections, so a selection the app will discard looks exactly like one it will keep.
