@@ -30,7 +30,6 @@ Two properties hold the design together:
 - **One pending slot, not a queue.** A second save replaces a scheduled change for that app rather than stacking onto it, and cancelling is the only way back to the rules in force.
 - **A save states its opinion by rebuilding.** Touched is inferred from the resulting document rather than declared by the screen, so an editor save that changes nothing reads as untouched and carries a scheduled change forward.
 - **The countdown length is the one field a late edit reaches.** It is not per-day, so it has no reset to ride in on; shortening it late takes effect that much sooner. Accepted — the exposure is a few seconds.
-- **Expiry restoration is verified at three minutes, not sixteen.** A session over fifteen minutes ends on a different callback, and only the shorter one has been observed. Tracked in [the roadmap](ROADMAP.md).
 - **Moving the daily reset refills the day.** A reset-time change applies the moment it is saved, and a session count rolls over whenever the allowance day's label changes — in either direction — so setting the reset a few minutes out hands back the day's sessions, which makes the cap advisory rather than enforced. Accepted for the comparison logic it saves, with the guard that would close it named in [the design](design/configurable-daily-reset.md).
 
 ## Where things are
