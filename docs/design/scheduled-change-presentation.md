@@ -32,7 +32,9 @@ A pending change lives on the row of the thing it changes. The list says *where*
 
 The marker means: **a loosening you asked for starts at the next reset.** Tightenings need no marker because they already applied.
 
-That is the whole vocabulary — one symbol, `calendar.badge.clock`, in the accent tint. The kind of change is detail, and detail is one tap away.
+Two symbols carry it, both in the accent tint: `calendar.badge.clock` for an allowance loosening, and `calendar.badge.minus` for an app on its way out. Everything finer than that is detail, and detail is one tap away.
+
+Leaving Pause is not the same kind of event as a longer session, and the list is the surface scanned to see what is about to happen — so the one distinction the list draws is between an app that is changing and an app that is going.
 
 ## What defers, and therefore what can be marked
 
@@ -54,7 +56,7 @@ Every row is the same shape and every row is a link:
 [app label]  [marker?]  [used/limit]  ›
 ```
 
-The marker sits between the label and the count. A row for an app on its way out is a link like any other — it keeps its count, because the app is still in force, still shielded, and still spending sessions until the reset.
+The marker sits between the label and the count, and says which of the two kinds is scheduled. A row for an app on its way out is a link like any other — it keeps its count, because the app is still in force, still shielded, and still spending sessions until the reset.
 
 Nothing in the list is multi-line, and nothing in the list carries a button.
 
@@ -93,9 +95,18 @@ Shield reconciliation, the monitor extension, and `registerDailyReset` consume t
 
 A new edit supersedes the old one. With 2 sessions in force and 4 pending, the stepper reads 2; nudging it to 3 makes 3 the pending value.
 
-Nudging up and back down to 2 leaves the pending 4 standing, because the router acts on a candidate that differs from what is in force, and a candidate equal to it is read as having no opinion — so the unit keeps whatever was already scheduled for it (`ConfigurationSaveRouter.swift:33-45`).
+Nudging up and back down to 2 and saving **cancels the pending 4**. Setting a value back to what is in force is the most obvious way to undo a scheduled change, so it undoes it.
 
-This is the router's existing behaviour. Showing in-force values in the controls is what makes it observable.
+That requires a save to declare which rules it has an opinion about, rather than the router inferring it from what changed. Today a unit whose candidate equals the in-force unit is read as silent, and keeps whatever was already scheduled for it (`ConfigurationSaveRouter.swift:33-45`). That inference cannot be dropped: `applyPickerSelection` rebuilds the whole document on every save, so most units on any save are equal to what is in force and must keep their pending state — otherwise one app's edit would wipe every other app's scheduled change.
+
+So intent becomes explicit. A save carries the set of rule IDs it speaks for:
+
+- A **declared** unit equal to the in-force unit means *cancel what is scheduled for this one*. Its pending state is dropped.
+- An **undeclared** unit behaves exactly as it does now, keeping whatever is scheduled for it.
+
+The rule editor declares the one rule it edits. A picker save declares the rules it added or removed, and stays silent about every retained app — which is what preserves their pending changes.
+
+This retires the gap recorded in [the overview](../README.md) as *a save states its opinion by rebuilding*: an editor save that changes nothing no longer reads as untouched, because it declares the rule either way. The same mechanism closes both.
 
 ## What is deleted
 
@@ -118,6 +129,12 @@ Alongside those:
 - A rule with a pending change reports one; a rule without reports none. The Pause duration row reports one only for a shorter pause, and the Day reset row never does.
 - A pending removal leaves the editor unable to save.
 - Cancelling a pending pause duration leaves every app's pending change intact, and cancelling an app's change leaves a pending pause duration intact.
+
+Declared intent needs its own cases, because it changes what a save means:
+
+- An editor save setting a value back to the in-force value cancels that rule's pending change, and collapses `pending` to `nil` if it was the only one.
+- The same save leaves every other app's pending change untouched.
+- A picker save that adds or removes an app leaves a retained app's pending change untouched — the case that would break if declaration were inferred rather than carried.
 
 The router already supports pending changes coexisting (`ConfigurationSaveRouterTests.swift:105`, `testAScheduledRemovalSurvivesASaveAboutAnotherApp`); what is new is cancelling one of them.
 
