@@ -38,6 +38,12 @@ struct NewAppSetupSheet: View {
                 if let currentToken {
                     Section {
                         AppTokenLabel(applicationToken: currentToken)
+                            // The label draws its app out of process from an
+                            // opaque token. Left at one identity across steps
+                            // SwiftUI reuses the view, and it keeps showing the
+                            // app it drew first; keying it to the token makes
+                            // each step build a label of its own.
+                            .id(currentToken)
                     }
                 }
 
