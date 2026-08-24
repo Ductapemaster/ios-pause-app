@@ -36,6 +36,16 @@ extension PendingRuleChange.Kind {
         }
     }
 
+    /// `nil` keeps the default tint; `.destructive` follows the platform's
+    /// own styling rather than a hand-picked colour, so it can never drift
+    /// from `tint` above.
+    var cancelRole: ButtonRole? {
+        switch self {
+        case .removal: .destructive
+        case .allowance: nil
+        }
+    }
+
     /// The symbol carries no text, so it needs one for VoiceOver.
     var accessibilityLabel: String {
         switch self {
