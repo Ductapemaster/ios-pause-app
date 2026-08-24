@@ -4,13 +4,9 @@ Prioritized work not currently in flight. Phase 1 is accepted and closed; Phase 
 
 ## Next
 
-**One device check gates merging `feat/new-app-configuration-flow` and `feat/session-usage-display` into `design/phased-project-plan`.** The scene-interruption split, under Deferred. It is not a timestamp question, so it needs a person on the phone.
-
-**Then Phase 2: blocking periods** — the recurring stretches when an app cannot be entered at all. The activity-registration budget was thought to be the constraint; reading the requirements against the shield decision path suggests it is not, since a window only refuses entry and entry is decided when the button is pressed. That is reasoning, not a measurement, and building one window would settle it.
+**Phase 2: blocking periods** — the recurring stretches when an app cannot be entered at all. The activity-registration budget was thought to be the constraint; reading the requirements against the shield decision path suggests it is not, since a window only refuses entry and entry is decided when the button is pressed. That is reasoning, not a measurement, and building one window would settle it.
 
 ## Deferred
-
-**One interface change is unverified on the phone.** The scene-interruption split, so a banner no longer abandons a pause. Unit tests reach the model; they cannot reach a SwiftUI scene phase. The check is to start a countdown, raise a notification banner over it, and confirm the pause survives.
 
 **Applying a picker selection blocks the main thread.** Adding an app holds the interface while each added app takes a file-lock cycle plus a JSON encode and atomic write, `configurationStore.save` takes another, and `ShieldReconciler.reconcile` holds a lock while re-reading every configured target's runtime and finishes with a `ManagedSettingsStore` write. Two `@Published` writes land in one run-loop turn, each rebuilding a `Label(ApplicationToken)` per rule. `AppModel` is `@MainActor` and no actor, `Task`, or dispatch hop exists on the path. Which part dominates is unmeasured; the ManagedSettings and FamilyControls costs are not visible from source.
 
