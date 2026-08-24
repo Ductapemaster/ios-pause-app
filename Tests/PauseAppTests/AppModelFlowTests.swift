@@ -876,6 +876,21 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(model.pendingSettingsChange()?.pauseSeconds, 5)
     }
 
+    func testARuleUntouchedByAPendingSettingsChangeReportsNoPendingChange() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updatePauseSeconds(5, now: now)
+
+        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
+    }
+
     func testALongerPauseAppliesAtOnceAndIsNotReportedAsPending() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
