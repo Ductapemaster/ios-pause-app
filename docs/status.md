@@ -1,16 +1,17 @@
 ## Status — resume here (2026-08-24)
 
-**State:** On `design/phased-project-plan`, green at 328 tests, with the new-app configuration flow merged and verified on the phone. The scheduled-change presentation redesign is specced and planned but not started: no code written, `docs/plans/scheduled-change-presentation.md` holds six tasks, each ending on a green suite. It replaces the banner and the bespoke pending-removal row with a marker on each app's own row, moves the cancel into that app's editor, and locks a control while a change is scheduled for it. The router is deliberately untouched.
+**State:** On `feat/scheduled-change-presentation`, 21 commits ahead of `design/phased-project-plan`, green at 319 tests with the device build signing cleanly. The scheduled-change presentation redesign is built and reviewed: a marker on each app's own row, the cancel scoped to one app in its editor, and a control locked while a change is scheduled for it. The app picker is add-only — its selection is a set of additions, and an app leaves Pause only from its own row. An earlier build was tried on the phone; the three pieces of feedback from it are all implemented, and the build carrying them has not been installed.
 
-**Next step:** Execute the plan, task by task — subagent-driven was recommended and Dan has not chosen yet.
+**Next step:** Install the built app on the phone (it is at `/tmp/pause-dd/Build/Products/Debug-iphoneos/Pause.app`) and run the device checks, then merge to `design/phased-project-plan`.
 
-**Blockers:** No git remote, so nothing can be pushed. Every commit is local only.
+**Blockers:** The phone reads `unavailable` to `devicectl`, so the install cannot run. No git remote; every commit is local.
 
-**Read first:** Before any scheduled-change work, `docs/design/scheduled-change-presentation.md` then its plan. Before the monitor callbacks or the state lock, `docs/research/session-end-hang.md`. Before a check about *when* something ran, the device logs section of `CLAUDE.md`.
+**Read first:** Before picker or add-flow work, `docs/design/add-only-app-picker.md`. Before scheduled-change work, `docs/design/scheduled-change-presentation.md`. Before the monitor callbacks or the state lock, `docs/research/session-end-hang.md`.
 
 ## Open work
 
-- [ ] Execute `docs/plans/scheduled-change-presentation.md`. Six tasks; Task 1 is the two per-row lookups on `AppModel`.
-- [ ] Run the three device checks the plan names once it lands: both markers tellable apart at a glance, an app with a pending change opening to locked controls, and cancelling one app's change leaving another's standing. The last is the fault the redesign exists to correct and no single-app test can see it.
+- [ ] Run the device checks `docs/ROADMAP.md` lists under Deferred. The one that matters most is cancelling one app's change leaving another's marker standing — the fault the redesign exists to correct, and the one thing no single-app test can see.
+- [ ] Confirm on the phone that the disabled `Remove app` button renders greyed rather than red beside the destructive `Cancel removal`. Established by reading the code and SwiftUI's documented behaviour, never measured (why: reaching that screen needs a full Family Controls authorization and save, which no headless run can drive).
+- [ ] Decide whether `NewAppSetupSheet`'s step-advance decision is worth extracting into a free function. The guarantee that a picker selection of only already-covered apps writes nothing is currently held by code-reading alone; the repo has no view-testing harness.
 - [ ] Settle whether the device-wide freeze reported on 2026-08-22 is the same defect seen from outside. The lock-out explains the dead button and the stall; it does not by itself explain the whole phone stopping.
 - [ ] Design blocking periods — Phase 2. `docs/ROADMAP.md` under Next carries the reasoning about the activity-registration budget.
