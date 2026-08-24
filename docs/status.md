@@ -1,15 +1,16 @@
-## Status — resume here (2026-08-22)
+## Status — resume here (2026-08-24)
 
-**State:** Phase 1 is accepted, closed and merged. The configurable daily reset — half the Phase 2 gate — is built: 285 tests pass at head, build warning-free. The device check has not run — it needs a signed build on the phone and cannot run in the simulator. Blocking periods are the other half of the gate and are deliberately a separate effort, designed later (why: they are additive, while the reset changes what a day means).
+**State:** Branch `feat/new-app-configuration-flow`, green at 316 tests, installed on the phone and verified there. Adding apps goes through a sheet Pause owns, with a Cancel that discards; each newly picked app gets a screen taking its sessions per day and session length before anything is written, so an app can be given sixteen minutes on the day it is added. A save that only drops apps still defers the removal to the next reset. Shield reconciliation no longer skips when a save contains a removal, which had left an app added in the same save unshielded.
 
-**Next step:** Run the device check in `docs/ROADMAP.md`, then design blocking periods.
+**Next step:** Merge this branch and `feat/session-usage-display` into `design/phased-project-plan` — every check that gated them has passed or been retired. Then Phase 2, blocking periods.
 
 **Blockers:** No git remote, so nothing can be pushed. Every commit is local only.
 
-**Read first:** `docs/design/configurable-daily-reset.md` for the reset's design. Before any scheduling or callback work, `docs/research/screen-time-platform-evidence.md`.
+**Read first:** Before the monitor callbacks or the state lock, `docs/research/session-end-hang.md`. Before any scheduled-change work, `docs/research/scheduled-change-model.md`. Before a check about *when* something ran, the device logs section of `CLAUDE.md` — `log collect` answers timing questions the phone cannot be watched for.
 
 ## Open work
 
-- [ ] Run the device check for the configurable daily reset: move the reset to a quarter-hour a few minutes ahead, spend a session, wait for the reset to pass, and confirm the count renews at the new time rather than at midnight and that the shield reflects the renewed allowance.
-- [ ] Confirm on the phone the three interface changes shipped after Phase 1. On the roadmap with what to check.
-- [ ] Design blocking periods — the recurring stretches when an app cannot be entered at all. The activity-registration budget is the open question: the research note records a ceiling of 20 monitored activities, reported rather than measured, and one registration per weekday per period reaches it fast.
+- [ ] Settle whether the device-wide freeze reported on 2026-08-22 is the same defect seen from outside. The lock-out explains the dead button and the stall; it does not by itself explain the whole phone stopping.
+- [ ] Merge `feat/new-app-configuration-flow` and `feat/session-usage-display` into `design/phased-project-plan`.
+- [ ] Build the scheduled-change presentation redesign, after Dan reviews the spec and a plan is written.
+- [ ] Design blocking periods — Phase 2. `docs/ROADMAP.md` under Next carries the reasoning about the activity-registration budget.

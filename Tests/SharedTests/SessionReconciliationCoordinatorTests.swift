@@ -16,8 +16,7 @@ final class SessionReconciliationCoordinatorTests: XCTestCase {
             loadRuntime: { _ in runtime },
             saveRuntime: { saved, _ in runtime = saved; events.append("save") },
             clearFailedGrantBlock: { _ in events.append("clear") },
-            applyShields: { events.append("shield") },
-            stopMonitoring: { _ in events.append("stop") }
+            applyShields: { events.append("shield") }
         )
 
         XCTAssertEqual(runtime.openSession?.state, .active)
@@ -34,7 +33,7 @@ final class SessionReconciliationCoordinatorTests: XCTestCase {
             loadRuntime: { _ in original },
             saveRuntime: { runtime, _ in saved = runtime },
             clearFailedGrantBlock: { cleared.append($0) },
-            applyShields: {}, stopMonitoring: { _ in }
+            applyShields: {}
         )
 
         XCTAssertNil(saved)
@@ -54,8 +53,7 @@ final class SessionReconciliationCoordinatorTests: XCTestCase {
                 events.append("save")
             },
             clearFailedGrantBlock: { _ in events.append("clear") },
-            applyShields: { events.append("shield") },
-            stopMonitoring: { _ in events.append("stop") }
+            applyShields: { events.append("shield") }
         )
 
         XCTAssertEqual(events, ["save", "clear", "shield"])
@@ -69,8 +67,7 @@ final class SessionReconciliationCoordinatorTests: XCTestCase {
             loadRuntime: { _ in self.makeRuntime(ruleID: self.ruleID, state: .provisional, expiresIn: -1) },
             saveRuntime: { _, _ in events.append("save"); throw TestError.save },
             clearFailedGrantBlock: { _ in events.append("clear") },
-            applyShields: { events.append("shield") },
-            stopMonitoring: { _ in }
+            applyShields: { events.append("shield") }
         )
 
         XCTAssertEqual(events, ["save", "shield"])
@@ -85,8 +82,7 @@ final class SessionReconciliationCoordinatorTests: XCTestCase {
             loadRuntime: { _ in self.makeRuntime(ruleID: self.ruleID, state: .provisional, expiresIn: -1) },
             saveRuntime: { _, _ in events.append("save") },
             clearFailedGrantBlock: { _ in events.append("clear"); throw TestError.clear },
-            applyShields: { events.append("shield") },
-            stopMonitoring: { _ in }
+            applyShields: { events.append("shield") }
         )
 
         XCTAssertEqual(events, ["save", "clear", "shield"])
@@ -101,11 +97,11 @@ final class SessionReconciliationCoordinatorTests: XCTestCase {
             loadRuntime: { _ in self.makeRuntime(ruleID: self.ruleID, state: .active, expiresIn: 60) },
             saveRuntime: { _, _ in events.append("save") },
             clearFailedGrantBlock: { _ in events.append("clear") },
-            applyShields: { events.append("shield") },
-            stopMonitoring: { _ in events.append("stop") }
+            applyShields: { events.append("shield") }
         )
 
         XCTAssertEqual(events, [])
+        XCTAssertNil(result.pendingStopActivityName)
         XCTAssertTrue(result.issues.isEmpty)
     }
 
@@ -116,25 +112,25 @@ final class SessionReconciliationCoordinatorTests: XCTestCase {
             ruleIDs: [ruleID], now: now, trigger: .intervalDidEnd(ruleID: ruleID),
             loadRuntime: { _ in self.makeRuntime(ruleID: self.ruleID, state: .provisional, expiresIn: 60) },
             saveRuntime: { saved = $0; _ = $1 },
-            clearFailedGrantBlock: { _ in }, applyShields: { shieldCount += 1 }, stopMonitoring: { _ in }
+            clearFailedGrantBlock: { _ in }, applyShields: { shieldCount += 1 }
         )
 
         XCTAssertNil(saved)
         XCTAssertEqual(shieldCount, 0)
     }
 
-    func testWarningStopsOnlyNamedActivityAfterExpiredRuntimeAndShieldArePersisted() {
+    func testWarningReportsOnlyTheNamedActivityToStopAfterExpiredRuntimeAndShieldArePersisted() {
         var events: [String] = []
         let result = coordinator(markers: []).reconcile(
             ruleIDs: [ruleID], now: now, trigger: .intervalWillEndWarning(ruleID: ruleID, activityName: "session.selected"),
             loadRuntime: { _ in self.makeRuntime(ruleID: self.ruleID, state: .active, expiresIn: -1) },
             saveRuntime: { _, _ in events.append("save") },
             clearFailedGrantBlock: { _ in },
-            applyShields: { events.append("shield") },
-            stopMonitoring: { name in events.append("stop:\(name)") }
+            applyShields: { events.append("shield") }
         )
 
-        XCTAssertEqual(events, ["save", "shield", "stop:session.selected"])
+        XCTAssertEqual(events, ["save", "shield"])
+        XCTAssertEqual(result.pendingStopActivityName, "session.selected")
         XCTAssertTrue(result.issues.isEmpty)
     }
 
@@ -144,11 +140,11 @@ final class SessionReconciliationCoordinatorTests: XCTestCase {
             ruleIDs: [ruleID], now: now, trigger: .intervalWillEndWarning(ruleID: ruleID, activityName: "session.selected"),
             loadRuntime: { _ in self.makeRuntime(ruleID: self.ruleID, state: .active, expiresIn: -1) },
             saveRuntime: { _, _ in events.append("save") }, clearFailedGrantBlock: { _ in },
-            applyShields: { events.append("shield"); throw TestError.shield },
-            stopMonitoring: { _ in events.append("stop") }
+            applyShields: { events.append("shield"); throw TestError.shield }
         )
 
         XCTAssertEqual(events, ["save", "shield"])
+        XCTAssertNil(result.pendingStopActivityName)
         XCTAssertEqual(result.issues.map(\.operation), [.applyShields])
     }
 
@@ -159,7 +155,7 @@ final class SessionReconciliationCoordinatorTests: XCTestCase {
         _ = coordinator(markers: []).reconcile(
             ruleIDs: [ruleID], now: now, trigger: .intervalDidEnd(ruleID: ruleID),
             loadRuntime: { _ in runtime }, saveRuntime: { saved = $0; _ = $1 },
-            clearFailedGrantBlock: { _ in }, applyShields: { shieldCount += 1 }, stopMonitoring: { _ in }
+            clearFailedGrantBlock: { _ in }, applyShields: { shieldCount += 1 }
         )
 
         XCTAssertNil(saved)
@@ -176,7 +172,7 @@ final class SessionReconciliationCoordinatorTests: XCTestCase {
                 throw TestError.load
             },
             saveRuntime: { _, _ in }, clearFailedGrantBlock: { _ in },
-            applyShields: { shieldCount += 1 }, stopMonitoring: { _ in }
+            applyShields: { shieldCount += 1 }
         )
 
         XCTAssertEqual(result.repairRuleIDs, [ruleID, otherRuleID])
@@ -193,7 +189,7 @@ final class SessionReconciliationCoordinatorTests: XCTestCase {
         _ = coordinator(markers: []).reconcile(
             ruleIDs: [ruleID, otherRuleID], now: now, trigger: .appActivation,
             loadRuntime: { runtimes[$0] }, saveRuntime: { saved[$1] = $0 },
-            clearFailedGrantBlock: { _ in }, applyShields: {}, stopMonitoring: { _ in }
+            clearFailedGrantBlock: { _ in }, applyShields: {}
         )
 
         XCTAssertNil(saved[ruleID]?.openSession)

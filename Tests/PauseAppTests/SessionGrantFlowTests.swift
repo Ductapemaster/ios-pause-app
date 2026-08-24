@@ -46,6 +46,20 @@ final class SessionGrantFlowTests: XCTestCase {
         XCTAssertEqual(runtime.openSession?.state, .active)
     }
 
+    func testASuccessfulGrantPublishesTheChargeWithoutWaitingForTheNextForeground() async throws {
+        let harness = try makeHarness(route: .instagram, automaticRoute: true, launchSucceeds: true)
+        harness.model.sceneDidBecomeActive(now: now)
+        XCTAssertEqual(harness.model.sessionsUsedByRule[ruleID], 0)
+
+        await harness.model.requestSessionGrant(now: now.addingTimeInterval(1))
+
+        XCTAssertEqual(
+            harness.model.sessionsUsedByRule[ruleID],
+            1,
+            "a successful grant must publish its own charge, not wait for the next activation"
+        )
+    }
+
     func testExplicitLaunchFailureRollsBackStopsReconcilesAndChargesNothing() async throws {
         let harness = try makeHarness(route: .instagram, automaticRoute: true, launchSucceeds: false)
         harness.model.sceneDidBecomeActive(now: now)
@@ -189,6 +203,34 @@ final class SessionGrantFlowTests: XCTestCase {
         )
         XCTAssertEqual(runtime.sessionsStarted, 0)
         XCTAssertNil(runtime.openSession)
+    }
+
+    /// `reserve` charges the session to disk before `activate` runs; when
+    /// `activate` then throws, `SessionGrantCoordinator` reports the failure
+    /// with `chargeState: .charged` and never rolls the reservation back. The
+    /// shield already reflects the charge, so the list must too.
+    func testAChargedButFailedGrantStillUpdatesTheListedCount() async throws {
+        let runtimePersistence = ChargesButFailsToActivateRuntime()
+        let harness = try makeHarness(
+            route: nil,
+            automaticRoute: false,
+            launchSucceeds: true,
+            runtimePersistence: runtimePersistence
+        )
+        runtimePersistence.directory = harness.directory
+        harness.model.sceneDidBecomeActive(now: now)
+        XCTAssertEqual(harness.model.sessionsUsedByRule[ruleID], 0)
+
+        await harness.model.requestSessionGrant(now: now.addingTimeInterval(1))
+
+        XCTAssertNotNil(harness.model.presentedError)
+        let runtime = try XCTUnwrap(RuntimeRepository(directoryURL: harness.directory).load(ruleID: ruleID))
+        XCTAssertEqual(runtime.sessionsStarted, 1)
+        XCTAssertEqual(
+            harness.model.sessionsUsedByRule[ruleID],
+            1,
+            "the list must show the charge even though activation failed after it"
+        )
     }
 
     private func makeHarness(
@@ -379,11 +421,37 @@ private final class FailingRollbackRuntime: RuntimePersisting {
     func rollBack(ruleID: UUID) throws { throw AppGrantTestError.rollback }
 }
 
+/// Reserves for real, so the charge lands on disk exactly as
+/// `RepositoryRuntimePersistence` would, then fails to activate - the shape
+/// `SessionGrantCoordinator` reports as `chargeState: .charged` with no
+/// rollback issued.
+@MainActor
+private final class ChargesButFailsToActivateRuntime: RuntimePersisting {
+    var directory: URL!
+
+    func reserve(ruleID: UUID, activityName: String, expiresAt: Date) throws {
+        _ = try RuntimeRepository(directoryURL: directory).update(ruleID: ruleID) { runtime in
+            try runtime.reserve(activityName: activityName, expiresAt: expiresAt)
+        }
+    }
+
+    func activate(ruleID: UUID) throws {
+        throw AppGrantTestError.activate
+    }
+
+    func rollBack(ruleID: UUID) throws {
+        _ = try RuntimeRepository(directoryURL: directory).update(ruleID: ruleID) { runtime in
+            try runtime.rollBackReservedSession()
+        }
+    }
+}
+
 private enum AppGrantTestError: LocalizedError {
     case rollback
     case stop
     case forceShield
     case markerPersistence
+    case activate
 
     var errorDescription: String? {
         switch self {
@@ -391,6 +459,7 @@ private enum AppGrantTestError: LocalizedError {
         case .stop: "monitor stop failed"
         case .forceShield: "forced shield failed"
         case .markerPersistence: "marker persistence failed"
+        case .activate: "runtime activation failed"
         }
     }
 }

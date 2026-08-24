@@ -204,6 +204,36 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(probe.startedCountdown?.remainingSeconds(at: activeAt), 10)
     }
 
+    /// `updateRule` persists through `persist(_:now:)`, which refreshes the
+    /// published usage itself rather than waiting for the next activation -
+    /// the rule editor never leaves and re-enters the scene around a save.
+    func testSavingARuleEditPublishesTheCurrentChargeWithoutARefreshTrigger() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        try RuntimeRepository(directoryURL: directory).save(
+            RuleRuntime(
+                logicalDay: LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: .current),
+                sessionsStarted: 2
+            ),
+            ruleID: ruleID
+        )
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        XCTAssertNil(model.sessionsUsedByRule[ruleID])
+
+        try model.updateRule(id: ruleID, sessionsPerDay: 5, sessionLengthMinutes: 5, now: now)
+
+        XCTAssertEqual(
+            model.sessionsUsedByRule[ruleID],
+            2,
+            "a save must publish the current charge, since nothing else refreshes it before the next activation"
+        )
+    }
+
     func testRaisingAnAllowanceLeavesTodaysRuleInPlace() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -366,6 +396,126 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertTrue(model.lastSaveDeferredPart)
     }
 
+    func testAPickerSaveThatAddsAndDropsStillReconcilesShields() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let probe = FlowProbe(status: .approved)
+        let model = makeModel(directory: directory, probe: probe, hasProtectedState: false)
+        model.pickerSelection.applicationTokens = [try token(seed: "threads")]
+
+        try model.applyPickerSelection(now: now)
+
+        // The addition is in force today, so it needs its shield now even
+        // though the drop in the same save waits for the reset.
+        XCTAssertEqual(probe.reconciliationCount, 1)
+    }
+
+    func testCancellingAMixedSaveDropsTheRemovalAndKeepsTheAddedApp() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        model.pickerSelection.applicationTokens = [try token(seed: "threads")]
+        try model.applyPickerSelection(now: now)
+
+        model.cancelScheduledChange(now: now)
+
+        XCTAssertEqual(
+            Set(model.configuration.targets.map(\.applicationToken)),
+            [try token(seed: "instagram"), try token(seed: "threads")]
+        )
+        XCTAssertEqual(model.ruleIDsPendingRemoval, [])
+        XCTAssertNil(model.pendingChangeStartDay)
+        XCTAssertNil(model.presentedError)
+        // The cancellation is durable, not just in memory.
+        let stored = try ConfigurationStore(directoryURL: directory).loadFile()
+        XCTAssertNil(stored?.pending)
+        XCTAssertEqual(
+            Set(stored?.effective.targets.map(\.applicationToken) ?? []),
+            [try token(seed: "instagram"), try token(seed: "threads")]
+        )
+    }
+
+    func testAnAddedAppTakesTheChosenAllowance() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeEmptyConfiguration(to: directory)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        let added = try token(seed: "threads")
+        model.pickerSelection.applicationTokens = [added]
+
+        try model.applyPickerSelection(
+            newAppAllowances: [added: AppRule.Allowance(sessionsPerDay: 7, sessionLengthMinutes: 45)],
+            now: now
+        )
+
+        XCTAssertEqual(model.configuration.rules.count, 1)
+        XCTAssertEqual(model.configuration.rules.first?.sessionsPerDay, 7)
+        XCTAssertEqual(model.configuration.rules.first?.sessionLengthMinutes, 45)
+    }
+
+    func testAnAddedAppWithoutAChosenAllowanceTakesTheDefault() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeEmptyConfiguration(to: directory)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        model.pickerSelection.applicationTokens = [try token(seed: "threads")]
+
+        try model.applyPickerSelection(now: now)
+
+        XCTAssertEqual(model.configuration.rules.first?.sessionsPerDay, AppRuleLimits.defaultSessionsPerDay)
+        XCTAssertEqual(
+            model.configuration.rules.first?.sessionLengthMinutes,
+            AppRuleLimits.defaultSessionLengthMinutes
+        )
+    }
+
+    func testAnOutOfRangeAllowanceIsRefusedBeforeAnyRuntimeIsWritten() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeEmptyConfiguration(to: directory)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        let added = try token(seed: "threads")
+        model.pickerSelection.applicationTokens = [added]
+
+        XCTAssertThrowsError(
+            try model.applyPickerSelection(
+                newAppAllowances: [added: AppRule.Allowance(sessionsPerDay: 21, sessionLengthMinutes: 5)],
+                now: now
+            )
+        ) { error in
+            XCTAssertEqual(error as? AppModelError, .invalidSessionsPerDay)
+        }
+        XCTAssertThrowsError(
+            try model.applyPickerSelection(
+                newAppAllowances: [added: AppRule.Allowance(sessionsPerDay: 3, sessionLengthMinutes: 121)],
+                now: now
+            )
+        ) { error in
+            XCTAssertEqual(error as? AppModelError, .invalidSessionLength)
+        }
+
+        XCTAssertTrue(model.configuration.rules.isEmpty)
+        XCTAssertEqual(try runtimeFileNames(in: directory), [])
+    }
+
     func testTheAddedAppSurvivesTheDropWhenItLands() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -521,6 +671,145 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(content.title, "No sessions left today")
     }
 
+    /// The list reads this snapshot, so activation must populate it with the
+    /// count resolved against the allowance day — not the civil date, and not
+    /// whatever the record happened to carry on disk.
+    func testActivationPublishesTheCountResolvedAgainstTheAllowanceDay() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let calendar = Calendar(identifier: .gregorian)
+        let spentAt = calendar.date(from: DateComponents(year: 2026, month: 8, day: 20, hour: 9))!
+        let afterMidnight = calendar.date(from: DateComponents(year: 2026, month: 8, day: 21, hour: 2))!
+        let applicationToken = try token(seed: "instagram")
+        try ConfigurationStore(directoryURL: directory).save(
+            file: ConfigurationFile(
+                effective: try ConfigurationDocument(
+                    settings: GlobalSettings(pauseSeconds: 10, resetMinuteOfDay: 6 * 60),
+                    rules: [AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)],
+                    targets: [
+                        RuleTarget(
+                            ruleID: ruleID,
+                            applicationToken: applicationToken,
+                            launchRoute: nil
+                        )
+                    ]
+                ),
+                pending: nil
+            )
+        )
+        try RuntimeRepository(directoryURL: directory).save(
+            RuleRuntime(
+                logicalDay: LogicalDay.containing(
+                    spentAt,
+                    resetMinuteOfDay: 6 * 60,
+                    calendar: calendar
+                ),
+                sessionsStarted: 3
+            ),
+            ruleID: ruleID
+        )
+        let suiteName = "pause-allowance-day-defaults-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        try ShieldIntentStore(defaults: defaults).write(
+            ShieldIntent(applicationToken: applicationToken, createdAt: afterMidnight)
+        )
+        let model = AppModel(
+            shieldReconciler: ShieldReconciler(
+                currentApplications: { [] },
+                applyApplications: { _ in },
+                failedGrantBlockIDs: { [] }
+            ),
+            shieldIntentStore: ShieldIntentStore(defaults: defaults),
+            storageDirectoryURL: directory,
+            authorizationStatusProvider: { .approved },
+            authorizationRequester: {}
+        )
+
+        model.sceneDidBecomeActive(now: afterMidnight)
+
+        XCTAssertEqual(
+            model.sessionsUsedByRule[ruleID],
+            3,
+            "midnight passing must not renew the count when the reset is later"
+        )
+    }
+
+    /// The second activation is the ordinary re-foreground: once one activation
+    /// has been handled for the current foreground streak, the activation
+    /// coordinator returns `.unchanged` immediately, before it would run cleanup,
+    /// reconciliation, or consume an intent again. If `refreshUsage` sat after the
+    /// `switch outcome` instead of before it, that early return would skip it, and
+    /// the published count would freeze at the first activation's answer for as
+    /// long as the app stayed foregrounded - the most common case there is.
+    func testTheCountRefreshesOnEveryForegroundNotJustTheFirst() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let calendar = Calendar(identifier: .gregorian)
+        let spentAt = calendar.date(from: DateComponents(year: 2026, month: 8, day: 20, hour: 9))!
+        let afterMidnight = calendar.date(from: DateComponents(year: 2026, month: 8, day: 21, hour: 2))!
+        let afterReset = calendar.date(from: DateComponents(year: 2026, month: 8, day: 21, hour: 7))!
+        let applicationToken = try token(seed: "instagram")
+        try ConfigurationStore(directoryURL: directory).save(
+            file: ConfigurationFile(
+                effective: try ConfigurationDocument(
+                    settings: GlobalSettings(pauseSeconds: 10, resetMinuteOfDay: 6 * 60),
+                    rules: [AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)],
+                    targets: [
+                        RuleTarget(
+                            ruleID: ruleID,
+                            applicationToken: applicationToken,
+                            launchRoute: nil
+                        )
+                    ]
+                ),
+                pending: nil
+            )
+        )
+        try RuntimeRepository(directoryURL: directory).save(
+            RuleRuntime(
+                logicalDay: LogicalDay.containing(
+                    spentAt,
+                    resetMinuteOfDay: 6 * 60,
+                    calendar: calendar
+                ),
+                sessionsStarted: 3
+            ),
+            ruleID: ruleID
+        )
+        let suiteName = "pause-allowance-day-defaults-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        try ShieldIntentStore(defaults: defaults).write(
+            ShieldIntent(applicationToken: applicationToken, createdAt: afterMidnight)
+        )
+        let model = AppModel(
+            shieldReconciler: ShieldReconciler(
+                currentApplications: { [] },
+                applyApplications: { _ in },
+                failedGrantBlockIDs: { [] }
+            ),
+            shieldIntentStore: ShieldIntentStore(defaults: defaults),
+            storageDirectoryURL: directory,
+            authorizationStatusProvider: { .approved },
+            authorizationRequester: {}
+        )
+
+        model.sceneDidBecomeActive(now: afterMidnight)
+        XCTAssertEqual(
+            model.sessionsUsedByRule[ruleID],
+            3,
+            "the first activation must publish what the allowance day has charged"
+        )
+
+        model.sceneDidBecomeActive(now: afterReset)
+        XCTAssertEqual(
+            model.sessionsUsedByRule[ruleID],
+            0,
+            "an ordinary re-foreground past the reset must still refresh the count, even though the activation coordinator reports .unchanged"
+        )
+    }
+
     private func makeModel(
         directory: URL,
         probe: FlowProbe,
@@ -590,6 +879,12 @@ final class AppModelFlowTests: XCTestCase {
             ApplicationToken.self,
             from: Data("{\"data\":\"\(data)\"}".utf8)
         )
+    }
+
+    private func runtimeFileNames(in directory: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { $0.hasPrefix("runtime-") }
+            .sorted()
     }
 
     private func writeEmptyConfiguration(to directory: URL) throws {

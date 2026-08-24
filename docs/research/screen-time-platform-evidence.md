@@ -7,8 +7,38 @@ Every entry names how it was established. Anything that was not run says so — 
 Three rigs stand behind everything below:
 
 - **Device** — iPhone 16 Pro, iOS 26.6, Family Controls authorized. Runs of 2026-08-12, 08-13 and 08-14.
-- **Simulator** — iPhone 17 Pro, iOS 26.5, unauthorized, 2026-08-13. The frameworks do not function there: authorization fails and the picker shows categories with no apps. Some questions are answerable anyway — see the validation ordering below.
+- **Simulator** — iPhone 17 Pro, iOS 26.5, unauthorized. Runs of 2026-08-13 and 08-23. The frameworks do not function there: authorization never completes (below) and the picker shows categories with no apps. Some questions are answerable anyway — see the validation ordering below. iOS 26.5 is the newest simulator runtime this toolchain has: Xcode 26.6 ships the iOS 26.5 SDK, and `xcodebuild -downloadPlatform iOS -buildVersion 26.6` answers "iOS 26.6 is not available for download", so the simulator sits one minor version behind the device.
 - **SDK reading** — `.swiftinterface` files shipped with Xcode 26.6, under `.../SDKs/iPhoneOS.sdk/System/Library/Frameworks/<framework>.framework/Modules/<framework>.swiftmodule/arm64e-apple-ios.swiftinterface`. Never executed. What a declaration does is inference; the name is suggestive, not evidence.
+
+## What the simulator can and cannot exercise
+
+Measured 2026-08-23, iPhone 17 Pro / iOS 26.5, from a probe running inside the app's own bundle so it carries the app group entitlement. Each surface was tried independently, so one refusal does not hide the next answer.
+
+| Surface | Result |
+|---|---|
+| App group container — write then read | ok |
+| `ApplicationToken` decoded from JSON, as the unit tests mint one | ok |
+| `ManagedSettingsStore` — category shield written, read back, read back through a second handle, cleared | ok |
+| `ManagedSettingsStore` — application shield set to a synthetic token | **silently dropped**, reads back as an empty set |
+| `DeviceActivitySchedule.nextInterval` | resolves |
+| `DeviceActivityCenter.startMonitoring`, 16-minute interval | throws `unauthorized` |
+| `DeviceActivityCenter.startMonitoring`, 3-minute interval | throws `intervalTooShort` |
+| `DeviceActivityCenter.activities` | empty |
+| `AuthorizationCenter.authorizationStatus` | `notDetermined`, and the request never completes (above) |
+
+Two things are worth separating here. **`ManagedSettingsStore` is not broken in the simulator** — a category shield writes, survives a second handle on the same named store, and clears. What fails is the token: assigning a fabricated `ApplicationToken` leaves the set empty, so the store accepts the write and keeps nothing. A real token comes only from the picker, and the picker needs an authorization that never completes.
+
+That is the wall, and it is one wall rather than several. Everything that does not need a real token or a registered activity runs in the simulator: the rules engine, the runtimes, the JSON stores, the app group file lock and its contention, reconciliation ordering, and the shield's decision logic. Everything downstream of a token — a rendered shield, a shield button press, a `DeviceActivity` callback, and therefore any of the three extensions, which only launch when the system has a shield or an activity to hand them — is device-only. That last step is reasoned from the measurements above rather than attempted directly.
+
+## Authorization presents its consent alert in the simulator and then never completes
+
+Measured 2026-08-23, iPhone 17 Pro / iOS 26.5, through the app's own authorization gate driven by a UI test.
+
+`AuthorizationCenter.shared.authorizationStatus` reads `notDetermined`, and `requestAuthorization(for: .individual)` presents the genuine system alert — `"Pause" Would Like to Access Screen Time`, offering Continue and Don't Allow. Tapping Continue leaves the app on its authorization gate, no error is presented, and a relaunch shows the gate again. The same call from a hosted unit test, where nothing exists to tap the alert, ran past a two-minute allowance without returning.
+
+**The call does not fail — it does not come back.** That distinction matters for anything written against it: a caller waiting on `requestAuthorization` in the simulator waits forever rather than taking an error path. What holds the request open is not established; that it is still open is, from the gate's unlabelled button and the absent error.
+
+This supersedes the earlier reading of "authorization fails", which named an error path that was never observed.
 
 ## The shield configuration extension's sandbox
 
@@ -29,7 +59,7 @@ Two consequences worth carrying:
 
 **File operations in the app group container succeed inside the DeviceActivity monitor extension.** Measured on device, 2026-08-20. This is the opposite of the shield configuration extension's result above, against the same container from a sibling bundle.
 
-The instrument is `AppGroupSandboxProbe` (`Sources/Shared/AppGroupSandboxProbe.swift`). It runs the sequence `AppGroupFileLock` depends on — `open(O_CREAT|O_RDWR|O_CLOEXEC)`, `flock(LOCK_EX)`, `write`, `flock(LOCK_UN)` — against a file of its own, and names the step and the errno of a refusal rather than the fact that one happened. It runs on every monitor callback ahead of any other work, so no missing configuration or unmatched rule can short-circuit it.
+The instrument was `AppGroupSandboxProbe`, removed once this question was settled and recoverable from git history. It ran the sequence `AppGroupFileLock` depends on — `open(O_CREAT|O_RDWR|O_CLOEXEC)`, `flock(LOCK_EX)`, `write`, `flock(LOCK_UN)` — against a file of its own, and named the step and the errno of a refusal rather than the fact that one happened. It ran on every monitor callback ahead of any other work, so no missing configuration or unmatched rule could short-circuit it.
 
 Four monitor readings across one three-minute session, from `sysdiagnose_2026.08.20_22-41-03-0700`:
 
@@ -45,27 +75,40 @@ Four monitor readings across one three-minute session, from `sysdiagnose_2026.08
 22:40:39.315  monitor  app group file I/O permitted
 ```
 
-The shield action extension's reading is the control: that extension already does container file I/O successfully, so a refusal there would have been evidence about the probe rather than about a sandbox. The other half of the control is in `AppGroupSandboxProbeTests`, which establishes that the probe reports `permitted` only where the operations genuinely succeed, and names the step and errno where they do not.
+The shield action extension's reading is the control: that extension already does container file I/O successfully, so a refusal there would have been evidence about the probe rather than about a sandbox. The other half of the control was a unit test establishing that the probe reported `permitted` only where the operations genuinely succeeded, and named the step and errno where they did not.
 
 Across the whole run no entry at error level appeared from any `com.koubalabs.pause` subsystem, and no `SessionReconciliationIssue` was logged for any operation. The monitor reached its shield work rather than failing at the lock.
 
 **Which sandbox profile the monitor extension point is assigned is not recorded.** The `runningboardd` extension-overlay entries that named the shield extensions' profiles are absent from this archive. The permission is measured; the profile that grants it is not, so the finding stands on behavior alone.
 
-### Open: an expiry callback ran for thirty-one seconds
+### `stopMonitoring` returns from inside its own callback in about 10 ms
 
-The two callbacks that arrive at expiry returned long after the work the user sees was finished:
+Measured on device, 2026-08-23, with the call's entry and exit logged. From within `intervalWillEndWarning`, `DeviceActivityCenter.stopMonitoring` returned in 11 ms and the whole handler finished in 41 ms:
 
 ```
-22:40:39.290  monitor  intervalWillEndWarning — begins
-22:40:39.315  monitor  intervalDidEnd — begins
-22:40:39.376  shield   rendered "That's all for today."
-22:41:10.296  monitor  intervalWillEndWarning — returns, +31.006s
-22:41:10.325  monitor  intervalDidEnd — returns, +31.010s
+10:50:20.383  monitor  intervalWillEndWarning — begins
+10:50:20.413  monitor  stopMonitoring — began
+10:50:20.419  monitor  intervalDidEnd — begins on a second thread, takes the lock
+10:50:20.424  monitor  intervalDidEnd — returns
+10:50:20.424  monitor  stopMonitoring — returned, +0.011s
+10:50:20.424  monitor  intervalWillEndWarning — returns, +0.041s
 ```
 
-The shield was applied inside the first 86 ms — the configuration extension could not have rendered the exhausted variant otherwise — so nothing the user waits on was delayed. What consumed the following 31 seconds is unmeasured. The two handlers ran on different threads and returned 29 ms apart, which fits both being serialized behind one blocking call rather than each spending the time separately. A sysdiagnose began collecting at 22:41:03, so the collection itself is not ruled out as the cause.
+**What blocks is not the call.** An earlier run the same morning, from the same log archive, held the app group state lock across the call and took 31 seconds:
 
-It matters because an app extension runs on a runtime budget the system enforces. Instrumenting the reconcile's own stages would locate the wait; nothing here does that yet.
+```
+09:28:24.319  monitor  intervalWillEndWarning — begins, takes the app group state lock
+09:28:24.351  monitor  intervalDidEnd — begins on a second thread, blocks on the lock
+09:28:33.909  shield   action fails, POSIX 60 ETIMEDOUT, at the lock's 2s deadline
+09:28:55.309  monitor  intervalWillEndWarning — returns, +30.990s
+09:28:55.338  monitor  intervalDidEnd — returns, having waited out the lock
+```
+
+The two runs differ in one thing: whether the lock was still held when `stopMonitoring` was called. Released first, the stop costs 11 ms; held across it, nothing moves until the host tears the extension down.
+
+That the stop *waits on* the sibling callback is the reading, not a measurement. What supports it: `intervalDidEnd` runs entirely inside the stop's 11 ms, and the stop returns in the same millisecond that `intervalDidEnd` does. What would settle it is a run where the sibling callback is delayed by something other than the lock.
+
+This supersedes the earlier entry claiming the call does not return from inside a callback, which was inferred from the code path and a 2 ms gap rather than measured.
 
 ## DeviceActivity scheduling
 
@@ -148,6 +191,52 @@ The start callback arrived at the interval's start — 46 seconds after the `sta
 Registering a schedule whose interval is already under way therefore still produces an immediate `intervalDidStart` — the interval has begun, as far as the system is concerned. `stopMonitoring` behaves symmetrically: it is followed by `intervalDidEnd` within milliseconds, seen across six start/stop pairs on one activity and again when a rebuild tore an activity down.
 
 The corollary is what a monitor has to be written against: **an immediately arriving `intervalDidStart` or `intervalDidEnd` says nothing about whether a session began or expired.** The handler checks interval membership itself; it cannot read the callback as "the window just began" or "the window just ended".
+
+### The padded interval end is a separate alarm, and Pause's own stop cancels it
+
+Measured on device, 2026-08-23, from the host's log rather than from Pause's. A session registers a padded interval — `intervalEnd` set past the true expiry, with `warningTime` bringing `intervalWillEndWarning` back to it — and the DeviceActivity host, `UsageTrackingAgent`, turns that into **two named XPC alarms**, one per moment. A 5-minute session registered at 10:45:17:
+
+```
+10:45:17.317  UserEventAgent  Registering job "…UsageTrackingAgent.alarm.end-…/p913" due in 900 seconds.
+10:45:17.317  UserEventAgent  Registering job "…UsageTrackingAgent.end-warning-…/p913" due in 300 seconds.
+```
+
+300 s is the expiry; 900 s is the padded interval end. **The padding works.** When the warning fires, the host still holds the end where the schedule put it, and re-subscribes to that alarm:
+
+```
+10:50:20.334  UserEventAgent      Firing event "…end-warning-…/p913" which was due 2 sec ago.
+10:50:20.377  UsageTrackingAgent  (UsageTracking) Next end date is: Sun Aug 23 11:00:18 2026
+10:50:20.377  UsageTrackingAgent  Subscribed to event …alarm.end-…/p913 using token 221378
+10:50:20.379  UsageTrackingAgent  Notifying extension … that session.06c73ade… will end
+10:50:20.413  monitor             stopMonitoring began
+10:50:20.417  UserEventAgent      Received request to remove alarm "…alarm.end-…/p913" with token 221378
+10:50:20.418  UsageTrackingAgent  Notifying extension … that session.06c73ade… did end
+10:50:20.424  monitor             stopMonitoring returned, +0.011s
+```
+
+**`intervalDidEnd` at expiry is Pause's own doing.** The end alarm is removed 4 ms after `stopMonitoring` begins, on the token it was re-subscribed to 40 ms earlier, and the "did end" notification follows 1 ms after the removal — inside the stop, before it returns. The same sequence appears in the two earlier sessions of the day: at 09:28:24.270 the host re-armed the end alarm for 717 seconds later, and 79 ms after that Pause's stop removed it.
+
+That the removal is caused by `stopMonitoring` rather than merely following it is a reading of the ordering — the host logs the removal, not its reason — but the order, the shared token and the 4 ms gap repeat across all three sessions.
+
+This supersedes an earlier entry claiming both end callbacks arrive together for a short session, which read the second callback as the platform's and concluded that a padded `intervalEnd` cannot be relied on to defer `intervalDidEnd`. It can. What arrives at expiry is the echo of the stop.
+
+The consequence for a monitor is unchanged in one respect and reversed in another: the two handlers **do** run concurrently on different threads of one process, so anything taking a cross-process lock still contends with itself — but that concurrency is something the warning handler triggers, not something the schedule imposes.
+
+### The warning is delivered two to three seconds late
+
+Measured on device, 2026-08-23, across two sessions. `UserEventAgent` states the slip itself — `Firing event "…end-warning-…" which was due 2 sec ago` — and the callback reaches the extension a further ~50 ms later: an expiry of 09:28:21 was delivered at 09:28:24.319, and one of 10:50:17 at 10:50:20.383.
+
+The scheduler's five-second lateness check (`DeviceActivitySessionScheduler.register`) bounds the *representable* expiry — how faithfully the schedule can name the instant — and does not see this delivery slip, which lands on top of it. A session therefore runs two to three seconds past its stated length before the shield returns.
+
+### The monitor extension is launched once per session, not once per callback
+
+Measured on device, 2026-08-23. `launchd` spawned `MonitorExtension` at the session's `intervalDidStart` and the same process served the warning and the end five minutes later:
+
+```
+10:45:17.235  launchd  Successfully spawned MonitorExtension[59190] because launch job demand
+```
+
+Each callback takes a fresh RunningBoard `com.apple.extension.session` assertion against the live process rather than relaunching it. The host is `UsageTrackingAgent`, one process per install. What ends the extension's life is the host tearing it down — which is what bounded the 31-second deadlock rather than any timeout of Pause's own.
 
 ### `intervalWillStartWarning` fires at registration when its moment has already passed
 

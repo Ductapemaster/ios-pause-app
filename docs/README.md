@@ -4,7 +4,7 @@ Pause puts a deliberate pause and a daily allowance between a reflex and an app.
 
 ## The model
 
-A **rule** covers one app with a daily allowance: how many sessions, and how long each runs. A covered app is **shielded** by Screen Time. Tapping through the shield opens Pause, which runs a **countdown** in the foreground; only when it completes can the user spend a session. Spending one grants timed access, and expiry restores the shield. The allowance renews at the start of the next **allowance day**, which begins at the daily reset — a setting, on a fifteen-minute grid, applying to all seven days, that defaults to midnight.
+A **rule** covers one app with a daily allowance: how many sessions, and how long each runs. A covered app is **shielded** by Screen Time. Tapping through the shield opens Pause, which runs a **countdown** in the foreground; only when it completes can the user spend a session. Spending one grants timed access, and expiry restores the shield. The allowance renews at the start of the next **allowance day**, which begins at the daily reset — a setting, on a fifteen-minute grid, applying to all seven days, that defaults to midnight. The rules list shows each app's charged sessions against its limit for the day in progress; this is the same allowance the shield reports, and both resolve it the same way ([the design](design/session-usage-display.md)).
 
 Two properties hold the design together:
 
@@ -14,6 +14,8 @@ Two properties hold the design together:
 ## Decisions that shape it
 
 **State lives in JSON files under one App Group lock.** Every process — app, monitor, shield config, shield action — coordinates through one lock file, and a compound operation holds it from first read through the final shield decision. SQLite was weighed and declined: its write-ahead journal coordinates through cross-process shared memory, which interacts badly with iOS file protection on a locked device, and that is exactly when the extensions run. The current design approximates the transactions SQLite would give by holding one lock across the whole operation.
+
+**No framework call happens while the lock is held.** The lock protects the JSON state and nothing else, so a `DeviceActivity` or `ManagedSettings` call belongs outside it. Holding one across `stopMonitoring` deadlocked the monitor for 31 seconds: both end callbacks arrive together on different threads of the one extension process, and the sibling blocked on the lock is what the stop was waiting on. Released first, the same call costs 11 ms. The mechanism is in [the session-end note](research/session-end-hang.md).
 
 **The shield configuration extension can read but not write.** Its sandbox refuses every write in the App Group container. The monitor extension is not so limited — file I/O from it is permitted, measured across all four callbacks of a live session. Repairs therefore run from the app or the monitor, never from the shield.
 
@@ -28,7 +30,7 @@ Two properties hold the design together:
 - **One pending slot, not a queue.** A second save replaces a scheduled change for that app rather than stacking onto it, and cancelling is the only way back to the rules in force.
 - **A save states its opinion by rebuilding.** Touched is inferred from the resulting document rather than declared by the screen, so an editor save that changes nothing reads as untouched and carries a scheduled change forward.
 - **The countdown length is the one field a late edit reaches.** It is not per-day, so it has no reset to ride in on; shortening it late takes effect that much sooner. Accepted — the exposure is a few seconds.
-- **Expiry restoration is verified at three minutes, not sixteen.** A session over fifteen minutes ends on a different callback, and only the shorter one has been observed. Tracked in [the roadmap](ROADMAP.md).
+- **The scene-interruption split is not verified on the phone.** Whether a notification banner raised over a countdown abandons the pause is reachable only by a person with a device; unit tests reach the model, not a SwiftUI scene phase. Left unverified deliberately — the failure is immediate and obvious in ordinary use, so it surfaces as a bug report more cheaply than as a staged check.
 - **Moving the daily reset refills the day.** A reset-time change applies the moment it is saved, and a session count rolls over whenever the allowance day's label changes — in either direction — so setting the reset a few minutes out hands back the day's sessions, which makes the cap advisory rather than enforced. Accepted for the comparison logic it saves, with the guard that would close it named in [the design](design/configurable-daily-reset.md).
 
 ## Where things are

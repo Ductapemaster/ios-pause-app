@@ -16,6 +16,44 @@ Dan is the user and product manager; Claude is the engineering manager and engin
 - Treat `docs/product-requirements.md` as the product source of truth.
 - Keep Apple platform and tooling choices explicit in implementation plans; none have been established in this fresh repository.
 
+## Testing on the device
+
+**When a change is built and ready to try on the phone, install it — don't stop at "here's the command."** The paired iPhone 16 Pro is `<device-id>`, `Local.xcconfig` carries the team ID, and the `Pause` scheme builds the app with all three extensions:
+
+```bash
+xcodegen generate
+xcodebuild -project Pause.xcodeproj -scheme Pause \
+  -destination 'id=<device-id>' \
+  -derivedDataPath /tmp/pause-dd build
+xcrun devicectl device install app \
+  --device <device-id> \
+  /tmp/pause-dd/Build/Products/Debug-iphoneos/Pause.app
+```
+
+Reinstalling over the existing build keeps the app-group container, so rules and runtimes survive. Confirm first only when something would actually be destroyed — a bundle ID change or a signing change that forces a delete.
+
+Device checks are batched deliberately: `docs/ROADMAP.md` under Deferred lists what is owed on the current build, and they ride one trip to the phone. Name the ones the new build unblocks when handing it over.
+
+## Reading the device's logs
+
+**When the question is *when* something ran, read it off the device rather than asking Dan to watch for it.** Background callbacks — the daily reset, a session expiring, the monitor waking — fire at hours nobody should be awake for, and "the count had renewed by morning" cannot tell 05:00 from midnight. The extensions log at `.notice` so these lines survive into the log store, and `log collect` pulls them back:
+
+```bash
+sudo /usr/bin/log collect --device-udid <device-udid> \
+  --start "2026-08-23 22:00:00" --output /tmp/pause.logarchive
+
+/usr/bin/log show /tmp/pause.logarchive \
+  --predicate 'subsystem BEGINSWITH "com.koubalabs.pause"' --style compact
+```
+
+Four things fail this before it works:
+- **`/usr/bin/log`, spelled in full** — zsh has a `log` builtin that swallows the arguments.
+- **`sudo` is required**, and it needs a terminal. Dan runs it with a `!` prefix, or approves the Touch ID prompt.
+- **The phone must be cabled.** `devicectl list devices` saying `available (paired)` is network pairing and is not enough; it must read `connected`, or the collect fails with "Device not configured".
+- **`--start` must precede the event.** An archive whose window ends before the callback holds no lines for it, which looks exactly like an extension that never woke.
+
+An empty result is not evidence of failure on its own: the monitor extension only launches at a callback, so a window covering only idle hours is legitimately silent. Confirm the window contains the event before reading anything into a gap.
+
 ## Where things go
 
 Create each doc straight into its home by what it is — the folder *is* its role, and it exists as soon as its first file does (don't pre-create `docs/`; a fresh repo is just this file + README.md):

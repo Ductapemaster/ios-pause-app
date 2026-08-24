@@ -30,23 +30,10 @@ struct RuleEditorView: View {
                 AppTokenLabel(applicationToken: applicationToken)
             }
 
-            Section {
-                Stepper(value: $sessionsPerDay, in: 1...20) {
-                    LabeledContent("Sessions per day") {
-                        Text("\(sessionsPerDay)")
-                            .font(.system(.body, design: .rounded).monospacedDigit())
-                    }
-                }
-
-                Stepper(value: $sessionLengthMinutes, in: 1...120) {
-                    LabeledContent("Session length") {
-                        Text("\(sessionLengthMinutes) min")
-                            .font(.system(.body, design: .rounded).monospacedDigit())
-                    }
-                }
-            } footer: {
-                Text("The daily allowance renews at the day reset.")
-            }
+            AllowanceSection(
+                sessionsPerDay: $sessionsPerDay,
+                sessionLengthMinutes: $sessionLengthMinutes
+            )
 
             Section {
                 Button("Remove app", role: .destructive) {

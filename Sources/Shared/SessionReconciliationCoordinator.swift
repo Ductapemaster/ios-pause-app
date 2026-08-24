@@ -46,6 +46,9 @@ public enum SessionReconciliationServiceError: LocalizedError {
 public struct SessionReconciliationResult: LocalizedError {
     public var repairRuleIDs: Set<UUID> = []
     public var issues: [SessionReconciliationIssue] = []
+    /// The expiry activity this pass finished with, which its caller must stop.
+    /// Reported rather than stopped so the stop happens outside the state lock.
+    public var pendingStopActivityName: String?
 
     public var errorDescription: String? {
         guard !issues.isEmpty else { return nil }
@@ -70,7 +73,8 @@ public enum SessionReconciliationTrigger: Equatable, Sendable {
 }
 
 /// Coordinates one synchronous reconciliation pass. The caller owns framework
-/// isolation; this type only orders storage, shield, and monitor operations.
+/// isolation; this type only orders storage and shield operations, and reports
+/// the expiry activity the caller still has to stop.
 public struct SessionReconciliationCoordinator {
     private let loadFailedGrantBlocks: () throws -> Set<UUID>
 
@@ -85,8 +89,7 @@ public struct SessionReconciliationCoordinator {
         loadRuntime: (UUID) throws -> RuleRuntime?,
         saveRuntime: (RuleRuntime, UUID) throws -> Void,
         clearFailedGrantBlock: (UUID) throws -> Void,
-        applyShields: () throws -> Void,
-        stopMonitoring: (String) throws -> Void
+        applyShields: () throws -> Void
     ) -> SessionReconciliationResult {
         var result = SessionReconciliationResult()
         let markerIDs: Set<UUID>?
@@ -242,17 +245,7 @@ public struct SessionReconciliationCoordinator {
         if case let .intervalWillEndWarning(_, activityName) = trigger,
            selectedCallbackCanStop,
            shieldsApplied {
-            do {
-                try stopMonitoring(activityName)
-            } catch {
-                result.issues.append(
-                    SessionReconciliationIssue(
-                        ruleID: trigger.selectedRuleID,
-                        operation: .stopMonitoring,
-                        underlyingError: error
-                    )
-                )
-            }
+            result.pendingStopActivityName = activityName
         }
         return result
     }
