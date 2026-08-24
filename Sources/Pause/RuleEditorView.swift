@@ -58,6 +58,15 @@ struct RuleEditorView: View {
                 .disabled(pendingChange != nil)
             }
         }
+        // The controls show the values in force, never a proposed value the
+        // user cannot currently edit. Pending state changing — a deferred
+        // save locking the controls around what was just typed, or a cancel
+        // unlocking them again — is exactly when the in-force values and the
+        // on-screen state can have drifted apart, in either direction, so
+        // both transitions reseed from the same source.
+        .onChange(of: pendingChange) { _, _ in
+            reseedFromConfiguration()
+        }
     }
 
     private let ruleID: UUID
@@ -66,6 +75,22 @@ struct RuleEditorView: View {
     /// differently under a pending change comes from this one lookup.
     private var pendingChange: PendingRuleChange? {
         model.pendingChange(forRuleID: ruleID)
+    }
+
+    /// Resets the on-screen controls to the values in force, discarding
+    /// whatever the user had typed. Called whenever pending state changes,
+    /// since that is exactly when a proposed value could otherwise be left
+    /// showing: a deferred save just locked the controls around it, or a
+    /// cancel just unlocked them without touching it. If the rule is no
+    /// longer in `model.configuration` — removed out from under this screen
+    /// — there is nothing to reseed to, so the on-screen values are left as
+    /// they are; the row is gone from the list either way.
+    private func reseedFromConfiguration() {
+        guard let rule = model.configuration.rules.first(where: { $0.id == ruleID }) else {
+            return
+        }
+        sessionsPerDay = rule.sessionsPerDay
+        sessionLengthMinutes = rule.sessionLengthMinutes
     }
 
     private func save() {
