@@ -6,7 +6,7 @@ Every entry names how it was established. Anything that was not run says so — 
 
 Three rigs stand behind everything below:
 
-- **Device** — iPhone 16 Pro, iOS 26.6, Family Controls authorized. Runs of 2026-08-12, 08-13 and 08-14.
+- **Device** — iPhone 16 Pro, iOS 26.6, Family Controls authorized. Runs of 2026-08-12, 08-13, 08-14 and 08-24.
 - **Simulator** — iPhone 17 Pro, iOS 26.5, unauthorized. Runs of 2026-08-13 and 08-23. The frameworks do not function there: authorization never completes (below) and the picker shows categories with no apps. Some questions are answerable anyway — see the validation ordering below. iOS 26.5 is the newest simulator runtime this toolchain has: Xcode 26.6 ships the iOS 26.5 SDK, and `xcodebuild -downloadPlatform iOS -buildVersion 26.6` answers "iOS 26.6 is not available for download", so the simulator sits one minor version behind the device.
 - **SDK reading** — `.swiftinterface` files shipped with Xcode 26.6, under `.../SDKs/iPhoneOS.sdk/System/Library/Frameworks/<framework>.framework/Modules/<framework>.swiftmodule/arm64e-apple-ios.swiftinterface`. Never executed. What a declaration does is inference; the name is suggestive, not evidence.
 
@@ -287,6 +287,38 @@ public let secondaryButtonSubmenuItems: [String]?
 ```
 
 on `ShieldConfiguration`, paired with `ShieldAction.firstSecondarySubmenuItemPressed`, `.secondSecondarySubmenuItemPressed` and `.thirdSecondarySubmenuItemPressed` — so up to three named items, each with its own action case. Nothing here has displayed one, and how the submenu presents is unknown. What it settles is that the shield template is less fixed than "icon, title, subtitle, two buttons" implies.
+
+### A shielded app's web domain is shielded too, by a shield this app cannot configure
+
+Shielding an `ApplicationToken` shields that app's associated web domains along with it. LinkedIn was covered as an app rule, and `www.linkedin.com` in a browser returned the system's "Restricted" screen — the Screen Time hourglass, one `OK` button, no app name and no session count. Content & Privacy Restrictions were off on the device, so nothing else on the phone asked for the block, and it tracks the rule: it is Pause's shield reaching the domain.
+
+Pause never names a domain. `ShieldReconciler` writes `shield.applications` and nothing else — no `shield.webDomains`, no category policy. The extension of an app shield to its domains is iOS's, applied to whatever sits in the application set.
+
+**The extension is never consulted for that shield.** Measured on device, 2026-08-24. A probe build overrode both `configuration(shielding webDomain:)` variants and `handle(action:for webDomain:)`, each logging its inputs at `.notice` and returning a title of `PAUSE PROBE`. Installed 22:52:31; `www.linkedin.com` reloaded on a killed tab and its button pressed. The screen stayed on the system's "Restricted" and the log archive holds no line from either override:
+
+```
+2026-08-24 23:41:03.121 ShieldConfigExtension [shieldconfig:shield] Shield render began
+2026-08-24 23:41:03.129 ShieldConfigExtension [shieldconfig:shield] Shield resolved: 1 session left today
+2026-08-24 23:41:03.129 ShieldConfigExtension [shieldconfig:shield] Shield render returned
+```
+
+Those three lines are an app shield rendering from the probe build in the same window, which is what makes the silence a finding rather than a dead install. A web-domain shield derived by association is the system's own surface: it does not reach this app's `ShieldConfigurationDataSource` for its appearance, and a press on it does not reach the `ShieldActionDelegate`.
+
+What follows for the product is that a browser is a dead end. The shield refuses the domain, states no reason Pause chose, and offers no route into a pause or a session — the only way in is the app icon. Whether a granted session lifts the domain along with the app is not measured. The domain is shielded by association with a token a grant removes, so the association tracking that removal is the expectation, and an association applied in one direction only would leave the domain blocked through a session that is running.
+
+**A domain shielded deliberately is a separate question, unmeasured.** `shield.webDomains` takes `Set<WebDomainToken>` and the picker's Web Domains section supplies the tokens, which `RulesView` currently discards. Whether a domain Pause puts there consults these same overrides — the case the hooks presumably exist to serve — has not been run. Nothing above bears on it.
+
+The SDK shape, read from `.swiftinterface` and never executed, is what a design would have to work with:
+
+```swift
+public struct WebDomain {
+  public let domain: String?
+  public let token: WebDomainToken?
+}
+public typealias WebDomainToken = Token<WebDomain>
+```
+
+`WebDomain` carries a readable domain string; `WebDomainToken` is opaque, and no declaration in `ManagedSettings` maps one back to the `ApplicationToken` it was derived from. The action delegate receives the token alone, with no domain string, so the surface that would have to identify a rule is the one with least to identify it by.
 
 ### Reported limits, none verified here
 
