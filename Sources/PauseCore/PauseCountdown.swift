@@ -158,6 +158,25 @@ public enum PauseActivationOutcome<Payload> {
     case resolved(Payload)
 }
 
+/// Why `activate` returned the outcome it did. Instrumentation only — nothing
+/// branches on this. A route name alone cannot separate a shield press that was
+/// discarded from one that resolved to the same screen for a different reason,
+/// which is what the log line has to answer.
+public enum PauseActivationReason: String, Sendable {
+    case activationAlreadyHandled
+    case grantInProgress
+    case configurationRepairRequired
+    case notAuthorized
+    case configurationMissingNoIntent
+    case configurationMissingWithIntent
+    case configurationMissingIntentUnreadable
+    case configurationFailed
+    case intentNil
+    case intentUnreadable
+    case intentUnresolvable
+    case intentResolved
+}
+
 extension PauseActivationOutcome: Equatable where Payload: Equatable {}
 extension PauseActivationOutcome: Sendable where Payload: Sendable {}
 
@@ -250,27 +269,45 @@ public struct PauseActivationCoordinator: Sendable {
         consumeIntent: () throws -> Intent?,
         resolveIntent: (Intent) throws -> PauseActivationResolution<Payload>,
         cleanup: () -> Void,
-        reconcile: () -> Void
+        reconcile: () -> Void,
+        reasonSink: (PauseActivationReason) -> Void = { _ in }
     ) -> PauseActivationOutcome<Payload> {
-        guard !hasHandledCurrentActivation else { return .unchanged }
+        guard !hasHandledCurrentActivation else {
+            reasonSink(.activationAlreadyHandled)
+            return .unchanged
+        }
         hasHandledCurrentActivation = true
 
-        guard foregroundState != .grantStarted else { return .unchanged }
+        guard foregroundState != .grantStarted else {
+            reasonSink(.grantInProgress)
+            return .unchanged
+        }
 
         if requiresConfigurationRepair {
             _ = try? consumeIntent()
+            reasonSink(.configurationRepairRequired)
             return .repair
         }
-        guard isAuthorized else { return .configuration }
+        guard isAuthorized else {
+            reasonSink(.notAuthorized)
+            return .configuration
+        }
 
         switch configurationState {
         case .missing:
             do {
-                return try consumeIntent() == nil ? .configuration : .repair
+                if try consumeIntent() == nil {
+                    reasonSink(.configurationMissingNoIntent)
+                    return .configuration
+                }
+                reasonSink(.configurationMissingWithIntent)
+                return .repair
             } catch {
+                reasonSink(.configurationMissingIntentUnreadable)
                 return .repair
             }
         case .failed:
+            reasonSink(.configurationFailed)
             return .repair
         case .knownGood:
             break
@@ -282,10 +319,12 @@ public struct PauseActivationCoordinator: Sendable {
         let intent: Intent
         do {
             guard let consumedIntent = try consumeIntent() else {
+                reasonSink(.intentNil)
                 return .configuration
             }
             intent = consumedIntent
         } catch {
+            reasonSink(.intentUnreadable)
             return .repair
         }
 
@@ -293,9 +332,11 @@ public struct PauseActivationCoordinator: Sendable {
         do {
             resolution = try resolveIntent(intent)
         } catch {
+            reasonSink(.intentUnresolvable)
             return .repair
         }
 
+        reasonSink(.intentResolved)
         return .resolved(resolution.payload)
     }
 }
