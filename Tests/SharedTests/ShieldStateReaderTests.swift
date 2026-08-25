@@ -57,7 +57,7 @@ final class ShieldStateReaderTests: XCTestCase {
             .presentation(for: token, now: now, calendar: calendar)
 
         XCTAssertEqual(presentation.subtitle, "That's all for today.")
-        XCTAssertEqual(presentation.primaryButtonTitle, "Done for today")
+        XCTAssertEqual(presentation.primaryButtonTitle, "Close")
     }
 
     func testThrowsWhenNoConfigurationHasBeenWritten() throws {

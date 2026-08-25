@@ -105,9 +105,11 @@ public enum RuleLookup {
 public struct ShieldPresentation: Equatable, Sendable {
     public let subtitle: String
     public let primaryButtonTitle: String
-    /// The same on every shield, including a refusal: whatever the shield says,
-    /// leaving without starting a session is always available.
-    public let secondaryButtonTitle = "Not now"
+    /// Nil on a refusal, where the shield shows one button. A second button is
+    /// there to offer a way out beside the pause; where nothing can be started
+    /// the primary button already is that way out, so a second one would only
+    /// restate it.
+    public let secondaryButtonTitle: String?
 
     public init(rule: AppRule, decision: SessionDecision) {
         switch decision {
@@ -117,22 +119,36 @@ public struct ShieldPresentation: Equatable, Sendable {
             let remaining = rule.sessionsPerDay - sessionNumber + 1
             subtitle = "\(remaining) session\(remaining == 1 ? "" : "s") left today"
             primaryButtonTitle = "Take a breath"
+            secondaryButtonTitle = "Not now"
         case .refused(.dailyAllowanceExhausted):
             subtitle = "That's all for today."
-            primaryButtonTitle = "Done for today"
+            primaryButtonTitle = Self.refusalButtonTitle
+            secondaryButtonTitle = nil
         case .refused(.sessionAlreadyOpen):
             subtitle = "A session is already open"
-            primaryButtonTitle = "Done for today"
+            primaryButtonTitle = Self.refusalButtonTitle
+            secondaryButtonTitle = nil
         }
     }
 
+    /// Says only what the press does. The refusal itself is the subtitle's job,
+    /// which is what keeps one label honest across all three refusals — an
+    /// allowance that is spent, a session already running, and an app the
+    /// configuration cannot resolve are three different reasons for the same
+    /// single way out.
+    static let refusalButtonTitle = "Close"
+
+    /// The subtitle names opening Pause as something for the user to do, not as
+    /// something the button does: the configuration extension cannot launch the
+    /// app, so a button promising it could not keep the promise.
     public static let repair = ShieldPresentation(
-        subtitle: "Open Pause to repair this app",
-        primaryButtonTitle: "Done for today"
+        subtitle: "Pause can't check this app. Open Pause to fix it.",
+        primaryButtonTitle: refusalButtonTitle
     )
 
     private init(subtitle: String, primaryButtonTitle: String) {
         self.subtitle = subtitle
         self.primaryButtonTitle = primaryButtonTitle
+        self.secondaryButtonTitle = nil
     }
 }

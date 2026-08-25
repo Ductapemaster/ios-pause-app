@@ -56,7 +56,7 @@ final class ShieldPrimaryActionTests: XCTestCase {
         XCTAssertEqual(outcome, .dismiss)
     }
 
-    /// The repair shield shows the same "Done for today" button, so an app the
+    /// The repair shield shows the same "Close" button, so an app the
     /// configuration cannot resolve must dismiss rather than swallow the press.
     func testDismissesWhenTheAppCannotBeResolved() throws {
         let directoryURL = try temporaryDirectory()
