@@ -12,28 +12,31 @@ struct PauseView: View {
     private let timer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        VStack(spacing: 28) {
-            Spacer()
+        VStack(spacing: 20) {
+            AppIdentityBadge(applicationToken: entry.applicationToken)
 
-            AppTokenLabel(applicationToken: entry.applicationToken)
-                .font(.title2.weight(.semibold))
+            Text(sessionSummary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
 
-            VStack(spacing: 6) {
-                Text("Session \(entry.details.sessionNumber) of \(entry.details.sessionsPerDay)")
-                    .font(.headline)
-                Text("\(entry.details.lengthMinutes) minute session")
-                    .foregroundStyle(.secondary)
+            BreathingCircles {
+                VStack(spacing: 6) {
+                    Text(remainingSeconds, format: .number)
+                        .font(.system(size: 52, weight: .semibold, design: .rounded).monospacedDigit())
+                        .contentTransition(.numericText())
+                        .accessibilityLabel("\(remainingSeconds) seconds remaining")
+
+                    Text("Take a breath")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.secondary)
+                }
             }
-
-            Text(remainingSeconds, format: .number)
-                .font(.system(size: 88, weight: .semibold, design: .rounded).monospacedDigit())
-                .contentTransition(.numericText())
-                .accessibilityLabel("\(remainingSeconds) seconds remaining")
+            .frame(maxHeight: .infinity)
 
             Text("Stay in Pause until the countdown finishes. Leaving cancels this attempt.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: 320)
+                .frame(maxWidth: 300)
 
             Button {
                 onUseSession()
@@ -52,15 +55,20 @@ struct PauseView: View {
 
             Button("Cancel", role: .cancel, action: onCancel)
                 .disabled(isGrantRequested)
-
-            Spacer()
         }
+        .frame(maxWidth: .infinity)
         .padding(24)
-        .navigationTitle("Pause")
+        .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden()
         .onReceive(timer) { date in
             now = date
         }
+    }
+
+    private var sessionSummary: String {
+        let minutes = entry.details.lengthMinutes
+        let unit = minutes == 1 ? "minute" : "minutes"
+        return "Session \(entry.details.sessionNumber) of \(entry.details.sessionsPerDay) · \(minutes) \(unit)"
     }
 
     private var remainingSeconds: Int {
