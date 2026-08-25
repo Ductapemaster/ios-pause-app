@@ -12,11 +12,15 @@ A duration policy is the design, and it is the part that needs deciding rather t
 
 Two things are already established. A cooldown is expressible where a "leave and re-enter before starting again" rule is not: the shield configuration extension can read the App Group but never write to it, so any rule needing a mark cleared by the user's action depends on the shield action extension running, and dismissing the shield by swiping the app away runs nothing. A cooldown asks only whether a moment has passed, which the extension can answer from a timestamp and its own clock. The timestamp is the second thing: the monitor extension already writes at session end — `SessionReconciliationCoordinator` clears the expired session and saves the runtime — so stamping the moment costs one field on `RuleRuntime` rather than a new store.
 
+Blocking periods are the same shape — a stretch during which entry is refused — and the shield already has to answer one question, whether a session may start now. Designing the two together is likely cheaper than growing separate machinery and reconciling it later.
+
 ## Deferred
 
 **Applying a picker selection blocks the main thread.** Adding an app holds the interface while each added app takes a file-lock cycle plus a JSON encode and atomic write, `configurationStore.save` takes another, and `ShieldReconciler.reconcile` holds a lock while re-reading every configured target's runtime and finishes with a `ManagedSettingsStore` write. Two `@Published` writes land in one run-loop turn, each rebuilding a `Label(ApplicationToken)` per rule. `AppModel` is `@MainActor` and no actor, `Task`, or dispatch hop exists on the path. Which part dominates is unmeasured; the ManagedSettings and FamilyControls costs are not visible from source.
 
 Moving the work off the main actor would rework the locking design and the unit tests encode these calls as synchronous throughout (why: deferred on that basis — the daily cost is low because the path is configuration, not the shield-pause-use loop). A hang has since been reported, but it was traced to [the session-end lock-out](research/session-end-hang.md) rather than to this path, which leaves this entry deferred on its original reasoning and still unmeasured.
+
+**The repair shield's button contradicts its own text.** The repair presentation reads *"Open Pause to repair this app"* above a primary button labelled *"Done for today"*, which dismisses the shield rather than opening Pause. The three refusal presentations share one primary label in `ShieldPresentation` (`Sources/Shared/RuleLookup.swift`), which is how the repair case inherited a title written for a spent allowance. The screen names an action its button does not take, so an app in the repair state cannot be repaired from the screen telling the user to repair it.
 
 ## Not planned
 
