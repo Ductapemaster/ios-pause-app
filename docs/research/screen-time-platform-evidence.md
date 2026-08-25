@@ -334,7 +334,21 @@ The icon also cannot be captured: `ImageRenderer` over the label yields red-cros
 
 **`installedApplications` does not lift this.** `FamilyActivityData.installedApplications` (iOS 26.4) returns `[ManagedSettings.Application]`, and that type carries `bundleIdentifier`, `token` and `localizedDisplayName` and no image at any size. `ManagedSettings`' whole interface mentions no icon. So the entitlement that unlocks it is worth requesting for [a picker Pause owns](../ROADMAP.md) and is no help at all for icon size.
 
-**The name will not centre.** `FamilyActivityTitleView` reports an ideal width of about one character, so `.fixedSize()` truncates it to a single glyph — measured on device, where "LinkedIn" rendered as "L". Left free it lays out greedily and its content sits at the left edge of whatever column holds it. A `LabelStyle` does buy independent treatment of the title here, which is the one thing it is good for, but it cannot change either behaviour.
+**The name is frozen the same way, and additionally cannot be centred.** `FamilyActivityTitleView` ignores `.font`, lays out greedily, aligns its text to the leading edge, and ignores alignment modifiers. Measured on device with a probe rendering seven configurations of one token side by side:
+
+| Configuration | Measured frame | Result |
+|---|---|---|
+| bare | 370 x 25 | full name, leading-aligned |
+| `.font(.system(size: 40))` | 370 x 25 | **identical to bare** — text no larger |
+| `.font(.system(size: 40))` + `.fixedSize()` | ~20 x 25 | clipped to two glyphs |
+| `.fixedSize()` | ~20 x 25 | clipped to two glyphs |
+| `.frame(width: 260)` + `.multilineTextAlignment(.center)` | 260 x 25 | full name, still leading-aligned |
+| size 40 + width 260 + centred | 260 x 25 | full name, still leading-aligned, text no larger |
+| full `Label` at size 40 | 370 x 32 | icon 35pt, name unchanged, whole group leading-aligned |
+
+Three things follow. The height is 25pt in every case, so the name has one drawn size just as the icon does — roughly 17pt text — and no large app name is available. `.multilineTextAlignment` does not reach it, so it cannot be centred inside a frame. And because it always fills the width it is offered, its drawn text width cannot be measured, which closes off sizing a frame to hug it.
+
+A custom `LabelStyle` buys independent treatment of title and icon, which is the one thing it is good for, but it changes none of this — modifiers still compose outside the view's own body.
 
 Apple's position, such as it is, is that `Label(applicationToken)` is the renderer: [forum thread 722618](https://developer.apple.com/forums/thread/722618) has an Apple Frameworks Engineer and DTS both directing developers to it without addressing size, and [thread 731387](https://developer.apple.com/forums/thread/731387) raises the small icon with no Apple reply. Nothing in the iOS 17 through 26 interfaces revises it.
 
