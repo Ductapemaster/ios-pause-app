@@ -59,7 +59,11 @@ Two behaviours follow from where the stamp is written, with no code of their own
 
 A cooldown change is judged by the rule that governs every other allowance edit. Lengthening a cooldown permits less use and applies at once; shortening it permits more and waits for the next daily reset.
 
-`ConfigurationComparison.isLoosening(from:to:)` already treats `GlobalSettings` as a unit and gains one comparison — `after.cooldownMinutes < before.cooldownMinutes`. The existing scheduled-change machinery carries the rest, and the settings screen locks the control while a change is pending, as it does for the pause duration.
+`ConfigurationComparison.isLoosening(from:to:)` already treats `GlobalSettings` as a unit and gains one comparison — `after.cooldownMinutes < before.cooldownMinutes`.
+
+The rest of that machinery needs widening rather than reuse. `PendingSettingsChange` carries `pauseSeconds` alone, on the stated grounds that a shorter pause is the only global edit that can loosen. A deferrable cooldown makes that false, and leaving it would fail silently: `pendingSettingsChange()` returns nothing when only the cooldown moved, so the settings controls stay unlocked, and the next settings save rebuilds the whole unit and discards the pending change — the silent overwrite the locking exists to close.
+
+`PendingSettingsChange` therefore names only the field that moved, holding an optional pause duration and an optional cooldown, in the shape `PendingRuleChange.allowance` already uses for the same reason. `ScheduledChangeWording.settingsDescription` widens with it, so a pending change reads back as whichever of the two it carries. The settings screen locks both controls together, as it already does for the pause duration and the day reset.
 
 ## What the shield says
 
