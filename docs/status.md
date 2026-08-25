@@ -1,9 +1,9 @@
 ## Status — resume here (2026-08-24)
 
-**State:** The post-session cooldown is built, merged to `design/phased-project-plan`, and green at 340 tests; the build is installed and the cooldown refusal was seen working on the phone. A global setting of zero to ten minutes refuses an app a new session for a stretch after one ends, and it ships switched off, so nothing changes until the Cooldown stepper is moved. The app switcher keeps showing a shielded app's last screen; that is iOS holding a stale snapshot, recorded in `docs/README.md` as a limit rather than a defect. Nothing is in flight.
+**State:** Phase 1 is closed and the post-session cooldown ships, merged to `design/phased-project-plan` and green at 340 tests. Phase 2 blocking periods are shelved as possibly unnecessary, moved to Not planned with their real cost recorded — a window needs no `DeviceActivity` registration, and the requirements contradict themselves on whether a window blocks or permits. Measured this session: iOS shields a restricted app's website along with the app, and never consults Pause's shield extensions for it, so that "Restricted" screen and its dead button are iOS's own. Written up in the research, README and roadmap docs, none of it committed yet. Nothing is in flight.
 
-**Next step:** Design Phase 2 blocking periods, which join `RulesEngine.decision` as a further guard (`docs/ROADMAP.md` under Next).
+**Next step:** Commit this checkpoint's doc edits on `design/phased-project-plan`.
 
 **Blockers:** No git remote, so nothing can be pushed. Every commit is local only.
 
-**Read first:** Shield work: `docs/research/screen-time-platform-evidence.md`. Blocking periods: `docs/design/post-session-cooldown.md`. Picker or add-flow: `docs/design/add-only-app-picker.md`. Monitor callbacks or the state lock: `docs/research/session-end-hang.md`.
+**Read first:** Shield or web surfaces: `docs/research/screen-time-platform-evidence.md`. Monitor callbacks or the state lock: `docs/research/session-end-hang.md`.
