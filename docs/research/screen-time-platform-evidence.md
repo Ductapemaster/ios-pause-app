@@ -320,6 +320,24 @@ public typealias WebDomainToken = Token<WebDomain>
 
 `WebDomain` carries a readable domain string; `WebDomainToken` is opaque, and no declaration in `ManagedSettings` maps one back to the `ApplicationToken` it was derived from. The action delegate receives the token alone, with no domain string, so the surface that would have to identify a rule is the one with least to identify it by.
 
+### An app's icon renders at a fixed 35pt and its name will not centre
+
+`Label(applicationToken)` is the only sanctioned way to draw an app's identity from a token, and both halves are fixed in ways no modifier reaches.
+
+**The icon is 35 x 35 points, always.** `FamilyActivityIconView` declares one member — `body` — with no initializer, no environment key and no size parameter anywhere in the framework's interface (`iPhoneOS26.5.sdk/.../FamilyControls.swiftinterface`, 361 lines, `FamilyActivityIconView` at :151). Its `body` returns `_ConditionalContent<ModifiedContent<FamilyActivitySlot.Representable, _FrameLayout>, Image>` — a remote-content slot already wrapped in a frame. In the shipping binary that frame is a literal: the constant `0x4041800000000000` (35.0) is loaded as a width/height pair at three sites, for the application, category and web-domain cases. The binary contains **no floating-point arithmetic instructions at all** across 51,869 lines of disassembly, so no code path exists that could scale it.
+
+That closes off every sizing route, and each was measured on device before the binary was read: `.font` at 48pt and 72pt drew an identical icon; `.frame(width: 56, height: 56)` centred a small icon in a large box, because the inner frame binds tighter; `.imageScale` and Dynamic Type cannot apply, the first reaching only SF Symbol images and the second having no arithmetic to drive. A custom `LabelStyle` gains nothing — SwiftUI modifiers compose outside-in, so anything applied to `configuration.icon` still wraps *around* the baked-in frame rather than inside it.
+
+`.scaleEffect` is the one lever that works, and it enlarges by stretching a raster the slot rendered once at 35pt. At roughly 2.3x — an 80pt target — the softness is obvious on the phone.
+
+The icon also cannot be captured: `ImageRenderer` over the label yields red-crossed placeholders, which follows from the content being drawn out of process by `FamilyControlsAgent` and vended back as an opaque remote layer. The app never holds the bitmap, which is the privacy mechanism working as designed.
+
+**`installedApplications` does not lift this.** `FamilyActivityData.installedApplications` (iOS 26.4) returns `[ManagedSettings.Application]`, and that type carries `bundleIdentifier`, `token` and `localizedDisplayName` and no image at any size. `ManagedSettings`' whole interface mentions no icon. So the entitlement that unlocks it is worth requesting for [a picker Pause owns](../ROADMAP.md) and is no help at all for icon size.
+
+**The name will not centre.** `FamilyActivityTitleView` reports an ideal width of about one character, so `.fixedSize()` truncates it to a single glyph — measured on device, where "LinkedIn" rendered as "L". Left free it lays out greedily and its content sits at the left edge of whatever column holds it. A `LabelStyle` does buy independent treatment of the title here, which is the one thing it is good for, but it cannot change either behaviour.
+
+Apple's position, such as it is, is that `Label(applicationToken)` is the renderer: [forum thread 722618](https://developer.apple.com/forums/thread/722618) has an Apple Frameworks Engineer and DTS both directing developers to it without addressing size, and [thread 731387](https://developer.apple.com/forums/thread/731387) raises the small icon with no Apple reply. Nothing in the iOS 17 through 26 interfaces revises it.
+
 ### Reported limits, none verified here
 
 Undocumented by Apple, widely reported, and **not measured on this device** — nothing here has approached any of the three. Recorded as raw numbers only:
