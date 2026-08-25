@@ -48,6 +48,8 @@ The read was proven directly rather than inferred from an absence. The instrumen
 
 Writes behave the other way, and not intermittently — on every render, across a session in which the shield action and monitor extensions wrote to that same suite normally, nothing the configuration extension wrote ever appeared.
 
+A refused write reads back as a successful one inside the same process, which is how this gets mis-measured. `UserDefaults.set` updates the process's own cache before the write is rejected, so a counter incremented and read back within one render climbs exactly as it would if the write had landed — and the extension process outlives individual renders, so it keeps climbing across several. Re-measured 2026-08-24: a counter rose 0 through 6 over renders spanning three minutes while the main app, reading the same key, saw `nil` throughout. The only reliable instrument is a second process reading the value, or the extension process restarting; a same-process read-back proves nothing.
+
 The denial comes from the sandbox profile iOS assigns the shield configuration extension point (`managed-settings-shield-configuration`), not from the bundle's entitlements or signature. [The shield repair variant note](shield-repair-variant.md) has the discriminator: the same code, entitlements and container run under the shield action extension's `plugin` profile with file access permitted, and under the configuration extension's profile every file operation in the App Group container returns `EPERM`.
 
 Two consequences worth carrying:
