@@ -5,12 +5,24 @@ private enum Pulse {
     static let holdDuration: Double = 0.9
     static let contractDuration: Double = 6
     static let restingScale: CGFloat = 0.55
+
+    /// The space the circles reserve in a layout. The breath is a
+    /// render-time `scaleEffect`, so the circles draw far outside this box —
+    /// deliberately, spreading off the screen edges like a ripple — without
+    /// reflowing anything around them. Sized to hold the surrounding vertical
+    /// rhythm steady, not to contain the circles.
+    static let layoutSize: CGFloat = 260
 }
 
 /// Three concentric tinted circles that expand and contract on a slow loop,
 /// with an arbitrary centred view inside them. `isAnimated` off leaves them
 /// at rest, which is how the manual-return screen shows the same shape
 /// settled.
+///
+/// The innermost circle is sized so that at the bottom of the breath — its
+/// resting scale — it still fully contains the centre content: the 52pt
+/// numeral over the 15pt caption measures 100 x 86pt at its widest, a 132pt
+/// diagonal, against a resting inner diameter of 294 x 0.55 = 161.7pt.
 struct PulsingCircles<Center: View>: View {
     var isAnimated: Bool = true
     @ViewBuilder var center: () -> Center
@@ -25,9 +37,9 @@ struct PulsingCircles<Center: View>: View {
 
     private static var rings: [Ring] {
         [
-            Ring(radius: 130, opacity: 0.07, delay: 0),
-            Ring(radius: 100, opacity: 0.10, delay: 0.25),
-            Ring(radius: 70, opacity: 0.16, delay: 0.5),
+            Ring(radius: 273, opacity: 0.07, delay: 0),
+            Ring(radius: 210, opacity: 0.10, delay: 0.25),
+            Ring(radius: 147, opacity: 0.16, delay: 0.5),
         ]
     }
 
@@ -47,7 +59,7 @@ struct PulsingCircles<Center: View>: View {
 
             center()
         }
-        .frame(width: Self.rings[0].radius * 2, height: Self.rings[0].radius * 2)
+        .frame(width: Pulse.layoutSize, height: Pulse.layoutSize)
         .task {
             guard isAnimated else { return }
             while !Task.isCancelled {
@@ -61,7 +73,7 @@ struct PulsingCircles<Center: View>: View {
     }
 
     private var scale: CGFloat {
-        guard isAnimated else { return 1 }
+        guard isAnimated else { return Pulse.restingScale }
         return isExpanded ? 1 : Pulse.restingScale
     }
 
