@@ -64,14 +64,16 @@ Nothing in the list is multi-line, and nothing in the list carries a button.
 
 The controls read the values in force. Nothing pending can reach them, because a pending change locks them, so there is no second value they could be showing.
 
-Below the controls, a section names the change in words and carries a cancel scoped to this app alone:
-
-The controls are disabled whenever a change is pending, whichever kind:
+Below the controls, a section names the change in words and carries a cancel scoped to this app alone. Save and the allowance controls are disabled whenever a change is pending, whichever kind:
 
 - **Allowance loosening** — the section names what the allowance becomes and when, and the button reads *Cancel change*.
-- **Removal** — the section says the app leaves Pause at the reset and is shielded as normal until then, and the button reads *Cancel removal*.
+- **Removal** — the section leads with the pending state, saying removal is pending and that the app stays shielded as normal until it leaves Pause, and the button reads *Cancel removal*.
 
-Disabling closes a hazard rather than guarding against it. The editor saves a document built from the rules in force, which would write over whatever is scheduled and cancel it silently; that is why a row with a pending removal is not a link today. An editor that cannot save cannot do it.
+`Remove app` is hidden rather than disabled while a change is pending. Either kind leaves it with nothing useful to offer — the app is already on its way out, or the pending section above already carries the only action worth taking — so there is no control worth drawing.
+
+Locking Save and the allowance controls closes a hazard rather than guarding against it. The editor saves a document built from the rules in force, which would write over whatever is scheduled and cancel it silently. An editor that cannot save cannot do it.
+
+Saving and removing follow the same rule for whether the editor stays open: it dismisses only if the change applied at once, and stays open if the change came back pending, so the wait is visible where it was chosen, under the section that can cancel it. A removal drops coverage, which is always a loosening, so removing an app leaves the editor open the same way a save that only loosens does.
 
 ## Where a pending pause duration is cancelled
 
