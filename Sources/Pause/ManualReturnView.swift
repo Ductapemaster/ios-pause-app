@@ -11,19 +11,36 @@ struct ManualReturnView: View {
     let content: ManualReturnContent
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            AppTokenLabel(applicationToken: content.applicationToken)
-                .font(.title2.weight(.semibold))
+        VStack(spacing: 20) {
+            AppIdentityBadge(applicationToken: content.applicationToken)
+
+            PulsingCircles(isAnimated: false) {
+                ZStack {
+                    Circle()
+                        .fill(Color.pauseTint)
+                        .frame(width: 88, height: 88)
+
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 40, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(maxHeight: .infinity)
 
             Text("Session ready")
                 .font(.title.bold())
 
             Text("Your session is ready. Return to the app from the Home Screen or App Switcher.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: 300)
+
+            Text("Ends at \(content.expiresAt.formatted(date: .omitted, time: .shortened))")
                 .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity)
         .padding(24)
-        .navigationTitle("Pause")
+        .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden()
     }
 }

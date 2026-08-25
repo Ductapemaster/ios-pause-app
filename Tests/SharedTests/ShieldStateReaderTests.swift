@@ -29,7 +29,7 @@ final class ShieldStateReaderTests: XCTestCase {
             .presentation(for: token, now: now, calendar: calendar)
 
         XCTAssertEqual(presentation.subtitle, "3 sessions left today")
-        XCTAssertEqual(presentation.primaryButtonTitle, "Take a breath")
+        XCTAssertEqual(presentation.primaryButtonTitle, "Take a pause")
         XCTAssertFalse(
             FileManager.default.fileExists(
                 atPath: directoryURL.appendingPathComponent(SharedIdentifiers.stateLockFilename).path
