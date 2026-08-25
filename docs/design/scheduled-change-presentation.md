@@ -32,7 +32,7 @@ A pending change lives on the row of the thing it changes. The list says *where*
 
 The marker means: **a loosening you asked for starts at the next reset.** Tightenings need no marker because they already applied.
 
-Two symbols carry it, both in the accent tint: `calendar.badge.clock` for an allowance loosening, and `calendar.badge.minus` for an app on its way out. Everything finer than that is detail, and detail is one tap away.
+Two symbols carry it: `calendar.badge.clock` in the accent tint for an allowance loosening, and `minus.circle.fill` in red for an app on its way out. They differ in outline as well as in colour, so the distinction survives greyscale and a reader who cannot separate the two hues. Everything finer than that is detail, and detail is one tap away.
 
 Leaving Pause is not the same kind of event as a longer session, and the list is the surface scanned to see what is about to happen — so the one distinction the list draws is between an app that is changing and an app that is going.
 
@@ -46,7 +46,7 @@ Settings are judged as one unit, and only a shorter pause loosens. So:
 - The **Pause duration** row carries it when a shorter pause is pending.
 - The **Day reset** row never carries it. A reset-minute change is not tested for loosening, so it applies on save.
 
-`ScheduledChangeWording.changes` still reports an addition, for a document saved by an earlier whole-document router that deferred an entire edit and left an addition waiting. A re-pointed target also reads as a removal plus an addition. Neither is reachable from an ordinary save.
+A re-pointed target loosens by `isLoosening`, but `pendingChange(forRuleID:)` compares only the allowance fields, so a re-point carries no marker and would leave the editor unlocked. Nothing re-points a target: the picker mints a fresh `ruleID` for every app it adds. Widening `isLoosening` means widening the lookup with it.
 
 ## What the list shows
 
@@ -118,16 +118,14 @@ The router is untouched. The gap recorded in [the overview](../README.md) as *a 
 
 ## The model's pending surface
 
-Four accessors describe one fact today: `pendingChangeStartDay`, `scheduledChanges`, `ruleIDsPendingRemoval`, and `lastSaveDeferredPart`. The first three exist to feed a banner and a removal row that are both being deleted, and each is document-shaped while every question the interface asks is per row.
-
-They collapse to two lookups:
+Every question the interface asks about a pending change is per row, so two lookups answer all of them:
 
 - `pendingChange(forRuleID:)` — the kind of change scheduled for one app and the day it starts, or nothing.
 - `pendingSettingsChange()` — the same for the pause duration.
 
-Every consumer then asks the question it actually has. The marker picks its symbol from the kind; the editor locks its controls, writes its section and decides whether to dismiss from one call; the settings footer uses the twin. Keeping two things in sync replaces keeping four.
+Each consumer then asks the question it actually has. The marker picks its symbol from the kind; the editor locks its controls, writes its section, and decides whether to dismiss, all from one call; the settings footer uses the twin.
 
-`ScheduledChangeWording.changes` and `ScheduledChangeWording.phrase` both survive: the diff and the day-naming are still needed, now per app rather than per document.
+`ScheduledChangeWording.phrase` names the day the change lands, per app rather than per document.
 
 ## Testing
 
