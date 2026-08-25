@@ -30,7 +30,7 @@ enum ScheduledChangeWording {
         let when = phrase(for: change.startDay, in: file, now: now)
         switch change.kind {
         case .removal:
-            return "Leaves Pause \(when). Until then it is shielded as normal."
+            return "Removal pending. Shielded as normal until it leaves Pause \(when)."
         case let .allowance(sessionsPerDay, sessionLengthMinutes):
             return "Changes to \(allowance(sessionsPerDay, sessionLengthMinutes)) \(when)."
         }

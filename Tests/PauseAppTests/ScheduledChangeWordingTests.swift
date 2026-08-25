@@ -46,7 +46,7 @@ final class ScheduledChangeWordingTests: XCTestCase {
         )
     }
 
-    func testARemovalSaysTheAppIsShieldedUntilItGoes() throws {
+    func testARemovalLeadsWithPendingAndNamesTheShielding() throws {
         let file = try fileWithReset(minuteOfDay: 0)
         let change = PendingRuleChange(
             kind: .removal,
@@ -55,7 +55,7 @@ final class ScheduledChangeWordingTests: XCTestCase {
 
         XCTAssertEqual(
             ScheduledChangeWording.description(of: change, in: file, now: now),
-            "Leaves Pause tomorrow. Until then it is shielded as normal."
+            "Removal pending. Shielded as normal until it leaves Pause tomorrow."
         )
     }
 
