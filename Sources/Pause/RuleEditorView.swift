@@ -39,11 +39,12 @@ struct RuleEditorView: View {
                 }
             }
 
-            Section {
-                Button("Remove app", role: .destructive) {
-                    removeRule()
+            if pendingChange == nil {
+                Section {
+                    Button("Remove app", role: .destructive) {
+                        removeRule()
+                    }
                 }
-                .disabled(pendingChange != nil)
             }
         }
         .navigationTitle("Allowance")
