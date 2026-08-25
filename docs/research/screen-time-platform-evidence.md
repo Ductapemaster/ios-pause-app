@@ -320,6 +320,42 @@ public typealias WebDomainToken = Token<WebDomain>
 
 `WebDomain` carries a readable domain string; `WebDomainToken` is opaque, and no declaration in `ManagedSettings` maps one back to the `ApplicationToken` it was derived from. The action delegate receives the token alone, with no domain string, so the surface that would have to identify a rule is the one with least to identify it by.
 
+### An app's icon renders at a fixed 35pt and its name will not centre
+
+`Label(applicationToken)` is the only sanctioned way to draw an app's identity from a token, and both halves are fixed in ways no modifier reaches.
+
+**The icon is 35 x 35 points, always.** `FamilyActivityIconView` declares one member — `body` — with no initializer, no environment key and no size parameter anywhere in the framework's interface (`iPhoneOS26.5.sdk/.../FamilyControls.swiftinterface`, 361 lines, `FamilyActivityIconView` at :151). Its `body` returns `_ConditionalContent<ModifiedContent<FamilyActivitySlot.Representable, _FrameLayout>, Image>` — a remote-content slot already wrapped in a frame. In the shipping binary that frame is a literal: the constant `0x4041800000000000` (35.0) is loaded as a width/height pair at three sites, for the application, category and web-domain cases. The binary contains **no floating-point arithmetic instructions at all** across 51,869 lines of disassembly, so no code path exists that could scale it.
+
+That closes off every sizing route, and each was measured on device before the binary was read: `.font` at 48pt and 72pt drew an identical icon; `.frame(width: 56, height: 56)` centred a small icon in a large box, because the inner frame binds tighter; `.imageScale` and Dynamic Type cannot apply, the first reaching only SF Symbol images and the second having no arithmetic to drive. A custom `LabelStyle` gains nothing — SwiftUI modifiers compose outside-in, so anything applied to `configuration.icon` still wraps *around* the baked-in frame rather than inside it.
+
+`.scaleEffect` is the one lever that works, and it enlarges by stretching a raster the slot rendered once at 35pt. The source is 105px at 3x, so the factor sets the cost directly: at roughly 2.3x — an 80pt target, 240px asked of 105px — the softness is obvious on the phone. Sharpness and size cannot both be had, and 35pt on its own reads as a speck beside a large composition.
+
+The icon also cannot be captured: `ImageRenderer` over the label yields red-crossed placeholders, which follows from the content being drawn out of process by `FamilyControlsAgent` and vended back as an opaque remote layer. The app never holds the bitmap, which is the privacy mechanism working as designed.
+
+**`installedApplications` does not lift this.** `FamilyActivityData.installedApplications` (iOS 26.4) returns `[ManagedSettings.Application]`, and that type carries `bundleIdentifier`, `token` and `localizedDisplayName` and no image at any size. `ManagedSettings`' whole interface mentions no icon. So the entitlement that unlocks it is worth requesting for [a picker Pause owns](../ROADMAP.md) and is no help at all for icon size.
+
+**The name is frozen the same way, and additionally cannot be centred.** `FamilyActivityTitleView` ignores `.font`, lays out greedily, aligns its text to the leading edge, and ignores alignment modifiers. Measured on device with a probe rendering seven configurations of one token side by side:
+
+| Configuration | Measured frame | Result |
+|---|---|---|
+| bare | 370 x 25 | full name, leading-aligned |
+| `.font(.system(size: 40))` | 370 x 25 | **identical to bare** — text no larger |
+| `.font(.system(size: 40))` + `.fixedSize()` | ~20 x 25 | clipped to two glyphs |
+| `.fixedSize()` | ~20 x 25 | clipped to two glyphs |
+| `.frame(width: 260)` + `.multilineTextAlignment(.center)` | 260 x 25 | full name, still leading-aligned |
+| size 40 + width 260 + centred | 260 x 25 | full name, still leading-aligned, text no larger |
+| full `Label` at size 40 | 370 x 32 | icon 35pt, name unchanged, whole group leading-aligned |
+
+Three things follow. The height is 25pt in every case, so the name has one drawn size just as the icon does — roughly 17pt text — and no large app name is available. `.multilineTextAlignment` does not reach it, so it cannot be centred inside a frame. And because it always fills the width it is offered, its drawn text width cannot be measured, which closes off sizing a frame to hug it.
+
+**Drawing the name yourself is closed off too.** `ManagedSettings.Application` exposes `localizedDisplayName` and a public `init(token:)`, which looks like a way round the title view entirely: read the name as a `String` and render it as ordinary `Text`, at any size and any alignment. It returns **nil in the containing app**, measured on device — a build that showed the name when it was present and the icon alone when it was not drew the icon alone. The `com.apple.developer.family-controls.app-and-website-usage` entitlement is the reported gate, and this app does not hold it; that the entitlement lifts it is inference, not measured here.
+
+The name is not nil everywhere. `ShieldConfigurationDataSource` is handed an `Application` by the system with the name populated — it is what the shield renders as its title (`Sources/ShieldConfigExtension/ShieldConfigExtension.swift`). So the extension knows the name and the app does not, and persisting it across that boundary would be working around the entitlement rather than through it.
+
+A custom `LabelStyle` buys independent treatment of title and icon, which is the one thing it is good for, but it changes none of this — modifiers still compose outside the view's own body.
+
+Apple's position, such as it is, is that `Label(applicationToken)` is the renderer: [forum thread 722618](https://developer.apple.com/forums/thread/722618) has an Apple Frameworks Engineer and DTS both directing developers to it without addressing size, and [thread 731387](https://developer.apple.com/forums/thread/731387) raises the small icon with no Apple reply. Nothing in the iOS 17 through 26 interfaces revises it.
+
 ### Reported limits, none verified here
 
 Undocumented by Apple, widely reported, and **not measured on this device** — nothing here has approached any of the three. Recorded as raw numbers only:
