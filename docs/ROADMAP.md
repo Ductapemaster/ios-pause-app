@@ -12,6 +12,15 @@ Prioritized work not currently in flight. Phase 1 is accepted and closed; Phase 
 
 Moving the work off the main actor would rework the locking design and the unit tests encode these calls as synchronous throughout (why: deferred on that basis — the daily cost is low because the path is configuration, not the shield-pause-use loop). A hang has since been reported, but it was traced to [the session-end lock-out](research/session-end-hang.md) rather than to this path, which leaves this entry deferred on its original reasoning and still unmeasured.
 
+**Per-app scheduled-change presentation is unverified on the phone.** `RulesView` and `RuleEditorView` have no snapshot harness, so the marker's presence and the editor's locked state are pinned on the model's per-rule lookup rather than on a rendered row. Owed on the next trip to the phone:
+
+- Both markers read correctly at a glance in a list of several apps, and the removal marker — a filled circle with a minus — is tellable from the allowance marker's calendar-and-clock badge by outline shape, not just by colour.
+- An app with a pending change opens to locked controls and a section naming the change, and cancelling frees the controls at the values in force.
+- Cancelling one app's change leaves another's marker standing — the fault that motivated the redesign, and the one thing that cannot be seen in a single-app test.
+- The rule editor shows the in-force allowance, not a discarded proposed one, across a raise, save, and cancel cycle: raising an app's allowance and saving leaves the controls locked and showing the value already in force, while the section below names the new value as scheduled; cancelling unlocks the controls at that same in-force value, not the one just typed.
+- Removing an app leaves the editor on screen rather than returning to the list, with the pending section above naming the removal and carrying `Cancel removal`.
+- A picker save that adds an app leaves every other app untouched: one with a scheduled removal keeps its marker, and an app already covered that is ticked again is named as already in Pause rather than silently ignored or duplicated.
+
 ## Not planned
 
 **A picker Pause owns.** Apple's picker shows no running count and nothing can be added to it: `familyActivityPicker` takes `title`, `headerText`, and `footerText` as plain strings, reads them once at presentation, and ignores later changes. Measured on an iPhone 16 Pro running iOS 26.6 — all three surfaces held their entry values while apps were tapped. The same interface offers no way to hide the Categories or Web Domains sections, so a selection the app will discard looks exactly like one it will keep.

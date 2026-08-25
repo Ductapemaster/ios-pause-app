@@ -283,7 +283,7 @@ final class AppModelFlowTests: XCTestCase {
         )
 
         try model.updateRule(id: ruleID, sessionsPerDay: 5, sessionLengthMinutes: 5, now: now)
-        model.cancelScheduledChange(now: now)
+        model.cancelScheduledChange(ruleID: ruleID, now: now)
 
         XCTAssertEqual(model.configuration.rules[0].sessionsPerDay, 3)
         XCTAssertNil(model.pendingChangeStartDay)
@@ -333,56 +333,21 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(probe.reconciliationCount, 0)
     }
 
-    func testDroppingAnAppFromThePickerKeepsItSelectedUntilTheRemovalLands() throws {
+    func testAPickerSaveThatAddsAnAppLeavesEveryExistingRuleTargetAndRuntimeUntouched() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try seedOneRule(in: directory, sessionsPerDay: 3)
+        let runtimeURL = directory.appendingPathComponent(
+            "runtime-\(ruleID.uuidString.lowercased()).json"
+        )
+        let runtimeBefore = try Data(contentsOf: runtimeURL)
         let model = makeModel(
             directory: directory,
             probe: FlowProbe(status: .approved),
             hasProtectedState: false
         )
-        model.pickerSelection.applicationTokens = []
-
-        try model.applyPickerSelection(now: now)
-
-        XCTAssertEqual(model.pickerSelection.applicationTokens, [try token(seed: "instagram")])
-        XCTAssertEqual(model.configuration.rules.map(\.id), [ruleID])
-        XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
-        XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
-    }
-
-    func testTheRemovalTakesTheAppAndItsSelectionWhenItLands() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        try seedOneRule(in: directory, sessionsPerDay: 3)
-        let model = makeModel(
-            directory: directory,
-            probe: FlowProbe(status: .approved),
-            hasProtectedState: false
-        )
-        model.pickerSelection.applicationTokens = []
-        try model.applyPickerSelection(now: now)
-
-        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: now)!
-        model.sceneDidBecomeActive(now: tomorrow)
-
-        XCTAssertTrue(model.configuration.rules.isEmpty)
-        XCTAssertTrue(model.pickerSelection.applicationTokens.isEmpty)
-        XCTAssertEqual(model.ruleIDsPendingRemoval, [])
-        XCTAssertNil(model.pendingChangeStartDay)
-    }
-
-    func testAPickerSaveThatAddsAndDropsCoversTheAddedAppToday() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        try seedOneRule(in: directory, sessionsPerDay: 3)
-        let model = makeModel(
-            directory: directory,
-            probe: FlowProbe(status: .approved),
-            hasProtectedState: false
-        )
-        // One trip through the picker: Instagram dropped, Threads added.
+        // Instagram's removal is already scheduled when Threads is added.
+        try model.removeRule(id: ruleID, now: now)
         model.pickerSelection.applicationTokens = [try token(seed: "threads")]
 
         try model.applyPickerSelection(now: now)
@@ -391,12 +356,34 @@ final class AppModelFlowTests: XCTestCase {
             Set(model.configuration.targets.map(\.applicationToken)),
             [try token(seed: "instagram"), try token(seed: "threads")]
         )
-        XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
+        XCTAssertTrue(model.configuration.rules.map(\.id).contains(ruleID))
+        XCTAssertEqual(model.pendingChange(forRuleID: ruleID)?.kind, .removal)
         XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
-        XCTAssertTrue(model.lastSaveDeferredPart)
+        XCTAssertEqual(try Data(contentsOf: runtimeURL), runtimeBefore)
     }
 
-    func testAPickerSaveThatAddsAndDropsStillReconcilesShields() throws {
+    func testAPickerSaveCannotDropAnAppOmittedFromTheSelection() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        // The picker is add-only: an empty selection names no additions, and
+        // says nothing about Instagram either way.
+        model.pickerSelection.applicationTokens = []
+
+        try model.applyPickerSelection(now: now)
+
+        XCTAssertEqual(model.configuration.targets.map(\.applicationToken), [try token(seed: "instagram")])
+        XCTAssertEqual(model.configuration.rules.map(\.id), [ruleID])
+        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
+        XCTAssertNil(model.pendingChangeStartDay)
+    }
+
+    func testAPickerSaveThatOnlyAddsStillReconcilesShields() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try seedOneRule(in: directory, sessionsPerDay: 3)
@@ -406,12 +393,10 @@ final class AppModelFlowTests: XCTestCase {
 
         try model.applyPickerSelection(now: now)
 
-        // The addition is in force today, so it needs its shield now even
-        // though the drop in the same save waits for the reset.
         XCTAssertEqual(probe.reconciliationCount, 1)
     }
 
-    func testCancellingAMixedSaveDropsTheRemovalAndKeepsTheAddedApp() throws {
+    func testCancellingAScheduledRemovalKeepsAnAppAddedInTheMeantime() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try seedOneRule(in: directory, sessionsPerDay: 3)
@@ -420,16 +405,17 @@ final class AppModelFlowTests: XCTestCase {
             probe: FlowProbe(status: .approved),
             hasProtectedState: false
         )
+        try model.removeRule(id: ruleID, now: now)
         model.pickerSelection.applicationTokens = [try token(seed: "threads")]
         try model.applyPickerSelection(now: now)
 
-        model.cancelScheduledChange(now: now)
+        model.cancelScheduledChange(ruleID: ruleID, now: now)
 
         XCTAssertEqual(
             Set(model.configuration.targets.map(\.applicationToken)),
             [try token(seed: "instagram"), try token(seed: "threads")]
         )
-        XCTAssertEqual(model.ruleIDsPendingRemoval, [])
+        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
         XCTAssertNil(model.pendingChangeStartDay)
         XCTAssertNil(model.presentedError)
         // The cancellation is durable, not just in memory.
@@ -439,6 +425,42 @@ final class AppModelFlowTests: XCTestCase {
             Set(stored?.effective.targets.map(\.applicationToken) ?? []),
             [try token(seed: "instagram"), try token(seed: "threads")]
         )
+    }
+
+    func testClassifyingAPickerSelectionNamesAlreadyCoveredTokensSeparately() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        var selection = FamilyActivitySelection()
+        selection.applicationTokens = [try token(seed: "instagram"), try token(seed: "threads")]
+
+        let outcome = model.classifyPickerSelection(selection)
+
+        XCTAssertEqual(outcome.added, [try token(seed: "threads")])
+        XCTAssertEqual(outcome.alreadyCovered, [try token(seed: "instagram")])
+    }
+
+    func testClassifyingAPickerSelectionOfOnlyAlreadyCoveredTokensAddsNothing() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        var selection = FamilyActivitySelection()
+        selection.applicationTokens = [try token(seed: "instagram")]
+
+        let outcome = model.classifyPickerSelection(selection)
+
+        XCTAssertTrue(outcome.added.isEmpty)
+        XCTAssertEqual(outcome.alreadyCovered, [try token(seed: "instagram")])
     }
 
     func testAnAddedAppTakesTheChosenAllowance() throws {
@@ -516,7 +538,7 @@ final class AppModelFlowTests: XCTestCase {
         XCTAssertEqual(try runtimeFileNames(in: directory), [])
     }
 
-    func testTheAddedAppSurvivesTheDropWhenItLands() throws {
+    func testTheAddedAppSurvivesAnotherAppsRemovalWhenItLands() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try seedOneRule(in: directory, sessionsPerDay: 3)
@@ -525,6 +547,8 @@ final class AppModelFlowTests: XCTestCase {
             probe: FlowProbe(status: .approved),
             hasProtectedState: false
         )
+        // Instagram's removal is scheduled, then Threads is added.
+        try model.removeRule(id: ruleID, now: now)
         model.pickerSelection.applicationTokens = [try token(seed: "threads")]
         try model.applyPickerSelection(now: now)
 
@@ -535,7 +559,7 @@ final class AppModelFlowTests: XCTestCase {
             model.configuration.targets.map(\.applicationToken),
             [try token(seed: "threads")]
         )
-        XCTAssertEqual(model.ruleIDsPendingRemoval, [])
+        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
         XCTAssertNil(model.pendingChangeStartDay)
     }
 
@@ -550,17 +574,15 @@ final class AppModelFlowTests: XCTestCase {
         )
         // Schedule Instagram's removal, then lengthen the pause — a tightening
         // that says nothing about Instagram.
-        model.pickerSelection.applicationTokens = []
-        try model.applyPickerSelection(now: now)
-        XCTAssertTrue(model.lastSaveDeferredPart)
+        try model.removeRule(id: ruleID, now: now)
+        XCTAssertNotNil(model.pendingChange(forRuleID: ruleID))
 
         try model.updatePauseSeconds(20, now: now)
 
         XCTAssertEqual(model.configuration.settings.pauseSeconds, 20)
-        XCTAssertFalse(model.lastSaveDeferredPart)
         // The removal is still scheduled; only this save deferred nothing.
         XCTAssertEqual(model.pendingChangeStartDay, LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current))
-        XCTAssertEqual(model.ruleIDsPendingRemoval, [ruleID])
+        XCTAssertEqual(model.pendingChange(forRuleID: ruleID)?.kind, .removal)
     }
 
     func testSettingTheResetTimePersistsItAndKeepsThePauseDuration() throws {
@@ -810,6 +832,227 @@ final class AppModelFlowTests: XCTestCase {
         )
     }
 
+    func testARuleWithAScheduledLooseningReportsItsPendingChange() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updateRule(id: ruleID, sessionsPerDay: 5, sessionLengthMinutes: 5, now: now)
+
+        XCTAssertEqual(
+            model.pendingChange(forRuleID: ruleID),
+            PendingRuleChange(
+                kind: .allowance(sessionsPerDay: 5, sessionLengthMinutes: nil),
+                startDay: LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current)
+            )
+        )
+    }
+
+    func testARuleBeingRemovedReportsARemovalRatherThanAnAllowanceChange() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.removeRule(id: ruleID, now: now)
+
+        XCTAssertEqual(model.pendingChange(forRuleID: ruleID)?.kind, .removal)
+    }
+
+    func testARuleWithNothingScheduledReportsNoPendingChange() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updateRule(id: ruleID, sessionsPerDay: 2, sessionLengthMinutes: 5, now: now)
+
+        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
+    }
+
+    func testAShorterPauseIsReportedAsAPendingSettingsChange() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updatePauseSeconds(5, now: now)
+
+        XCTAssertEqual(model.pendingSettingsChange()?.pauseSeconds, 5)
+    }
+
+    func testARuleUntouchedByAPendingSettingsChangeReportsNoPendingChange() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updatePauseSeconds(5, now: now)
+
+        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
+    }
+
+    func testALongerPauseAppliesAtOnceAndIsNotReportedAsPending() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updatePauseSeconds(30, now: now)
+
+        XCTAssertNil(model.pendingSettingsChange())
+    }
+
+    func testCancellingOneAppsChangeLeavesAnothersStanding() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let secondRuleID = try seedTwoRules(in: directory)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        try model.updateRule(id: ruleID, sessionsPerDay: 6, sessionLengthMinutes: 5, now: now)
+        try model.updateRule(id: secondRuleID, sessionsPerDay: 7, sessionLengthMinutes: 5, now: now)
+
+        model.cancelScheduledChange(ruleID: ruleID, now: now)
+
+        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
+        XCTAssertEqual(
+            model.pendingChange(forRuleID: secondRuleID),
+            PendingRuleChange(
+                kind: .allowance(sessionsPerDay: 7, sessionLengthMinutes: nil),
+                startDay: LogicalDay.next(after: now, resetMinuteOfDay: 0, calendar: .current)
+            )
+        )
+    }
+
+    func testCancellingAnAppsChangeLeavesAPendingPauseStanding() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        try model.updateRule(id: ruleID, sessionsPerDay: 6, sessionLengthMinutes: 5, now: now)
+        try model.updatePauseSeconds(5, now: now)
+
+        model.cancelScheduledChange(ruleID: ruleID, now: now)
+
+        XCTAssertNil(model.pendingChange(forRuleID: ruleID))
+        XCTAssertEqual(model.pendingSettingsChange()?.pauseSeconds, 5)
+    }
+
+    func testCancellingTheOnlyPendingChangeLeavesNothingScheduled() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        try model.updateRule(id: ruleID, sessionsPerDay: 6, sessionLengthMinutes: 5, now: now)
+
+        model.cancelScheduledChange(ruleID: ruleID, now: now)
+
+        XCTAssertNil(model.configurationFile?.pending)
+        XCTAssertNil(model.pendingChangeStartDay)
+    }
+
+    func testCancellingARemovalRestoresTheAppAndKeepsItsChargedSessions() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        try RuntimeRepository(directoryURL: directory).save(
+            RuleRuntime(
+                logicalDay: LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: .current),
+                sessionsStarted: 2
+            ),
+            ruleID: ruleID
+        )
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        try model.removeRule(id: ruleID, now: now)
+
+        model.cancelScheduledChange(ruleID: ruleID, now: now)
+
+        XCTAssertNil(model.configurationFile?.pending)
+        XCTAssertEqual(model.configuration.rules.map(\.id), [ruleID])
+        XCTAssertEqual(model.sessionsUsedByRule[ruleID], 2)
+    }
+
+    func testCancellingAPendingPauseLeavesAnAppsChangeStanding() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+        try model.updateRule(id: ruleID, sessionsPerDay: 6, sessionLengthMinutes: 5, now: now)
+        try model.updatePauseSeconds(5, now: now)
+
+        model.cancelScheduledSettingsChange(now: now)
+
+        XCTAssertNil(model.pendingSettingsChange())
+        XCTAssertEqual(
+            model.pendingChange(forRuleID: ruleID)?.kind,
+            .allowance(sessionsPerDay: 6, sessionLengthMinutes: nil)
+        )
+    }
+
+    func testAShorterPauseIsReportedAsAPendingSettingsChangeAndALongerOneIsNot() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try seedOneRule(in: directory, sessionsPerDay: 3)
+        let model = makeModel(
+            directory: directory,
+            probe: FlowProbe(status: .approved),
+            hasProtectedState: false
+        )
+
+        try model.updatePauseSeconds(5, now: now)
+
+        XCTAssertEqual(model.pendingSettingsChange()?.pauseSeconds, 5)
+
+        model.cancelScheduledSettingsChange(now: now)
+        try model.updatePauseSeconds(30, now: now)
+
+        XCTAssertNil(model.pendingSettingsChange())
+    }
+
     private func makeModel(
         directory: URL,
         probe: FlowProbe,
@@ -871,6 +1114,42 @@ final class AppModelFlowTests: XCTestCase {
             RuleRuntime(logicalDay: LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: .current), sessionsStarted: 0),
             ruleID: ruleID
         )
+    }
+
+    /// Two covered apps, so a change to one can be told from a change to the
+    /// other. Returns the second rule's id; the first is `ruleID`.
+    @discardableResult
+    private func seedTwoRules(in directory: URL) throws -> UUID {
+        let secondRuleID = UUID(uuidString: "9c2f4a71-5d38-4e6b-9f10-2b7c8e4a1d55")!
+        try ConfigurationStore(directoryURL: directory).save(
+            file: ConfigurationFile(
+                effective: try ConfigurationDocument(
+                    settings: .phaseOneDefault,
+                    rules: [
+                        try AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5),
+                        try AppRule(id: secondRuleID, sessionsPerDay: 3, sessionLengthMinutes: 5),
+                    ],
+                    targets: [
+                        RuleTarget(
+                            ruleID: ruleID,
+                            applicationToken: try token(seed: "instagram"),
+                            launchRoute: nil
+                        ),
+                        RuleTarget(
+                            ruleID: secondRuleID,
+                            applicationToken: try token(seed: "threads"),
+                            launchRoute: nil
+                        ),
+                    ]
+                ),
+                pending: nil
+            )
+        )
+        let runtimes = RuntimeRepository(directoryURL: directory)
+        let today = LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: .current)
+        try runtimes.save(RuleRuntime(logicalDay: today, sessionsStarted: 0), ruleID: ruleID)
+        try runtimes.save(RuleRuntime(logicalDay: today, sessionsStarted: 0), ruleID: secondRuleID)
+        return secondRuleID
     }
 
     private func token(seed: String) throws -> ApplicationToken {

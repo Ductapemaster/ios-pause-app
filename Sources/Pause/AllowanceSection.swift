@@ -11,6 +11,7 @@ struct AllowanceSection: View {
     @Binding var sessionsPerDay: Int
     @Binding var sessionLengthMinutes: Int
     var footer: String? = "The daily allowance renews at the day reset."
+    var isEnabled = true
 
     var body: some View {
         Section {
@@ -32,5 +33,6 @@ struct AllowanceSection: View {
                 Text(footer)
             }
         }
+        .disabled(!isEnabled)
     }
 }
