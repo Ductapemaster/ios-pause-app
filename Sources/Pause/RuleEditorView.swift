@@ -113,7 +113,12 @@ struct RuleEditorView: View {
     private func removeRule() {
         do {
             try model.removeRule(id: ruleID)
-            dismiss()
+            // A removal that waits stays on screen, so the pending state is
+            // visible where it was chosen, under the section that can cancel
+            // it. One that applied at once is done. Mirrors `save()`.
+            if pendingChange == nil {
+                dismiss()
+            }
         } catch {
             model.present(error, title: "Couldn't remove app")
         }
