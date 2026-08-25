@@ -28,11 +28,20 @@ public struct RuleRuntime: Codable, Equatable, Sendable {
     public var logicalDay: CalendarDay
     public var sessionsStarted: Int
     public var openSession: OpenSession?
+    /// When the last session ended, which is what a cooldown is measured from.
+    /// Absent until a session has expired.
+    public var lastSessionExpiry: Date?
 
-    public init(logicalDay: CalendarDay, sessionsStarted: Int, openSession: OpenSession? = nil) {
+    public init(
+        logicalDay: CalendarDay,
+        sessionsStarted: Int,
+        openSession: OpenSession? = nil,
+        lastSessionExpiry: Date? = nil
+    ) {
         self.logicalDay = logicalDay
         self.sessionsStarted = sessionsStarted
         self.openSession = openSession
+        self.lastSessionExpiry = lastSessionExpiry
     }
 
     public mutating func rollOver(to day: CalendarDay) {
@@ -73,8 +82,13 @@ public struct RuleRuntime: Codable, Equatable, Sendable {
         sessionsStarted = max(0, sessionsStarted - 1)
     }
 
+    /// Stamps the session's own stored expiry rather than the current instant.
+    /// The monitor's callback can arrive late, or be missed and repaired at the
+    /// app's next launch; anchoring to `expiresAt` keeps a cooldown from being
+    /// extended by however long the repair took.
     public mutating func clearExpiredSession(at now: Date) {
         guard let openSession, openSession.expiresAt <= now else { return }
+        lastSessionExpiry = openSession.expiresAt
         self.openSession = nil
     }
 }

@@ -4,7 +4,7 @@ Pause puts a deliberate pause and a daily allowance between a reflex and an app.
 
 ## The model
 
-A **rule** covers one app with a daily allowance: how many sessions, and how long each runs. A covered app is **shielded** by Screen Time. Tapping through the shield opens Pause, which runs a **countdown** in the foreground; only when it completes can the user spend a session. Spending one grants timed access, and expiry restores the shield. The allowance renews at the start of the next **allowance day**, which begins at the daily reset — a setting, on a fifteen-minute grid, applying to all seven days, that defaults to midnight. The rules list shows each app's charged sessions against its limit for the day in progress; this is the same allowance the shield reports, and both resolve it the same way ([the design](design/session-usage-display.md)).
+A **rule** covers one app with a daily allowance: how many sessions, and how long each runs. A covered app is **shielded** by Screen Time. Tapping through the shield opens Pause, which runs a **countdown** in the foreground; only when it completes can the user spend a session. Spending one grants timed access, and expiry restores the shield. A **cooldown** — a global length from zero to ten minutes — then refuses that app a new session for a stretch, so the shield returning at expiry cannot be pressed straight through ([its design](design/post-session-cooldown.md)). The allowance renews at the start of the next **allowance day**, which begins at the daily reset — a setting, on a fifteen-minute grid, applying to all seven days, that defaults to midnight. The rules list shows each app's charged sessions against its limit for the day in progress; this is the same allowance the shield reports, and both resolve it the same way ([the design](design/session-usage-display.md)).
 
 Two properties hold the design together:
 
@@ -37,6 +37,7 @@ Two properties hold the design together:
 
 - [product-requirements.md](product-requirements.md) — the product source of truth.
 - [design/pause-app.md](design/pause-app.md) — the standing architecture, all phases.
+- [design/post-session-cooldown.md](design/post-session-cooldown.md) — the cooldown after a session ends.
 - [ROADMAP.md](ROADMAP.md) — the single prioritized what's-next.
 - [status.md](status.md) — the resume pointer.
 - [research/](research/) — open investigations: the shield sandbox variant, and the Screen Time platform readings.

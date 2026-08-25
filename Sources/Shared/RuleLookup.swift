@@ -69,6 +69,7 @@ public enum RuleLookup {
             evaluation: evaluate(
                 rule: rule,
                 runtime: runtime,
+                settings: configuration.settings,
                 logicalDay: configurationFile.logicalDay(at: now, calendar: calendar),
                 now: now
             )
@@ -83,6 +84,7 @@ public enum RuleLookup {
     public static func evaluate(
         rule: AppRule,
         runtime: RuleRuntime,
+        settings: GlobalSettings,
         logicalDay: CalendarDay,
         now: Date
     ) -> RuleEvaluation {
@@ -95,6 +97,7 @@ public enum RuleLookup {
             decision: RulesEngine.decision(
                 rule: rule,
                 runtime: currentRuntime,
+                settings: settings,
                 today: currentRuntime.logicalDay,
                 now: now
             )
@@ -128,6 +131,13 @@ public struct ShieldPresentation: Equatable, Sendable {
             subtitle = "A session is already open"
             primaryButtonTitle = Self.refusalButtonTitle
             secondaryButtonTitle = nil
+        case let .refused(.coolingDown(until)):
+            // An end time rather than a countdown: `ShieldConfiguration` is
+            // returned once per render and no API updates a shield already
+            // standing, so a countdown would hold the second it was built with.
+            subtitle = "Cooling down until \(Self.timeFormatter.string(from: until))."
+            primaryButtonTitle = Self.refusalButtonTitle
+            secondaryButtonTitle = nil
         }
     }
 
@@ -137,6 +147,14 @@ public struct ShieldPresentation: Equatable, Sendable {
     /// configuration cannot resolve are three different reasons for the same
     /// single way out.
     static let refusalButtonTitle = "Close"
+
+    /// The device locale decides how the time reads.
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter
+    }()
 
     /// The subtitle names opening Pause as something for the user to do, not as
     /// something the button does: the configuration extension cannot launch the

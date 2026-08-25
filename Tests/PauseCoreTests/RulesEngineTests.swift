@@ -20,12 +20,16 @@ final class RulesEngineTests: XCTestCase {
         Date(timeIntervalSince1970: 1_768_464_000)
     }
 
+    private var noCooldown: GlobalSettings {
+        get throws { try GlobalSettings(pauseSeconds: 10) }
+    }
+
     func testFreshRuleAllowsFirstSession() throws {
         let rule = try AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)
         let runtime = RuleRuntime(logicalDay: today, sessionsStarted: 0)
 
         XCTAssertEqual(
-            RulesEngine.decision(rule: rule, runtime: runtime, today: today, now: now),
+            RulesEngine.decision(rule: rule, runtime: runtime, settings: try noCooldown, today: today, now: now),
             .allowed(sessionNumber: 1, lengthMinutes: 5)
         )
     }
@@ -35,7 +39,7 @@ final class RulesEngineTests: XCTestCase {
         let runtime = RuleRuntime(logicalDay: today, sessionsStarted: 2)
 
         XCTAssertEqual(
-            RulesEngine.decision(rule: rule, runtime: runtime, today: today, now: now),
+            RulesEngine.decision(rule: rule, runtime: runtime, settings: try noCooldown, today: today, now: now),
             .allowed(sessionNumber: 3, lengthMinutes: 5)
         )
     }
@@ -45,7 +49,7 @@ final class RulesEngineTests: XCTestCase {
         let runtime = RuleRuntime(logicalDay: today, sessionsStarted: 3)
 
         XCTAssertEqual(
-            RulesEngine.decision(rule: rule, runtime: runtime, today: today, now: now),
+            RulesEngine.decision(rule: rule, runtime: runtime, settings: try noCooldown, today: today, now: now),
             .refused(.dailyAllowanceExhausted(limit: 3))
         )
     }
@@ -63,7 +67,7 @@ final class RulesEngineTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            RulesEngine.decision(rule: rule, runtime: runtime, today: today, now: now),
+            RulesEngine.decision(rule: rule, runtime: runtime, settings: try noCooldown, today: today, now: now),
             .refused(.sessionAlreadyOpen(until: now.addingTimeInterval(60)))
         )
     }
@@ -81,7 +85,7 @@ final class RulesEngineTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            RulesEngine.decision(rule: rule, runtime: runtime, today: today, now: now),
+            RulesEngine.decision(rule: rule, runtime: runtime, settings: try noCooldown, today: today, now: now),
             .allowed(sessionNumber: 2, lengthMinutes: 5)
         )
     }
@@ -92,7 +96,7 @@ final class RulesEngineTests: XCTestCase {
         let runtime = RuleRuntime(logicalDay: yesterday, sessionsStarted: 3)
 
         XCTAssertEqual(
-            RulesEngine.decision(rule: rule, runtime: runtime, today: today, now: now),
+            RulesEngine.decision(rule: rule, runtime: runtime, settings: try noCooldown, today: today, now: now),
             .allowed(sessionNumber: 1, lengthMinutes: 5)
         )
     }
@@ -104,11 +108,11 @@ final class RulesEngineTests: XCTestCase {
         let secondRuntime = RuleRuntime(logicalDay: today, sessionsStarted: 0)
 
         XCTAssertEqual(
-            RulesEngine.decision(rule: firstRule, runtime: firstRuntime, today: today, now: now),
+            RulesEngine.decision(rule: firstRule, runtime: firstRuntime, settings: try noCooldown, today: today, now: now),
             .refused(.dailyAllowanceExhausted(limit: 1))
         )
         XCTAssertEqual(
-            RulesEngine.decision(rule: secondRule, runtime: secondRuntime, today: today, now: now),
+            RulesEngine.decision(rule: secondRule, runtime: secondRuntime, settings: try noCooldown, today: today, now: now),
             .allowed(sessionNumber: 1, lengthMinutes: 5)
         )
     }
@@ -120,5 +124,139 @@ final class RulesEngineTests: XCTestCase {
 
     func testInvalidPauseValueIsRejected() {
         XCTAssertThrowsError(try GlobalSettings(pauseSeconds: 0))
+    }
+
+    // MARK: - Cooldown
+
+    func testASessionIsRefusedWhileTheCooldownIsRunning() throws {
+        let rule = try AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)
+        let runtime = RuleRuntime(
+            logicalDay: today,
+            sessionsStarted: 1,
+            openSession: nil,
+            lastSessionExpiry: now.addingTimeInterval(-60)
+        )
+
+        XCTAssertEqual(
+            RulesEngine.decision(
+                rule: rule,
+                runtime: runtime,
+                settings: try GlobalSettings(pauseSeconds: 10, cooldownMinutes: 5),
+                today: today,
+                now: now
+            ),
+            .refused(.coolingDown(until: now.addingTimeInterval(240)))
+        )
+    }
+
+    /// The end is exclusive: at the instant the cooldown elapses a session is
+    /// available again.
+    func testASessionIsAllowedAtTheInstantTheCooldownElapses() throws {
+        let rule = try AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)
+        let runtime = RuleRuntime(
+            logicalDay: today,
+            sessionsStarted: 1,
+            openSession: nil,
+            lastSessionExpiry: now.addingTimeInterval(-300)
+        )
+
+        XCTAssertEqual(
+            RulesEngine.decision(
+                rule: rule,
+                runtime: runtime,
+                settings: try GlobalSettings(pauseSeconds: 10, cooldownMinutes: 5),
+                today: today,
+                now: now
+            ),
+            .allowed(sessionNumber: 2, lengthMinutes: 5)
+        )
+    }
+
+    /// A cooldown is meaningless for an app with no sessions left, so the
+    /// allowance is what the refusal names.
+    func testASpentAllowanceIsNamedRatherThanTheCooldown() throws {
+        let rule = try AppRule(id: ruleID, sessionsPerDay: 1, sessionLengthMinutes: 5)
+        let runtime = RuleRuntime(
+            logicalDay: today,
+            sessionsStarted: 1,
+            openSession: nil,
+            lastSessionExpiry: now.addingTimeInterval(-60)
+        )
+
+        XCTAssertEqual(
+            RulesEngine.decision(
+                rule: rule,
+                runtime: runtime,
+                settings: try GlobalSettings(pauseSeconds: 10, cooldownMinutes: 5),
+                today: today,
+                now: now
+            ),
+            .refused(.dailyAllowanceExhausted(limit: 1))
+        )
+    }
+
+    func testACooldownOfZeroRefusesNothing() throws {
+        let rule = try AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)
+        let runtime = RuleRuntime(
+            logicalDay: today,
+            sessionsStarted: 1,
+            openSession: nil,
+            lastSessionExpiry: now.addingTimeInterval(-1)
+        )
+
+        XCTAssertEqual(
+            RulesEngine.decision(
+                rule: rule,
+                runtime: runtime,
+                settings: try noCooldown,
+                today: today,
+                now: now
+            ),
+            .allowed(sessionNumber: 2, lengthMinutes: 5)
+        )
+    }
+
+    /// The reset returns the allowance and the cooldown carries on: the runtime
+    /// still carries yesterday's day, so the decision rolls it over first and
+    /// then finds the stamp still standing.
+    func testACooldownKeepsRunningAcrossTheDailyReset() throws {
+        let rule = try AppRule(id: ruleID, sessionsPerDay: 1, sessionLengthMinutes: 5)
+        let yesterday = CalendarDay(
+            date: Date(timeIntervalSince1970: 1_768_377_600),
+            calendar: calendar
+        )
+        let runtime = RuleRuntime(
+            logicalDay: yesterday,
+            sessionsStarted: 1,
+            openSession: nil,
+            lastSessionExpiry: now.addingTimeInterval(-60)
+        )
+
+        XCTAssertEqual(
+            RulesEngine.decision(
+                rule: rule,
+                runtime: runtime,
+                settings: try GlobalSettings(pauseSeconds: 10, cooldownMinutes: 5),
+                today: today,
+                now: now
+            ),
+            .refused(.coolingDown(until: now.addingTimeInterval(240)))
+        )
+    }
+
+    func testNoSessionYetExpiredMeansNoCooldown() throws {
+        let rule = try AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)
+        let runtime = RuleRuntime(logicalDay: today, sessionsStarted: 0)
+
+        XCTAssertEqual(
+            RulesEngine.decision(
+                rule: rule,
+                runtime: runtime,
+                settings: try GlobalSettings(pauseSeconds: 10, cooldownMinutes: 5),
+                today: today,
+                now: now
+            ),
+            .allowed(sessionNumber: 1, lengthMinutes: 5)
+        )
     }
 }

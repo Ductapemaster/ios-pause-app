@@ -119,6 +119,23 @@ struct RulesView: View {
                 // picker alongside the stepper is what keeps a pending change
                 // from being overwritten by an edit to its neighbor.
                 .disabled(model.pendingSettingsChange() != nil)
+
+                Stepper(value: cooldownMinutes, in: GlobalSettings.cooldownMinutesRange) {
+                    LabeledContent {
+                        Text(cooldownText)
+                            .font(.system(.body, design: .rounded).monospacedDigit())
+                    } label: {
+                        HStack {
+                            Text("Cooldown")
+                            if model.pendingSettingsChange() != nil {
+                                Image(systemName: "calendar.badge.clock")
+                                    .foregroundStyle(.tint)
+                                    .accessibilityLabel("Allowance changing")
+                            }
+                        }
+                    }
+                }
+                .disabled(model.pendingSettingsChange() != nil)
             } footer: {
                 if let change = model.pendingSettingsChange(), let file = model.configurationFile {
                     VStack(alignment: .leading, spacing: 8) {
@@ -128,7 +145,7 @@ struct RulesView: View {
                         }
                     }
                 } else {
-                    Text("The pause shown before every allowed session, and the time each day's sessions renew.")
+                    Text("The pause shown before every allowed session, the time each day's sessions renew, and how long an app waits after a session before another can start.")
                 }
             }
 
@@ -173,6 +190,26 @@ struct RulesView: View {
                 }
             }
         )
+    }
+
+    private var cooldownMinutes: Binding<Int> {
+        Binding(
+            get: { model.configuration.settings.cooldownMinutes },
+            set: { minutes in
+                do {
+                    try model.setCooldownMinutes(minutes)
+                } catch {
+                    model.present(error)
+                }
+            }
+        )
+    }
+
+    /// Zero reads as off rather than "0 min", which states the same thing less
+    /// plainly at the one value the user is most likely to leave it at.
+    private var cooldownText: String {
+        let minutes = model.configuration.settings.cooldownMinutes
+        return minutes == 0 ? "Off" : "\(minutes) min"
     }
 
     private static func resetLabel(for minute: Int) -> String {

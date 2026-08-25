@@ -62,9 +62,18 @@ extension PendingRuleChange.Kind {
     }
 }
 
-/// A scheduled change to the global settings. Only a shorter pause loosens, so
-/// that is the only thing this can carry.
+/// A scheduled change to the global settings. Two of them can loosen — a
+/// shorter pause and a shorter cooldown — so this names only the field that
+/// moved, leaving the other nil rather than reading an unchanged value back as
+/// though it had been edited.
 struct PendingSettingsChange: Equatable {
-    let pauseSeconds: Int
+    let pauseSeconds: Int?
+    let cooldownMinutes: Int?
     let startDay: CalendarDay
+
+    init(pauseSeconds: Int? = nil, cooldownMinutes: Int? = nil, startDay: CalendarDay) {
+        self.pauseSeconds = pauseSeconds
+        self.cooldownMinutes = cooldownMinutes
+        self.startDay = startDay
+    }
 }

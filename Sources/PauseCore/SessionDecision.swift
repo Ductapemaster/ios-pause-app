@@ -3,6 +3,7 @@ import Foundation
 public enum RefusalReason: Equatable, Sendable {
     case dailyAllowanceExhausted(limit: Int)
     case sessionAlreadyOpen(until: Date)
+    case coolingDown(until: Date)
 }
 
 public enum SessionDecision: Equatable, Sendable {

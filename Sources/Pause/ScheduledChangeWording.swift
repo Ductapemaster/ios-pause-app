@@ -36,13 +36,30 @@ enum ScheduledChangeWording {
         }
     }
 
+    /// Names only the field that moved, so a setting that did not change is not
+    /// read back as though it had.
     static func settingsDescription(
         of change: PendingSettingsChange,
         in file: ConfigurationFile,
         now: Date = Date()
     ) -> String {
-        "The pause changes to \(count(change.pauseSeconds, "second")) "
-            + "\(phrase(for: change.startDay, in: file, now: now))."
+        let when = phrase(for: change.startDay, in: file, now: now)
+        switch (change.pauseSeconds, change.cooldownMinutes) {
+        case let (seconds?, minutes?):
+            return "The pause changes to \(count(seconds, "second")) and the "
+                + "cooldown to \(cooldown(minutes)) \(when)."
+        case let (seconds?, nil):
+            return "The pause changes to \(count(seconds, "second")) \(when)."
+        case let (nil, minutes?):
+            return "The cooldown changes to \(cooldown(minutes)) \(when)."
+        case (nil, nil):
+            return "The settings change \(when)."
+        }
+    }
+
+    /// Zero is the cooldown switched off, which "0 minutes" states less plainly.
+    private static func cooldown(_ minutes: Int) -> String {
+        minutes == 0 ? "off" : count(minutes, "minute")
     }
 
     /// The allowance names only the field that moved, so a session count that
