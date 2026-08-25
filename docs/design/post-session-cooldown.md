@@ -44,6 +44,8 @@ Its position is not a display preference between two refusals that both apply. A
 
 That distinction is what makes the cooldown correct under a late or missed callback. The monitor can be delivered its expiry callback late, or miss it entirely and have the app repair the runtime at its next launch; stamping the current instant would extend the cooldown by however long the repair took. A session's stored expiry is already authoritative in this design and is never recomputed, so anchoring to it makes the cooldown's end a pure function of stored values regardless of when reconciliation ran. The behaviour is reachable by unit test, and no part of it needs a device.
 
+Resetting a runtime through the repair screen drops the stamp along with the session count, which is the correct pairing: that reset hands back the day's full allowance, and a cooldown outliving it would gate an allowance that is no longer being enforced.
+
 Two behaviours follow from where the stamp is written, with no code of their own:
 
 - **A rolled-back grant cools nothing.** `rollBackReservedSession` is a separate method from `clearExpiredSession` and leaves no stamp, so a launch failure that refunds the session starts no cooldown.
@@ -68,8 +70,6 @@ The shield states an end time rather than a running countdown. `ShieldConfigurat
 `ShieldPrimaryAction` needs no change. It routes any decision that is not `allowed` to `dismiss`, so the button closes the shielded app.
 
 ## Known limits
-
-**Repairing a runtime clears its cooldown.** `resetRuntime` writes a fresh record, which drops the stamp along with the session count. The same holds for an app removed from Pause and added again. Both are deliberate actions that already hand back the day's full allowance, so the cooldown is the smaller of the two losses.
 
 **The rules list does not show cooldown state.** It answers how much of the day's allowance is left, and a transient gap is not that. The shield is where a refusal is read, at the moment it applies.
 
