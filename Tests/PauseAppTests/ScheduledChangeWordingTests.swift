@@ -72,6 +72,46 @@ final class ScheduledChangeWordingTests: XCTestCase {
         )
     }
 
+    func testAShorterCooldownIsNamedInMinutes() throws {
+        let file = try fileWithReset(minuteOfDay: 0)
+        let change = PendingSettingsChange(
+            cooldownMinutes: 2,
+            startDay: file.nextLogicalDay(after: now, calendar: calendar)
+        )
+
+        XCTAssertEqual(
+            ScheduledChangeWording.settingsDescription(of: change, in: file, now: now),
+            "The cooldown changes to 2 minutes tomorrow."
+        )
+    }
+
+    func testACooldownSwitchedOffReadsAsOffRatherThanZeroMinutes() throws {
+        let file = try fileWithReset(minuteOfDay: 0)
+        let change = PendingSettingsChange(
+            cooldownMinutes: 0,
+            startDay: file.nextLogicalDay(after: now, calendar: calendar)
+        )
+
+        XCTAssertEqual(
+            ScheduledChangeWording.settingsDescription(of: change, in: file, now: now),
+            "The cooldown changes to off tomorrow."
+        )
+    }
+
+    func testBothSettingsMovingAreNamedTogether() throws {
+        let file = try fileWithReset(minuteOfDay: 0)
+        let change = PendingSettingsChange(
+            pauseSeconds: 5,
+            cooldownMinutes: 3,
+            startDay: file.nextLogicalDay(after: now, calendar: calendar)
+        )
+
+        XCTAssertEqual(
+            ScheduledChangeWording.settingsDescription(of: change, in: file, now: now),
+            "The pause changes to 5 seconds and the cooldown to 3 minutes tomorrow."
+        )
+    }
+
     // MARK: - Helpers
 
     private let now = Date(timeIntervalSince1970: 1_750_000_000)

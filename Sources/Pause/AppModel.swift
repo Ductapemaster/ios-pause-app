@@ -70,6 +70,7 @@ enum AppModelError: LocalizedError, Equatable {
     case invalidSessionLength
     case invalidPauseDuration
     case invalidResetMinuteOfDay
+    case invalidCooldownMinutes
 
     var errorDescription: String? {
         switch self {
@@ -87,6 +88,8 @@ enum AppModelError: LocalizedError, Equatable {
             "Pause duration must be between 1 and 120 seconds."
         case .invalidResetMinuteOfDay:
             "The daily reset must be a quarter hour between 00:00 and 23:45."
+        case .invalidCooldownMinutes:
+            "The cooldown must be between 0 and 10 minutes."
         }
     }
 }
@@ -597,7 +600,35 @@ final class AppModel: ObservableObject {
         var nextConfiguration = configuration
         nextConfiguration.settings = try GlobalSettings(
             pauseSeconds: seconds,
-            resetMinuteOfDay: configuration.settings.resetMinuteOfDay
+            resetMinuteOfDay: configuration.settings.resetMinuteOfDay,
+            cooldownMinutes: configuration.settings.cooldownMinutes
+        )
+        do {
+            try persist(nextConfiguration, now: now)
+        } catch {
+            activationCoordinator.configurationSaveCompleted(successfully: false)
+            throw error
+        }
+    }
+
+    func setCooldownMinutes(_ minutes: Int, now: Date = Date()) throws {
+        // Mirrors the pause-duration setter: same mutation gate, same validation
+        // before anything is written. Unlike the day reset this can defer, so
+        // there is no registration to replace — nothing has to run for a
+        // cooldown to end.
+        try requireConfigurationMutation(.globalSettingsEdit)
+        guard GlobalSettings.cooldownMinutesRange.contains(minutes) else {
+            throw AppModelError.invalidCooldownMinutes
+        }
+        guard configurationStore != nil else {
+            throw AppModelError.storageUnavailable
+        }
+
+        var nextConfiguration = configuration
+        nextConfiguration.settings = try GlobalSettings(
+            pauseSeconds: configuration.settings.pauseSeconds,
+            resetMinuteOfDay: configuration.settings.resetMinuteOfDay,
+            cooldownMinutes: minutes
         )
         do {
             try persist(nextConfiguration, now: now)
@@ -622,7 +653,8 @@ final class AppModel: ObservableObject {
         var nextConfiguration = configuration
         nextConfiguration.settings = try GlobalSettings(
             pauseSeconds: configuration.settings.pauseSeconds,
-            resetMinuteOfDay: minute
+            resetMinuteOfDay: minute,
+            cooldownMinutes: configuration.settings.cooldownMinutes
         )
         do {
             try persist(nextConfiguration, now: now)
@@ -791,14 +823,26 @@ final class AppModel: ObservableObject {
         )
     }
 
-    /// A scheduled change to the global settings, or nothing. Only a shorter
-    /// pause is ever scheduled; the day reset applies on save.
+    /// A scheduled change to the global settings, or nothing. A shorter pause
+    /// and a shorter cooldown are the two that can be scheduled; the day reset
+    /// applies on save.
     func pendingSettingsChange() -> PendingSettingsChange? {
         guard let pending = configurationFile?.pending,
               let startDay = pendingChangeStartDay else { return nil }
         let scheduled = pending.document.settings
-        guard scheduled.pauseSeconds != configuration.settings.pauseSeconds else { return nil }
-        return PendingSettingsChange(pauseSeconds: scheduled.pauseSeconds, startDay: startDay)
+        let inForce = configuration.settings
+        let pauseSeconds = scheduled.pauseSeconds == inForce.pauseSeconds
+            ? nil
+            : scheduled.pauseSeconds
+        let cooldownMinutes = scheduled.cooldownMinutes == inForce.cooldownMinutes
+            ? nil
+            : scheduled.cooldownMinutes
+        guard pauseSeconds != nil || cooldownMinutes != nil else { return nil }
+        return PendingSettingsChange(
+            pauseSeconds: pauseSeconds,
+            cooldownMinutes: cooldownMinutes,
+            startDay: startDay
+        )
     }
 
     var rootRoute: AppRootRoute {
@@ -924,6 +968,7 @@ final class AppModel: ObservableObject {
         let evaluation = RuleLookup.evaluate(
             rule: rule,
             runtime: runtime,
+            settings: configuration.settings,
             logicalDay: logicalDay(at: now),
             now: now
         )
@@ -986,6 +1031,12 @@ final class AppModel: ObservableObject {
                 applicationToken: token,
                 title: "A session is already open",
                 message: "The current session runs until \(until.formatted(date: .omitted, time: .shortened))."
+            )
+        case let .coolingDown(until):
+            RefusalContent(
+                applicationToken: token,
+                title: "Cooling down",
+                message: "Another session can start at \(until.formatted(date: .omitted, time: .shortened))."
             )
         }
     }
