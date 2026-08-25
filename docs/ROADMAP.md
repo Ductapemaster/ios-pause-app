@@ -10,9 +10,7 @@ A window is the same shape as the cooldown that now ships — entry refused for 
 
 ## Deferred
 
-**Owed on the current build: confirm the cooldown refusal renders.** Set the cooldown to a minute or two, spend a session, and open the app again before it elapses. The shield should read "Cooling down until …" with one button. This is the first refusal whose subtitle carries a formatted time, and it is the only part of the cooldown that a unit test cannot reach.
-
-**Owed on the current build: confirm a refusal shield renders one button.** Passing `nil` for `secondaryButtonLabel` is how `ShieldConfiguration` omits it — the property is optional and defaults to `nil` — but that is read off the SDK declaration rather than measured, and no rendered shield has been seen with it nil. Opening a shielded app whose allowance is spent settles it.
+**Owed on the current build: confirm a refusal shield renders one button.** Passing `nil` for `secondaryButtonLabel` is how `ShieldConfiguration` omits it — the property is optional and defaults to `nil` — but that is read off the SDK declaration rather than measured. A cooldown shield has since been used on the device and was described as having one button, which is close to settling it; counting the buttons deliberately on a refusal closes it.
 
 **Applying a picker selection blocks the main thread.** Adding an app holds the interface while each added app takes a file-lock cycle plus a JSON encode and atomic write, `configurationStore.save` takes another, and `ShieldReconciler.reconcile` holds a lock while re-reading every configured target's runtime and finishes with a `ManagedSettingsStore` write. Two `@Published` writes land in one run-loop turn, each rebuilding a `Label(ApplicationToken)` per rule. `AppModel` is `@MainActor` and no actor, `Task`, or dispatch hop exists on the path. Which part dominates is unmeasured; the ManagedSettings and FamilyControls costs are not visible from source.
 
