@@ -16,6 +16,8 @@ Blocking periods are the same shape — a stretch during which entry is refused 
 
 ## Deferred
 
+**Owed on the current build: confirm a refusal shield renders one button.** Passing `nil` for `secondaryButtonLabel` is how `ShieldConfiguration` omits it — the property is optional and defaults to `nil` — but that is read off the SDK declaration rather than measured, and no rendered shield has been seen with it nil. Opening a shielded app whose allowance is spent settles it.
+
 **Applying a picker selection blocks the main thread.** Adding an app holds the interface while each added app takes a file-lock cycle plus a JSON encode and atomic write, `configurationStore.save` takes another, and `ShieldReconciler.reconcile` holds a lock while re-reading every configured target's runtime and finishes with a `ManagedSettingsStore` write. Two `@Published` writes land in one run-loop turn, each rebuilding a `Label(ApplicationToken)` per rule. `AppModel` is `@MainActor` and no actor, `Task`, or dispatch hop exists on the path. Which part dominates is unmeasured; the ManagedSettings and FamilyControls costs are not visible from source.
 
 Moving the work off the main actor would rework the locking design and the unit tests encode these calls as synchronous throughout (why: deferred on that basis — the daily cost is low because the path is configuration, not the shield-pause-use loop). A hang has since been reported, but it was traced to [the session-end lock-out](research/session-end-hang.md) rather than to this path, which leaves this entry deferred on its original reasoning and still unmeasured.
