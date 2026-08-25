@@ -115,7 +115,12 @@ struct RuleEditorView: View {
             try model.removeRule(id: ruleID)
             // A removal that waits stays on screen, so the pending state is
             // visible where it was chosen, under the section that can cancel
-            // it. One that applied at once is done. Mirrors `save()`.
+            // it. One that applied at once is done. Mirrors `save()`, but
+            // unlike `save()` this second branch is inert today: removal
+            // always loosens, so the router always defers it and
+            // `pendingChange` is never nil here. Kept anyway — the view
+            // reads the state back rather than hardcoding a policy that
+            // belongs to the router.
             if pendingChange == nil {
                 dismiss()
             }
