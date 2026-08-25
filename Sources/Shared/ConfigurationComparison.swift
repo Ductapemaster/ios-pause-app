@@ -48,7 +48,8 @@ public enum ConfigurationComparison {
     }
 
     public static func isLoosening(from before: GlobalSettings, to after: GlobalSettings) -> Bool {
-        after.pauseSeconds < before.pauseSeconds
+        if after.pauseSeconds < before.pauseSeconds { return true }
+        return after.cooldownMinutes < before.cooldownMinutes
     }
 
     public static func isLoosening(

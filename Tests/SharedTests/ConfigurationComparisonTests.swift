@@ -211,4 +211,25 @@ final class ConfigurationComparisonTests: XCTestCase {
             from: Data("{\"data\":\"\(data)\"}".utf8)
         )
     }
+
+    func testShorteningTheCooldownLoosens() throws {
+        XCTAssertTrue(ConfigurationComparison.isLoosening(
+            from: try GlobalSettings(pauseSeconds: 10, cooldownMinutes: 5),
+            to: try GlobalSettings(pauseSeconds: 10, cooldownMinutes: 2)
+        ))
+    }
+
+    func testSwitchingTheCooldownOffLoosens() throws {
+        XCTAssertTrue(ConfigurationComparison.isLoosening(
+            from: try GlobalSettings(pauseSeconds: 10, cooldownMinutes: 5),
+            to: try GlobalSettings(pauseSeconds: 10, cooldownMinutes: 0)
+        ))
+    }
+
+    func testLengtheningTheCooldownDoesNotLoosen() throws {
+        XCTAssertFalse(ConfigurationComparison.isLoosening(
+            from: try GlobalSettings(pauseSeconds: 10, cooldownMinutes: 2),
+            to: try GlobalSettings(pauseSeconds: 10, cooldownMinutes: 5)
+        ))
+    }
 }

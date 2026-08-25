@@ -40,6 +40,7 @@ public struct RuleUsageReader {
             used[rule.id] = RuleLookup.evaluate(
                 rule: rule,
                 runtime: runtime,
+                settings: configuration.settings,
                 logicalDay: logicalDay,
                 now: now
             ).runtime.sessionsStarted

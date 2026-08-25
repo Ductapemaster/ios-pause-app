@@ -21,6 +21,7 @@ final class RuleLookupTests: XCTestCase {
         let evaluation = RuleLookup.evaluate(
             rule: rule,
             runtime: runtime,
+            settings: try GlobalSettings(pauseSeconds: 10),
             logicalDay: CalendarDay(date: now, calendar: calendar),
             now: now
         )
@@ -48,6 +49,7 @@ final class RuleLookupTests: XCTestCase {
         let evaluation = RuleLookup.evaluate(
             rule: rule,
             runtime: runtime,
+            settings: try GlobalSettings(pauseSeconds: 10),
             logicalDay: CalendarDay(date: now, calendar: calendar),
             now: now
         )
