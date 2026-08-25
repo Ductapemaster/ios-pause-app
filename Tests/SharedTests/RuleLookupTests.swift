@@ -89,29 +89,44 @@ final class RuleLookupTests: XCTestCase {
         )
 
         XCTAssertEqual(presentation.subtitle, "That's all for today.")
-        XCTAssertEqual(presentation.primaryButtonTitle, "Done for today")
+        XCTAssertEqual(presentation.primaryButtonTitle, "Close")
     }
 
+    /// The subtitle carries the instruction; the button says only what pressing
+    /// it does, so the screen no longer names an action its button cannot take.
     func testRepairPresentationShowsTheRepairCopy() {
         let presentation = ShieldPresentation.repair
 
-        XCTAssertEqual(presentation.subtitle, "Open Pause to repair this app")
-        XCTAssertEqual(presentation.primaryButtonTitle, "Done for today")
+        XCTAssertEqual(presentation.subtitle, "Pause can't check this app. Open Pause to fix it.")
+        XCTAssertEqual(presentation.primaryButtonTitle, "Close")
     }
 
-    /// Every shield offers a way out that starts nothing. Without it the only
-    /// choices are the pause and the Home gesture, so a reflexive open has no
-    /// answer that acknowledges the user simply wants out.
-    func testEveryPresentationOffersTheSameWayOut() throws {
+    /// An allowed shield offers two different answers — start the session, or
+    /// leave without starting one — so it needs both buttons.
+    func testTheAllowedPresentationKeepsAWayOutBesideThePause() throws {
+        let rule = try AppRule(sessionsPerDay: 4, sessionLengthMinutes: 5)
+
+        let presentation = ShieldPresentation(
+            rule: rule,
+            decision: .allowed(sessionNumber: 1, lengthMinutes: 5)
+        )
+
+        XCTAssertEqual(presentation.secondaryButtonTitle, "Not now")
+    }
+
+    /// Every refusal shows one button. Both buttons closed the app, so the
+    /// second only restated the first.
+    func testEveryRefusalShowsASingleCloseButton() throws {
         let rule = try AppRule(sessionsPerDay: 4, sessionLengthMinutes: 5)
         let presentations = [
-            ShieldPresentation(rule: rule, decision: .allowed(sessionNumber: 1, lengthMinutes: 5)),
             ShieldPresentation(rule: rule, decision: .refused(.dailyAllowanceExhausted(limit: 4))),
+            ShieldPresentation(rule: rule, decision: .refused(.sessionAlreadyOpen(until: Date()))),
             ShieldPresentation.repair,
         ]
 
         for presentation in presentations {
-            XCTAssertEqual(presentation.secondaryButtonTitle, "Not now")
+            XCTAssertEqual(presentation.primaryButtonTitle, "Close")
+            XCTAssertNil(presentation.secondaryButtonTitle)
         }
     }
 

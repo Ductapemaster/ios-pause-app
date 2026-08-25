@@ -65,10 +65,11 @@ final class ShieldConfigExtension: ShieldConfigurationDataSource {
                 color: UIColor(white: 0.1, alpha: 1)
             ),
             primaryButtonBackgroundColor: UIColor(white: 0.97, alpha: 1),
-            secondaryButtonLabel: ShieldConfiguration.Label(
-                text: presentation.secondaryButtonTitle,
-                color: .label
-            )
+            // Nil where the presentation carries no secondary title, which is
+            // what leaves a refusal showing its one button.
+            secondaryButtonLabel: presentation.secondaryButtonTitle.map {
+                ShieldConfiguration.Label(text: $0, color: .label)
+            }
         )
     }
 }

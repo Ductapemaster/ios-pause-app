@@ -18,7 +18,7 @@ public struct ShieldPrimaryAction {
     /// A refusal is a decision about sessions; a failure means the decision
     /// could not be made. They must not share an answer, so there are three.
     /// Every refusal — the allowance spent, a session already open, an app the
-    /// configuration cannot resolve — shows a button reading "Done for today",
+    /// configuration cannot resolve — shows a single button reading "Close",
     /// which is a promise to dismiss.
     public enum Outcome: Equatable {
         /// A session is available and has been recorded as intended.

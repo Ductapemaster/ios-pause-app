@@ -25,8 +25,8 @@ final class ShieldActionExtension: ShieldActionDelegate {
         }
 
         // A failure to reach the app group container at all is reported and then
-        // dismissed like any other refusal: the button says "Done for today",
-        // and a container this extension cannot reach is not a condition that
+        // dismissed like any other refusal: the button says "Close", and a
+        // container this extension cannot reach is not a condition that
         // clears on the next press, so leaving the shield up would leave the
         // button permanently dead. A failure inside a reachable container is
         // the transient case, and `.keepShield` covers that one.

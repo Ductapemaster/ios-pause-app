@@ -6,7 +6,9 @@ The denial comes from the sandbox profile iOS assigns to the shield configuratio
 
 ## What the shield is supposed to show
 
-`ShieldPresentation` (`Sources/Shared/RuleLookup.swift:89-116`) has four variants, all rendered through one `ShieldConfiguration` (`Sources/ShieldConfigExtension/ShieldConfigExtension.swift:51-63`). The allowed variant reads `"Next session: <n> of <limit>"` with a `"Pause to open"` button. Repair reads `"Open Pause to repair this app"` with a `"Done for today"` button, and is reached from an untyped `catch` covering eleven distinct failures — a nil application token, an absent or unreadable configuration, a lock failure, a token that matches no target, a missing runtime file, and others.
+`ShieldPresentation` (`Sources/Shared/RuleLookup.swift`) has four variants, all rendered through one `ShieldConfiguration` (`Sources/ShieldConfigExtension/ShieldConfigExtension.swift`). The allowed variant names the sessions left and offers to start one; the refusals, repair among them, offer only a way out. Repair is the one nothing chooses: it is reached from an untyped `catch` covering eleven distinct failures — a nil application token, an absent or unreadable configuration, a lock failure, a token that matches no target, a missing runtime file, and others. That breadth is why a sandbox denial and a missing rule are indistinguishable on screen.
+
+The copy itself lives in `ShieldPresentation` and is not repeated here; it has changed since this was measured, and the failure this doc records does not depend on it.
 
 ## The cause
 
