@@ -13,9 +13,9 @@ A session ends and the shield returns with its primary button live, so the app c
 
 ## What changes
 
-One global setting: the cooldown length in minutes, from 0 to 60, applying to every covered app. It runs per app — finishing an Instagram session cools down Instagram, and the other covered apps are unaffected.
+One global setting: the cooldown length in minutes, from 0 to 10, applying to every covered app. It runs per app — finishing an Instagram session cools down Instagram, and the other covered apps are unaffected.
 
-The cap is 60 because a longer refusal is a blocking period's job, and Phase 2 covers that with a schedule the monitor can wake on.
+The cap is 10 because the cooldown's job is to break the reflex at the moment it is strongest, when the shield has just returned and the reflex is to press through it. Spacing sessions across a day is a blocking period's job, and Phase 2 covers that with a schedule the monitor can wake on.
 
 The default is 0, which switches the feature off, so an install that never touches the setting behaves exactly as it does today.
 
@@ -73,11 +73,13 @@ The shield states an end time rather than a running countdown. `ShieldConfigurat
 
 **The rules list does not show cooldown state.** It answers how much of the day's allowance is left, and a transient gap is not that. The shield is where a refusal is read, at the moment it applies.
 
+**The cooldown length is global rather than per app.** One length covers every rule, which is the smaller setting and the one the other two globals are shaped like. Making it per app is a later change the model already accommodates: the stamp is stored per rule, so only where the length is read would move.
+
 ## Testing
 
 Cooldown behaviour is pure and belongs in `PauseCore`: a session refused inside the gap, allowed once past it, refused for the whole gap when the gap spans a daily reset, absent after a rolled-back grant, and inert when the length is 0. The boundary is tested at the instant the cooldown elapses as well as either side of it.
 
-`GlobalSettings` rejects a cooldown length outside 0 to 60, alongside the existing pause-seconds and reset-minute validation.
+`GlobalSettings` rejects a cooldown length outside 0 to 10, alongside the existing pause-seconds and reset-minute validation.
 
 No device check is owed. Every claim here is Pause's own arithmetic over stored values, and the device is for observing what iOS does.
 
