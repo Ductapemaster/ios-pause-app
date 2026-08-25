@@ -328,7 +328,7 @@ public typealias WebDomainToken = Token<WebDomain>
 
 That closes off every sizing route, and each was measured on device before the binary was read: `.font` at 48pt and 72pt drew an identical icon; `.frame(width: 56, height: 56)` centred a small icon in a large box, because the inner frame binds tighter; `.imageScale` and Dynamic Type cannot apply, the first reaching only SF Symbol images and the second having no arithmetic to drive. A custom `LabelStyle` gains nothing — SwiftUI modifiers compose outside-in, so anything applied to `configuration.icon` still wraps *around* the baked-in frame rather than inside it.
 
-`.scaleEffect` is the one lever that works, and it enlarges by stretching a raster the slot rendered once at 35pt. At roughly 2.3x — an 80pt target — the softness is obvious on the phone.
+`.scaleEffect` is the one lever that works, and it enlarges by stretching a raster the slot rendered once at 35pt. The source is 105px at 3x, so the factor sets the cost directly: at roughly 2.3x — an 80pt target, 240px asked of 105px — the softness is obvious on the phone. Sharpness and size cannot both be had, and 35pt on its own reads as a speck beside a large composition.
 
 The icon also cannot be captured: `ImageRenderer` over the label yields red-crossed placeholders, which follows from the content being drawn out of process by `FamilyControlsAgent` and vended back as an opaque remote layer. The app never holds the bitmap, which is the privacy mechanism working as designed.
 
