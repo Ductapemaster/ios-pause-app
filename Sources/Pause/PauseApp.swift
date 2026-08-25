@@ -21,7 +21,7 @@ struct PauseApp: App {
                     AuthorizationView(model: model)
                 }
             }
-            .tint(Color(red: 0.36, green: 0.36, blue: 0.84))
+            .tint(Color.pauseTint)
             .alert(item: $model.presentedError) { error in
                 Alert(
                     title: Text(error.title),
@@ -75,4 +75,10 @@ struct PauseApp: App {
             )
         }
     }
+}
+
+extension Color {
+    /// The app tint. Named here because the breathing visual draws with it
+    /// directly, where the environment `.tint` is not readable.
+    static let pauseTint = Color(red: 0.36, green: 0.36, blue: 0.84)
 }
