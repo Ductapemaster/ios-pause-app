@@ -348,6 +348,10 @@ The icon also cannot be captured: `ImageRenderer` over the label yields red-cros
 
 Three things follow. The height is 25pt in every case, so the name has one drawn size just as the icon does — roughly 17pt text — and no large app name is available. `.multilineTextAlignment` does not reach it, so it cannot be centred inside a frame. And because it always fills the width it is offered, its drawn text width cannot be measured, which closes off sizing a frame to hug it.
 
+**Drawing the name yourself is closed off too.** `ManagedSettings.Application` exposes `localizedDisplayName` and a public `init(token:)`, which looks like a way round the title view entirely: read the name as a `String` and render it as ordinary `Text`, at any size and any alignment. It returns **nil in the containing app**, measured on device — a build that showed the name when it was present and the icon alone when it was not drew the icon alone. The `com.apple.developer.family-controls.app-and-website-usage` entitlement is the reported gate, and this app does not hold it; that the entitlement lifts it is inference, not measured here.
+
+The name is not nil everywhere. `ShieldConfigurationDataSource` is handed an `Application` by the system with the name populated — it is what the shield renders as its title (`Sources/ShieldConfigExtension/ShieldConfigExtension.swift`). So the extension knows the name and the app does not, and persisting it across that boundary would be working around the entitlement rather than through it.
+
 A custom `LabelStyle` buys independent treatment of title and icon, which is the one thing it is good for, but it changes none of this — modifiers still compose outside the view's own body.
 
 Apple's position, such as it is, is that `Label(applicationToken)` is the renderer: [forum thread 722618](https://developer.apple.com/forums/thread/722618) has an Apple Frameworks Engineer and DTS both directing developers to it without addressing size, and [thread 731387](https://developer.apple.com/forums/thread/731387) raises the small icon with no Apple reply. Nothing in the iOS 17 through 26 interfaces revises it.

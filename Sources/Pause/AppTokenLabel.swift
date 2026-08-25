@@ -10,42 +10,25 @@ struct AppTokenLabel: View {
     }
 }
 
-/// The app being entered, presented as its own subject: its icon alone,
-/// centred.
+/// The app being entered, shown as its icon at the size the system draws it.
 ///
-/// Two constraints shape this, both established from the SDK rather than
-/// guessed, and both recorded in `docs/research/screen-time-platform-evidence.md`:
+/// Neither half of `Label(applicationToken)` can be styled: the icon has a
+/// fixed 35pt frame baked into its body, and the title view has one drawn size,
+/// ignores `.font`, and always aligns leading. Drawing the name as ordinary
+/// `Text` instead does not work either — `Application(token:).localizedDisplayName`
+/// is nil in this process without the `family-controls.app-and-website-usage`
+/// entitlement, which this app does not hold. All three measured on device and
+/// recorded in `docs/research/screen-time-platform-evidence.md`.
 ///
-/// The icon has one drawn size. `FamilyActivityIconView` bakes a
-/// `.frame(width: 35, height: 35)` into its `body` and renders out of process,
-/// so no font, frame, image scale, Dynamic Type setting or custom `LabelStyle`
-/// reaches inside it. A `scaleEffect` is the only lever, and it enlarges by
-/// stretching what the slot already drew at 35pt — so `scale` buys size at the
-/// cost of sharpness, and nothing else can.
-///
-/// At 3x, 35pt is a 105px source. `scale` 1.5 asks 156px of it and reads
-/// slightly soft; 2.3 asks 240px and is visibly mushy. Tune this one number
-/// against that curve — there is no setting that makes it sharp and large.
-///
-/// The name is absent for a different reason. `FamilyActivityTitleView`
-/// reports an ideal width of roughly one character, so `.fixedSize()` truncates
-/// it to a single glyph, while leaving it free makes it greedy and
-/// left-aligned inside a centred column.
+/// So the icon stands alone here, and the identity is carried by pairing it
+/// with the session line rather than by naming the app.
 struct AppIdentityBadge: View {
     let applicationToken: ApplicationToken
-
-    /// Multiplier on the system's fixed 35pt icon. See the note above before
-    /// raising it.
-    var scale: CGFloat = 1.5
-
-    private var drawnSize: CGFloat { 35 * scale }
 
     var body: some View {
         AppTokenLabel(applicationToken: applicationToken)
             .labelStyle(.iconOnly)
             .fixedSize()
-            .scaleEffect(scale)
-            .frame(width: drawnSize, height: drawnSize)
             .accessibilityLabel("The app you are entering")
     }
 }
