@@ -42,7 +42,7 @@ struct RulesView: View {
             Text("Choose the apps where you want a short pause before each allowed session.")
                 .foregroundStyle(.secondary)
 
-            Button("Choose apps") {
+            Button("Add apps") {
                 isPickerPresented = true
             }
             .buttonStyle(.borderedProminent)
@@ -133,7 +133,7 @@ struct RulesView: View {
             }
 
             Section {
-                Button("Edit apps") {
+                Button("Add apps") {
                     isPickerPresented = true
                 }
             } footer: {

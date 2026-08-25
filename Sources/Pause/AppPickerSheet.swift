@@ -32,7 +32,7 @@ struct AppPickerSheet: View {
     var body: some View {
         NavigationStack {
             FamilyActivityPicker(footerText: explanation, selection: $draft)
-                .navigationTitle("Choose apps")
+                .navigationTitle("Add apps")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
