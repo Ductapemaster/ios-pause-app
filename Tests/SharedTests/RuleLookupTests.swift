@@ -67,7 +67,7 @@ final class RuleLookupTests: XCTestCase {
         )
 
         XCTAssertEqual(presentation.subtitle, "3 sessions left today")
-        XCTAssertEqual(presentation.primaryButtonTitle, "Take a breath")
+        XCTAssertEqual(presentation.primaryButtonTitle, "Take a pause")
     }
 
     func testAllowedPresentationSaysSessionOnceOneRemains() throws {
@@ -79,7 +79,7 @@ final class RuleLookupTests: XCTestCase {
         )
 
         XCTAssertEqual(presentation.subtitle, "1 session left today")
-        XCTAssertEqual(presentation.primaryButtonTitle, "Take a breath")
+        XCTAssertEqual(presentation.primaryButtonTitle, "Take a pause")
     }
 
     func testExhaustedPresentationShowsTheRefusalCopy() throws {

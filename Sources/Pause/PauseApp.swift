@@ -78,7 +78,7 @@ struct PauseApp: App {
 }
 
 extension Color {
-    /// The app tint. Named here because the breathing visual draws with it
+    /// The app tint. Named here because the pulsing circles draw with it
     /// directly, where the environment `.tint` is not readable.
     static let pauseTint = Color(red: 0.36, green: 0.36, blue: 0.84)
 }

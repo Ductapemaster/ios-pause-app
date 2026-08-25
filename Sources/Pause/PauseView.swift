@@ -19,14 +19,14 @@ struct PauseView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            BreathingCircles {
+            PulsingCircles {
                 VStack(spacing: 6) {
                     Text(remainingSeconds, format: .number)
                         .font(.system(size: 52, weight: .semibold, design: .rounded).monospacedDigit())
                         .contentTransition(.numericText())
                         .accessibilityLabel("\(remainingSeconds) seconds remaining")
 
-                    Text("Take a breath")
+                    Text("Take a pause")
                         .font(.system(size: 15))
                         .foregroundStyle(.secondary)
                 }

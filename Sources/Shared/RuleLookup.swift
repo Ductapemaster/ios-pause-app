@@ -121,7 +121,7 @@ public struct ShieldPresentation: Equatable, Sendable {
             // falls once a session is actually spent.
             let remaining = rule.sessionsPerDay - sessionNumber + 1
             subtitle = "\(remaining) session\(remaining == 1 ? "" : "s") left today"
-            primaryButtonTitle = "Take a breath"
+            primaryButtonTitle = "Take a pause"
             secondaryButtonTitle = "Not now"
         case .refused(.dailyAllowanceExhausted):
             subtitle = "That's all for today."

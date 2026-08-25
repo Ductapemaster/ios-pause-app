@@ -14,7 +14,7 @@ struct ManualReturnView: View {
         VStack(spacing: 20) {
             AppIdentityBadge(applicationToken: content.applicationToken)
 
-            BreathingCircles(isAnimated: false) {
+            PulsingCircles(isAnimated: false) {
                 ZStack {
                     Circle()
                         .fill(Color.pauseTint)
