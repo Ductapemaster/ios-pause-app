@@ -19,12 +19,12 @@ A pending change lives on the row of the thing it changes, and is cancellable on
 
 The scheduled-change model is document-level: a save produces a whole document, and the difference between two documents is computed as a diff. The rules list is app-level: one row per app, each carrying that app's allowance and its charged sessions.
 
-Showing a document-shaped fact in an app-shaped list forced two compromises, and both are visible:
+Showing a document-shaped fact in an app-shaped list forces two compromises:
 
-- The banner reduced every pending change to one sentence — the first change named in full, the rest as a count. A sentence about a document has no row to sit on, so it sat above the list in a section of its own, pairing an app label whose width Pause cannot measure with text that wraps beside it.
-- A pending removal decorated its app's row with a second line, a removal phrase, and a button, so one row in the list had four stacked elements where the others had one.
+- A sentence about a document has no row to sit on. Reducing every pending change to one sentence — the first change named in full, the rest as a count — leaves that sentence with nowhere to go but a section of its own above the list, pairing an app label whose width Pause cannot measure with text that wraps beside it.
+- A pending removal has no single value to show beside the app's count, so decorating its row with the removal in full means a second line, a removal phrase, and a button — one row in the list carrying four stacked elements where the others carry one.
 
-Both surfaces offered a cancel, and both called the same document-wide `cancelScheduledChange()`. A button labelled with one app dropped every other app's pending change too.
+A cancel scoped to the document rather than to the row compounds both: a button labelled with one app would drop every other app's pending change too.
 
 ## The rule
 
@@ -73,7 +73,7 @@ Below the controls, a section names the change in words and carries a cancel sco
 
 Locking Save and the allowance controls closes a hazard rather than guarding against it. The editor saves a document built from the rules in force, which would write over whatever is scheduled and cancel it silently. An editor that cannot save cannot do it.
 
-Saving and removing follow the same rule for whether the editor stays open: it dismisses only if the change applied at once, and stays open if the change came back pending, so the wait is visible where it was chosen, under the section that can cancel it. A removal drops coverage, which is always a loosening, so removing an app leaves the editor open the same way a save that only loosens does.
+Saving and removing follow the same rule for whether the editor stays open: it dismisses only if the change applied at once, and stays open if the change came back pending, so the wait is visible where it was chosen, under the section that can cancel it. That check reads whether *this* rule came out pending — `pendingChange(forRuleID:) == nil` — rather than whether the save deferred something somewhere: whether to dismiss is a question about one app, and a document-wide answer would be the wrong one whenever the save that just ran touched a different app's pending change than the one this screen edits. A removal drops coverage, which is always a loosening, so removing an app leaves the editor open the same way a save that only loosens does.
 
 ## Where a pending pause duration is cancelled
 
@@ -103,18 +103,11 @@ Shield reconciliation, the monitor extension, and `registerDailyReset` consume t
 
 Cancelling reverts the app to the values in force and frees the controls, so superseding a scheduled change is cancel-then-edit rather than edit-over. With 2 in force and 4 pending, changing course means cancelling back to 2 and choosing again.
 
-This makes one rule out of what were two. The spec already disabled the controls under a pending removal, because an editor save builds from the rules in force and would write over a scheduled removal, cancelling it silently. The same hazard exists for a pending allowance change, and the same guard closes it.
+The same lock covers both kinds of pending change, allowance and removal alike, because both create the same hazard: an editor save is built from the rules in force, and would silently overwrite whatever is already scheduled for the app.
 
-It also removes the trap where setting a value back to what is in force appears to undo a scheduled change and does not: the router reads a candidate equal to the in-force unit as having no opinion, so the pending value survives (`ConfigurationSaveRouter.swift:33-45`). An editor that cannot save while a change is pending cannot reach that case.
+Locking also removes a subtler trap: setting a value back to what is in force looks like it should undo a scheduled change, and does not. The router reads a candidate equal to the in-force unit as having no opinion about it, so the pending value survives underneath (`ConfigurationSaveRouter.swift:33-45`). An editor that cannot save while a change is pending cannot reach that case.
 
-The router is untouched. The gap recorded in [the overview](../README.md) as *a save states its opinion by rebuilding* stays in the router as a mechanism, but nothing in the interface can reach it any more — it is closed by construction rather than fixed, and the overview should say so rather than claim the inference is gone.
-
-## What is deleted
-
-- `ScheduledChangeNotice` — the banner view.
-- `ScheduledChangeSentence`, and `ScheduledChangeWording.sentence(for:starting:)` with its "and N other changes" collapsing. Every change now has its own row, so nothing needs summarising into one line.
-- `RulesView.pendingRemovalRow`, and the `removalPhrase` helper that served it.
-- `AppModel.lastSaveDeferredPart`. It is a document-scoped flag — `routed.effective != candidate` — consulted for an app-scoped decision, whether the editor stays open after a deferred save. The editor asks whether *this* rule came out pending instead, which is the lookup it already needs.
+The router itself is unchanged: the inference [the overview](../README.md) describes as *a save states its opinion by rebuilding* is still how it decides what to carry forward. Locking the editor closes the interface's only route to the case where that inference reads silence as a no-op — closed by construction, not by changing the router.
 
 ## The model's pending surface
 
@@ -129,23 +122,21 @@ Each consumer then asks the question it actually has. The marker picks its symbo
 
 ## Testing
 
-The case nothing covers today is two independent pending changes, one cancelled:
+Two independent pending changes, one cancelled, is pinned directly:
 
-- Two apps each with a pending change; cancelling one leaves the other's intact, with its start day unchanged.
-- Cancelling the only pending change collapses `pending` to `nil`.
-- Cancelling a pending removal restores the app's unit to what is in force, and the app keeps its charged-session count across the cancel.
+- Two apps each with a pending change; cancelling one leaves the other's intact, with its start day unchanged (`testCancellingOneAppsChangeLeavesAnothersStanding`).
+- Cancelling the only pending change collapses `pending` to `nil` (`testCancellingTheOnlyPendingChangeLeavesNothingScheduled`).
+- Cancelling a pending removal restores the app's unit to what is in force, and the app keeps its charged-session count across the cancel (`testCancellingARemovalRestoresTheAppAndKeepsItsChargedSessions`).
 
 Alongside those:
 
-- A rule with a pending change reports one; a rule without reports none. The Pause duration row reports one only for a shorter pause, and the Day reset row never does.
-- Cancelling a pending pause duration leaves every app's pending change intact, and cancelling an app's change leaves a pending pause duration intact.
-- A pending pause duration disables the Pause duration stepper, and cancelling it frees the stepper at the value in force.
+- A rule with a pending change reports one; a rule without reports none (`testARuleWithAScheduledLooseningReportsItsPendingChange`, `testARuleWithNothingScheduledReportsNoPendingChange`). The Pause duration row reports one only for a shorter pause (`testAShorterPauseIsReportedAsAPendingSettingsChange`, `testALongerPauseAppliesAtOnceAndIsNotReportedAsPending`).
+- Cancelling a pending pause duration leaves an app's pending change intact, and cancelling an app's change leaves a pending pause duration intact (`testCancellingAPendingPauseLeavesAnAppsChangeStanding`, `testCancellingAnAppsChangeLeavesAPendingPauseStanding`).
 
-The editor's lock needs pinning both ways:
+Nothing pins that the Day reset row never carries a marker. `pendingSettingsChange()` only compares `pauseSeconds`, which is why a reset-only change can't produce one, but no test drives `setResetMinuteOfDay` and then reads `pendingSettingsChange()` back to confirm it stays `nil`. That is a gap.
 
-- A rule with any pending change — allowance or removal — leaves the editor unable to save.
-- Cancelling frees the controls, and the values they return to are the ones in force.
+`RulesView` and `RuleEditorView` have no view-snapshot harness. What is pinned is the model's per-rule and per-settings lookups — `pendingChange(forRuleID:)` and `pendingSettingsChange()` — which the views read directly to decide the marker, the locked controls, the disabled Save, and the disabled stepper. No test exercises the views themselves, so a rule with a pending change failing to actually disable Save, or a pending pause duration failing to actually disable the stepper, would not be caught by the suite; only a wrong return value from the model would. Whether the marker and the locks read correctly on screen is a device check.
+
+`ScheduledChangeWording` is pinned separately: the "tomorrow" phrase, an allowance sentence naming only the field that moved, both fields moving named together, the removal sentence leading with the pending state, and the settings sentence naming seconds.
 
 The router already supports pending changes coexisting (`ConfigurationSaveRouterTests.swift:105`, `testAScheduledRemovalSurvivesASaveAboutAnotherApp`); what is new is cancelling one of them.
-
-`RulesView` and `RuleEditorView` have no view-snapshot harness, so the marker's presence is pinned on the model's per-rule lookup rather than on the rendered row. Whether the marker reads correctly on the device is a device check.
