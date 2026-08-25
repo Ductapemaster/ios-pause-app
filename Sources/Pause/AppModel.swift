@@ -54,6 +54,29 @@ enum AppEntryRoute {
     case manualReturn(ManualReturnContent)
     case refused(RefusalContent)
     case repair(RepairContent)
+
+    /// The case name alone, for the activation log line. Carries no content
+    /// from the route — no app name, no token.
+    var logName: String {
+        switch self {
+        case .configuration: "configuration"
+        case .pause: "pause"
+        case .manualReturn: "manualReturn"
+        case .refused: "refused"
+        case .repair: "repair"
+        }
+    }
+}
+
+private extension RefusalReason {
+    /// The case name alone, for the activation log line — no limits, no times.
+    var logName: String {
+        switch self {
+        case .dailyAllowanceExhausted: "refusedAllowanceExhausted"
+        case .sessionAlreadyOpen: "refusedSessionOpen"
+        case .coolingDown: "refusedCoolingDown"
+        }
+    }
 }
 
 enum AppRootRoute: Equatable {
@@ -106,6 +129,10 @@ final class AppModel: ObservableObject {
     /// Sessions charged against the current allowance day, per rule, for the
     /// list. Empty until a configuration file and runtime repository exist.
     @Published private(set) var sessionsUsedByRule: [UUID: Int] = [:]
+
+    /// Why the intent resolution picked the route it did, for the activation
+    /// log line below. Instrumentation only — nothing reads it but the log.
+    private var lastResolvedRouteReason: String?
 
     private let authorizationStatusProvider: () -> AuthorizationStatus
     private let authorizationRequester: () async throws -> Void
@@ -217,6 +244,7 @@ final class AppModel: ObservableObject {
         registerDailyReset()
 
         var coordinator = activationCoordinator
+        var activationReason: PauseActivationReason?
         let outcome: PauseActivationOutcome<AppEntryRoute>
         if let entryActivationProvider {
             outcome = coordinator.activate(
@@ -224,7 +252,8 @@ final class AppModel: ObservableObject {
                 consumeIntent: { try entryActivationProvider(now) },
                 resolveIntent: { $0 },
                 cleanup: { [self] in cleanupOrphanedRuntimes() },
-                reconcile: { [self] in reconcileSessionsIfAuthorized(now: now) }
+                reconcile: { [self] in reconcileSessionsIfAuthorized(now: now) },
+                reasonSink: { activationReason = $0 }
             )
         } else {
             outcome = coordinator.activate(
@@ -234,7 +263,8 @@ final class AppModel: ObservableObject {
                     try resolveShieldIntent(intent, now: now)
                 },
                 cleanup: { [self] in cleanupOrphanedRuntimes() },
-                reconcile: { [self] in reconcileSessionsIfAuthorized(now: now) }
+                reconcile: { [self] in reconcileSessionsIfAuthorized(now: now) },
+                reasonSink: { activationReason = $0 }
             )
         }
         activationCoordinator = coordinator
@@ -246,6 +276,7 @@ final class AppModel: ObservableObject {
 
         switch outcome {
         case .unchanged:
+            logEntryRoute(name: "unchanged", reason: activationReason)
             return
         case .configuration:
             entryRoute = .configuration
@@ -268,6 +299,21 @@ final class AppModel: ObservableObject {
         } else if !activationRuntimeRepairs.isEmpty {
             entryRoute = .repair(activationRuntimeRepairs.removeFirst())
         }
+        logEntryRoute(name: entryRoute.logName, reason: activationReason)
+    }
+
+    /// The one place an activation's route is recorded. Notice, not info: only
+    /// notice and above reach the log data store, and this line is read back off
+    /// the device after the fact rather than watched live. Route and reason
+    /// only — no app names, no tokens.
+    private func logEntryRoute(name: String, reason: PauseActivationReason?) {
+        let detail = [reason?.rawValue, lastResolvedRouteReason]
+            .compactMap { $0 }
+            .joined(separator: "/")
+        lastResolvedRouteReason = nil
+        Logger(subsystem: "com.koubalabs.pause", category: "entryRoute").notice(
+            "Entry route resolved: route=\(name, privacy: .public) reason=\(detail.isEmpty ? "unknown" : detail, privacy: .public)"
+        )
     }
 
     func sceneDidLeaveForeground() {
@@ -917,9 +963,11 @@ final class AppModel: ObservableObject {
         now: Date
     ) throws -> PauseActivationResolution<AppEntryRoute> {
         isGrantRequested = false
+        lastResolvedRouteReason = nil
 
         let age = now.timeIntervalSince(intent.createdAt)
         guard age >= 0, age <= PauseEntryRouter.maximumIntentAge else {
+            lastResolvedRouteReason = "intentExpired"
             return PauseActivationResolution(
                 payload: .repair(
                     RepairContent(
@@ -952,6 +1000,7 @@ final class AppModel: ObservableObject {
             }
             runtime = loadedRuntime
         } catch {
+            lastResolvedRouteReason = "runtimeUnreadable"
             return PauseActivationResolution(
                 payload: .repair(
                     runtimeRepairContent(for: rule.id)
@@ -985,6 +1034,7 @@ final class AppModel: ObservableObject {
             now: now
         ) {
         case let .pause(details):
+            lastResolvedRouteReason = "entryAllowed"
             route = .pause(
                 PauseEntryContext(
                     details: details,
@@ -997,10 +1047,13 @@ final class AppModel: ObservableObject {
                 )
             )
         case let .refused(reason):
+            lastResolvedRouteReason = reason.logName
             route = .refused(refusalContent(for: reason, token: target.applicationToken))
         case .configuration:
+            lastResolvedRouteReason = "routerConfiguration"
             route = .configuration
         case .repair:
+            lastResolvedRouteReason = "routerRepair"
             route = genericRepairContent(for: intent.applicationToken)
         }
         let performMaintenance: Bool
