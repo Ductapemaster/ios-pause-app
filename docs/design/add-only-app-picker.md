@@ -45,3 +45,14 @@ A token in the selection that is already covered is named rather than ignored: t
 Retained targets no longer have their launch route refreshed on a picker save. The old save rebuilt every retained target and took a freshly detected route from the picker's `Application` values when one was available; with existing apps absent from the selection, there is nothing to re-detect them from.
 
 A launch route is therefore detected when an app is added and kept thereafter. Re-detection needs its own trigger if a route is ever found to go stale — the picker was doing it as a side effect of rebuilding, not because a save was the right moment for it.
+
+## Testing
+
+What the model does is pinned directly:
+
+- A picker save that adds an app leaves every existing rule, target and runtime untouched, including an app with a scheduled removal (`testAPickerSaveThatAddsAnAppLeavesEveryExistingRuleTargetAndRuntimeUntouched`).
+- A selection that omits a covered app still leaves it covered (`testAPickerSaveCannotDropAnAppOmittedFromTheSelection`).
+- A save that only adds still reconciles shields, since an app covered today needs its shield now (`testAPickerSaveThatOnlyAddsStillReconcilesShields`).
+- The split between added and already-covered tokens is pinned both ways (`testClassifyingAPickerSelectionNamesAlreadyCoveredTokensSeparately`, `testClassifyingAPickerSelectionOfOnlyAlreadyCoveredTokensAddsNothing`).
+
+Nothing pins that a selection of only already-covered apps writes nothing at all. The decision lives in `NewAppSetupSheet.advance()`, which returns before calling `onComplete` when no app is being added, and in `RulesView.savePickerSelection`, which routes to the sheet rather than committing. Neither is reachable from a test: `RulesView` and `NewAppSetupSheet` have no view harness, and the decision is entangled with `@State`. Pinning it means extracting the step-advance decision into a free function. That is a gap.
