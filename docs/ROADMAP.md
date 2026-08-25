@@ -20,8 +20,6 @@ Blocking periods are the same shape — a stretch during which entry is refused 
 
 Moving the work off the main actor would rework the locking design and the unit tests encode these calls as synchronous throughout (why: deferred on that basis — the daily cost is low because the path is configuration, not the shield-pause-use loop). A hang has since been reported, but it was traced to [the session-end lock-out](research/session-end-hang.md) rather than to this path, which leaves this entry deferred on its original reasoning and still unmeasured.
 
-**The repair shield's button contradicts its own text.** The repair presentation reads *"Open Pause to repair this app"* above a primary button labelled *"Done for today"*, which dismisses the shield rather than opening Pause. The three refusal presentations share one primary label in `ShieldPresentation` (`Sources/Shared/RuleLookup.swift`), which is how the repair case inherited a title written for a spent allowance. The screen names an action its button does not take, so an app in the repair state cannot be repaired from the screen telling the user to repair it.
-
 ## Not planned
 
 **A picker Pause owns.** Apple's picker shows no running count and nothing can be added to it: `familyActivityPicker` takes `title`, `headerText`, and `footerText` as plain strings, reads them once at presentation, and ignores later changes. Measured on an iPhone 16 Pro running iOS 26.6 — all three surfaces held their entry values while apps were tapped. The same interface offers no way to hide the Categories or Web Domains sections, so a selection the app will discard looks exactly like one it will keep.
