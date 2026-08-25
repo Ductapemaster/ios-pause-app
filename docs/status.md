@@ -1,17 +1,16 @@
 ## Status — resume here (2026-08-24)
 
-**State:** On `feat/scheduled-change-presentation`, 21 commits ahead of `design/phased-project-plan`, green at 319 tests with the device build signing cleanly. The scheduled-change presentation redesign is built and reviewed: a marker on each app's own row, the cancel scoped to one app in its editor, and a control locked while a change is scheduled for it. The app picker is add-only — its selection is a set of additions, and an app leaves Pause only from its own row. An earlier build was tried on the phone; the three pieces of feedback from it are all implemented, and the build carrying them has not been installed.
+**State:** On `feat/scheduled-change-presentation`, 30 commits ahead of `design/phased-project-plan`, green at 319 tests, built and installed on the phone. The scheduled-change presentation redesign is complete and reviewed: a marker on each app's row, the cancel scoped to one app in its editor, and a control locked while a change is scheduled for it. The app picker adds only — its selection is a set of additions, and an app leaves Pause from its own row, where removing it keeps the editor open under the pending section. Two rounds of device feedback are folded in. The branch is unmerged and the device checks in `docs/ROADMAP.md` under Deferred have not been run.
 
-**Next step:** Install the built app on the phone (it is at `/tmp/pause-dd/Build/Products/Debug-iphoneos/Pause.app`) and run the device checks, then merge to `design/phased-project-plan`.
+**Next step:** Run the deferred device checks on the installed build, then merge to `design/phased-project-plan`.
 
-**Blockers:** The phone reads `unavailable` to `devicectl`, so the install cannot run. No git remote; every commit is local.
+**Blockers:** No git remote, so nothing can be pushed. Every commit is local only.
 
 **Read first:** Before picker or add-flow work, `docs/design/add-only-app-picker.md`. Before scheduled-change work, `docs/design/scheduled-change-presentation.md`. Before the monitor callbacks or the state lock, `docs/research/session-end-hang.md`.
 
 ## Open work
 
 - [ ] Run the device checks `docs/ROADMAP.md` lists under Deferred. The one that matters most is cancelling one app's change leaving another's marker standing — the fault the redesign exists to correct, and the one thing no single-app test can see.
-- [ ] Confirm on the phone that the disabled `Remove app` button renders greyed rather than red beside the destructive `Cancel removal`. Established by reading the code and SwiftUI's documented behaviour, never measured (why: reaching that screen needs a full Family Controls authorization and save, which no headless run can drive).
-- [ ] Decide whether `NewAppSetupSheet`'s step-advance decision is worth extracting into a free function. The guarantee that a picker selection of only already-covered apps writes nothing is currently held by code-reading alone; the repo has no view-testing harness.
+- [ ] Decide whether the view layer is worth testing at all. Three guarantees now rest on reading the code rather than on a test, because `RulesView`, `RuleEditorView` and `AllowanceSection` have no harness: that Save and the pause stepper are disabled and freed as the pending state changes, that a picker selection of only already-covered apps writes nothing, and that a reset-minute-only change leaves `pendingSettingsChange()` nil. The first two are named in the design docs as known gaps.
 - [ ] Settle whether the device-wide freeze reported on 2026-08-22 is the same defect seen from outside. The lock-out explains the dead button and the stall; it does not by itself explain the whole phone stopping.
 - [ ] Design blocking periods — Phase 2. `docs/ROADMAP.md` under Next carries the reasoning about the activity-registration budget.
