@@ -13,23 +13,20 @@ struct PauseView: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            AppIdentityBadge(applicationToken: entry.applicationToken)
+            VStack(spacing: 6) {
+                Text("Take a Pause")
+                    .font(.title2.weight(.semibold))
 
-            Text(sessionSummary)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                Text(sessionSummary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
 
             PulsingCircles {
-                VStack(spacing: 6) {
-                    Text(remainingSeconds, format: .number)
-                        .font(.system(size: 52, weight: .semibold, design: .rounded).monospacedDigit())
-                        .contentTransition(.numericText())
-                        .accessibilityLabel("\(remainingSeconds) seconds remaining")
-
-                    Text("Take a pause")
-                        .font(.system(size: 15))
-                        .foregroundStyle(.secondary)
-                }
+                Text(remainingSeconds, format: .number)
+                    .font(.system(size: 52, weight: .semibold, design: .rounded).monospacedDigit())
+                    .contentTransition(.numericText())
+                    .accessibilityLabel("\(remainingSeconds) seconds remaining")
             }
             .frame(maxHeight: .infinity)
 
