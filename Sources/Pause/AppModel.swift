@@ -385,7 +385,6 @@ final class AppModel: ObservableObject {
                 entryRoute = .manualReturn(
                     ManualReturnContent(
                         ruleID: rule.id,
-                        applicationToken: entry.applicationToken,
                         expiresAt: expiresAt
                     )
                 )

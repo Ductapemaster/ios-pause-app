@@ -1,9 +1,7 @@
-import ManagedSettings
 import SwiftUI
 
 struct ManualReturnContent {
     let ruleID: UUID
-    let applicationToken: ApplicationToken
     let expiresAt: Date
 }
 
@@ -12,7 +10,8 @@ struct ManualReturnView: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            AppIdentityBadge(applicationToken: content.applicationToken)
+            Text("Take a Pause")
+                .font(.title2.weight(.semibold))
 
             PulsingCircles(isAnimated: false) {
                 ZStack {
