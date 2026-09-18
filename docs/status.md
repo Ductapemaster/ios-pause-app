@@ -4,6 +4,6 @@
 
 **Next step:** Run the four device checks owed on this build, listed under Deferred in `docs/ROADMAP.md`. The app-switcher shield press is the new one. They ride one trip to the phone.
 
-**Blockers:** No git remote, so nothing can be pushed. Every commit is local only.
+**Blockers:** None. The repo is public at https://github.com/Ductapemaster/ios-pause-app, `main` is the default branch, and the phone's IDs stay in the gitignored `Local.xcconfig`.
 
 **Read first:** The app-switcher fix and the open cold-launch question: `docs/research/shield-press-routing.md`. Drawing a *covered* app's icon or name: `docs/research/screen-time-platform-evidence.md`.
