@@ -211,7 +211,7 @@ Explore whether basic session history improves behavior modification enough to j
 ## Constraints
 
 - Deployment target: iOS 26.5 or later; iPhone only.
-- Development environment: Xcode 26.6 and Swift 6.
+- Development environment: Xcode 27.0 (iOS 27.0 SDK) and Swift 6.
 - Public APIs only. No private framework calls or extension-launch workarounds.
 - Physical-device checks use the personal iPhone; the simulator cannot establish Screen Time behavior.
 - No App Store distribution, onboarding, sharing, subscriptions, minute-based limits, usage-metered sessions, earn-back challenges, or accountability features.

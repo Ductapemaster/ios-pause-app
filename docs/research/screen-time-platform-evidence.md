@@ -8,7 +8,7 @@ Three rigs stand behind everything below:
 
 - **Device** — iPhone 16 Pro, iOS 26.6, Family Controls authorized. Runs of 2026-08-12, 08-13, 08-14 and 08-24.
 - **Simulator** — iPhone 17 Pro, iOS 26.5, unauthorized. Runs of 2026-08-13 and 08-23. The frameworks do not function there: authorization never completes (below) and the picker shows categories with no apps. Some questions are answerable anyway — see the validation ordering below. iOS 26.5 is the newest simulator runtime this toolchain has: Xcode 26.6 ships the iOS 26.5 SDK, and `xcodebuild -downloadPlatform iOS -buildVersion 26.6` answers "iOS 26.6 is not available for download", so the simulator sits one minor version behind the device.
-- **SDK reading** — `.swiftinterface` files shipped with Xcode 26.6, under `.../SDKs/iPhoneOS.sdk/System/Library/Frameworks/<framework>.framework/Modules/<framework>.swiftmodule/arm64e-apple-ios.swiftinterface`. Never executed. What a declaration does is inference; the name is suggestive, not evidence.
+- **SDK reading** — `.swiftinterface` files shipped with Xcode 26.6, under `.../SDKs/iPhoneOS.sdk/System/Library/Frameworks/<framework>.framework/Modules/<framework>.swiftmodule/arm64e-apple-ios.swiftinterface`. Never executed. What a declaration does is inference; the name is suggestive, not evidence. Re-read against Xcode 27.0's iOS 27.0 SDK on 2026-09-18: none of the four frameworks declares anything introduced in iOS 27, so the newest surface is still the 26.4 and 26.5 additions cited below. The iOS 27.0 and 27.2 beta release notes carry no Screen Time change that reaches this app.
 
 ## What the simulator can and cannot exercise
 
