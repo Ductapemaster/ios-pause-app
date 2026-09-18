@@ -70,7 +70,7 @@ final class SessionReconciliationServiceTests: XCTestCase {
         // not the reconciliation pass had released it.
         let service = makeService(directory: directory, applyApplications: { _ in }, stopMonitoring: { _ in
             DispatchQueue.global().async {
-                try? secondParticipant.withLock { acquired.signal() }
+                _ = try? secondParticipant.withLock { acquired.signal() }
             }
             secondParticipantProgressed = acquired.wait(timeout: .now() + 2) == .success
         })
