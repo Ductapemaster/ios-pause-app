@@ -1,8 +1,8 @@
-## Status — resume here (2026-08-29)
+## Status — resume here (2026-09-18)
 
-**State:** Pause has an app icon. `Tools/make_app_icon.py` renders the 1024x1024 asset into `Sources/Pause/Assets.xcassets/` from the app's own visual constants — the indigo of `Color.pauseTint`, and the ring ratios and containment rule of `PulsingCircles` — with the pause bars centred inside the innermost ring (why: generated rather than drawn so the icon and the pause screen cannot drift apart). It is a flat PNG, not an Icon Composer bundle; Dan has seen it on the phone and accepts the system's default treatment. `project.yml` names it via `ASSETCATALOG_COMPILER_APPICON_NAME`. Merged to `design/phased-project-plan` and installed. No Swift changed, so the suite was not re-run; it was green at 340 tests. Nothing is in flight.
+**State:** Pause builds with Xcode 27.0 against the iOS 27.0 SDK with no warnings, and the unit suite passes at 340 tests. It is in daily use on the iPhone 16 Pro, which now runs the iOS 27.2 developer beta. iOS 27 needs no code changes: the Screen Time frameworks declare nothing new in iOS 27, and neither of the two 27.0 changes that could reach an app like this one (the required scene-based lifecycle and the deprecation of `canOpenURL`) applies to Pause. The SDK reading is in `docs/research/screen-time-platform-evidence.md`. Nothing is in flight.
 
-**Next step:** Run the three device checks owed on this build, listed under Deferred in `docs/ROADMAP.md` — they ride one trip to the phone and are still unrun.
+**Next step:** Run the three device checks owed on this build, listed under Deferred in `docs/ROADMAP.md`. They ride one trip, now on iOS 27.2 — also the first, untried, install from Xcode 27.0 to a 27.2 phone.
 
 **Blockers:** No git remote, so nothing can be pushed. Every commit is local only.
 
