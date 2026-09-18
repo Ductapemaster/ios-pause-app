@@ -14,3 +14,10 @@
 // "No Accounts: Add a new account in Accounts settings" — which looks like a
 // missing Apple ID rather than a wrong team.
 DEVELOPMENT_TEAM = YOUR_TEAM_ID
+
+// The phone used for device checks. Not build settings — CLAUDE.md's install
+// and log commands read them from here, so the IDs stay out of the repo.
+//   PAUSE_DEVICE_ID    `xcrun devicectl list devices` — the Identifier column
+//   PAUSE_DEVICE_UDID  the hardware UDID, `xcrun devicectl device info details`
+PAUSE_DEVICE_ID = YOUR_DEVICE_ID
+PAUSE_DEVICE_UDID = YOUR_DEVICE_UDID

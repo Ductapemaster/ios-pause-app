@@ -18,15 +18,16 @@ Dan is the user and product manager; Claude is the engineering manager and engin
 
 ## Testing on the device
 
-**When a change is built and ready to try on the phone, install it — don't stop at "here's the command."** The paired iPhone 16 Pro is `<device-id>`, `Local.xcconfig` carries the team ID, and the `Pause` scheme builds the app with all three extensions:
+**When a change is built and ready to try on the phone, install it — don't stop at "here's the command."** The phone is an iPhone 16 Pro. Its IDs live in the gitignored `Local.xcconfig` beside the team ID (`PAUSE_DEVICE_ID`, `PAUSE_DEVICE_UDID`), so they stay out of this public repo. The `Pause` scheme builds the app with all three extensions:
 
 ```bash
+DEVICE=$(sed -n 's/^PAUSE_DEVICE_ID *= *//p' Local.xcconfig)
 xcodegen generate
 xcodebuild -project Pause.xcodeproj -scheme Pause \
-  -destination 'id=<device-id>' \
+  -destination "id=$DEVICE" \
   -derivedDataPath /tmp/pause-dd build
 xcrun devicectl device install app \
-  --device <device-id> \
+  --device "$DEVICE" \
   /tmp/pause-dd/Build/Products/Debug-iphoneos/Pause.app
 ```
 
@@ -39,7 +40,8 @@ Device checks are batched deliberately: `docs/ROADMAP.md` under Deferred lists w
 **When the question is *when* something ran, read it off the device rather than asking Dan to watch for it.** Background callbacks — the daily reset, a session expiring, the monitor waking — fire at hours nobody should be awake for, and "the count had renewed by morning" cannot tell 05:00 from midnight. The extensions log at `.notice` so these lines survive into the log store, and `log collect` pulls them back:
 
 ```bash
-sudo /usr/bin/log collect --device-udid <device-udid> \
+UDID=$(sed -n 's/^PAUSE_DEVICE_UDID *= *//p' Local.xcconfig)
+sudo /usr/bin/log collect --device-udid "$UDID" \
   --start "2026-08-23 22:00:00" --output /tmp/pause.logarchive
 
 /usr/bin/log show /tmp/pause.logarchive \
