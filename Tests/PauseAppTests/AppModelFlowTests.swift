@@ -757,6 +757,67 @@ final class AppModelFlowTests: XCTestCase {
         )
     }
 
+    /// Pause left by the app switcher never goes `.background`, so the shield
+    /// press that brings it back arrives on an activation already marked
+    /// handled. The intent the press left must still open the pause rather
+    /// than leave the user on the screen Pause was showing.
+    func testAShieldPressWhilePauseNeverBackgroundedOpensThePause() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        let applicationToken = try token(seed: "instagram")
+        try ConfigurationStore(directoryURL: directory).save(
+            file: ConfigurationFile(
+                effective: try ConfigurationDocument(
+                    settings: GlobalSettings(pauseSeconds: 10),
+                    rules: [AppRule(id: ruleID, sessionsPerDay: 3, sessionLengthMinutes: 5)],
+                    targets: [
+                        RuleTarget(
+                            ruleID: ruleID,
+                            applicationToken: applicationToken,
+                            launchRoute: nil
+                        )
+                    ]
+                ),
+                pending: nil
+            )
+        )
+        try RuntimeRepository(directoryURL: directory).save(
+            RuleRuntime(
+                logicalDay: LogicalDay.containing(now, resetMinuteOfDay: 0, calendar: .current),
+                sessionsStarted: 0
+            ),
+            ruleID: ruleID
+        )
+        let suiteName = "pause-unbackgrounded-press-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(
+            shieldReconciler: ShieldReconciler(
+                currentApplications: { [] },
+                applyApplications: { _ in },
+                failedGrantBlockIDs: { [] }
+            ),
+            shieldIntentStore: ShieldIntentStore(defaults: defaults),
+            storageDirectoryURL: directory,
+            authorizationStatusProvider: { .approved },
+            authorizationRequester: {}
+        )
+        model.sceneDidBecomeActive(now: now)
+        guard case .configuration = model.entryRoute else {
+            return XCTFail("An ordinary open lands on the rules list, got \(model.entryRoute.logName)")
+        }
+
+        try ShieldIntentStore(defaults: defaults).write(
+            ShieldIntent(applicationToken: applicationToken, createdAt: now.addingTimeInterval(5))
+        )
+        model.sceneDidBecomeActive(now: now.addingTimeInterval(6))
+
+        guard case .pause = model.entryRoute else {
+            return XCTFail("The shield press must open the pause, got \(model.entryRoute.logName)")
+        }
+    }
+
     /// The second activation is the ordinary re-foreground: once one activation
     /// has been handled for the current foreground streak, the activation
     /// coordinator returns `.unchanged` immediately, before it would run cleanup,

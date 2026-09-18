@@ -264,15 +264,21 @@ public struct PauseActivationCoordinator: Sendable {
         foregroundState = foregroundState.transitioned(for: .sceneLeftForeground)
     }
 
+    /// `hasPendingIntent` reopens an activation already marked handled. Only
+    /// `.background` clears the mark, and leaving by the app switcher never
+    /// reaches it, so a shield press made from there would otherwise be
+    /// discarded. A banner or a Control Center pull leaves no intent, so a
+    /// countdown still survives those.
     public mutating func activate<Intent, Payload>(
         isAuthorized: Bool,
+        hasPendingIntent: () -> Bool = { false },
         consumeIntent: () throws -> Intent?,
         resolveIntent: (Intent) throws -> PauseActivationResolution<Payload>,
         cleanup: () -> Void,
         reconcile: () -> Void,
         reasonSink: (PauseActivationReason) -> Void = { _ in }
     ) -> PauseActivationOutcome<Payload> {
-        guard !hasHandledCurrentActivation else {
+        guard !hasHandledCurrentActivation || hasPendingIntent() else {
             reasonSink(.activationAlreadyHandled)
             return .unchanged
         }

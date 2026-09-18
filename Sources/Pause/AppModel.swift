@@ -258,6 +258,7 @@ final class AppModel: ObservableObject {
         } else {
             outcome = coordinator.activate(
                 isAuthorized: canApplyManagedSettings,
+                hasPendingIntent: shieldIntentStore.hasPendingIntent,
                 consumeIntent: shieldIntentStore.consume,
                 resolveIntent: { [self] intent in
                     try resolveShieldIntent(intent, now: now)

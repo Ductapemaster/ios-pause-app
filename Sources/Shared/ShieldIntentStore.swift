@@ -30,6 +30,12 @@ public struct ShieldIntentStore {
         defaults.set(try JSONEncoder().encode(intent), forKey: SharedIdentifiers.shieldIntentKey)
     }
 
+    /// Whether a shield press has left an intent that nothing has consumed yet,
+    /// without consuming it. An unreadable container reads as none waiting.
+    public func hasPendingIntent() -> Bool {
+        defaults?.data(forKey: SharedIdentifiers.shieldIntentKey) != nil
+    }
+
     public func consume() throws -> ShieldIntent? {
         guard let defaults else {
             throw PersistenceError.missingAppGroupContainer

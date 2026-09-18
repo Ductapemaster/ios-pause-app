@@ -250,6 +250,34 @@ final class PauseActivationCoordinatorTests: XCTestCase {
         XCTAssertEqual(consumed, 1)
     }
 
+    /// Leaving Pause by the app switcher puts it `.inactive`, never
+    /// `.background`, so the activation stays marked handled. A shield press
+    /// made from there leaves an intent waiting, which a banner or a Control
+    /// Center pull never does — so a waiting intent makes it a new activation.
+    func testAPendingIntentMakesAnUnbackgroundedReturnANewActivation() {
+        var coordinator = PauseActivationCoordinator(configurationState: .knownGood)
+        var intents: [Int] = []
+
+        func activate() -> PauseActivationOutcome<String> {
+            coordinator.activate(
+                isAuthorized: true,
+                hasPendingIntent: { !intents.isEmpty },
+                consumeIntent: { intents.isEmpty ? nil : intents.removeFirst() },
+                resolveIntent: { _ in
+                    PauseActivationResolution(payload: "pause", performMaintenance: true)
+                },
+                cleanup: {},
+                reconcile: {}
+            )
+        }
+
+        XCTAssertEqual(activate(), .configuration)
+        XCTAssertEqual(activate(), .unchanged, "a return with nothing waiting stays where it was")
+        intents.append(1)
+        XCTAssertEqual(activate(), .resolved("pause"))
+        XCTAssertTrue(intents.isEmpty)
+    }
+
     func testReactivationAfterInterruptedCountdownReturnsToConfigurationWithoutANewIntent() {
         var coordinator = PauseActivationCoordinator(configurationState: .knownGood)
         var intents = [1]
